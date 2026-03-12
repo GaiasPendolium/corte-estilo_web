@@ -1,0 +1,40 @@
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+
+from .views import (
+    UsuarioViewSet, EstilistaViewSet, ServicioViewSet, ClienteViewSet,
+    ProductoViewSet, ServicioRealizadoViewSet, VentaProductoViewSet,
+    MovimientoInventarioViewSet, estadisticas_generales,
+    reporte_ventas, reporte_servicios, bi_resumen, bi_export_csv,
+    bi_export_pdf, bi_resumen_diario
+)
+
+# Crear router para los viewsets
+router = DefaultRouter()
+router.register(r'usuarios', UsuarioViewSet, basename='usuario')
+router.register(r'estilistas', EstilistaViewSet, basename='estilista')
+router.register(r'servicios', ServicioViewSet, basename='servicio')
+router.register(r'clientes', ClienteViewSet, basename='cliente')
+router.register(r'productos', ProductoViewSet, basename='producto')
+router.register(r'servicios-realizados', ServicioRealizadoViewSet, basename='servicio-realizado')
+router.register(r'ventas', VentaProductoViewSet, basename='venta')
+router.register(r'movimientos-inventario', MovimientoInventarioViewSet, basename='movimiento-inventario')
+
+urlpatterns = [
+    # Autenticación JWT
+    path('auth/login/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
+    path('auth/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    
+    # Reportes y estadísticas
+    path('reportes/estadisticas/', estadisticas_generales, name='estadisticas-generales'),
+    path('reportes/ventas/', reporte_ventas, name='reporte-ventas'),
+    path('reportes/servicios/', reporte_servicios, name='reporte-servicios'),
+    path('reportes/bi/', bi_resumen, name='reporte-bi'),
+    path('reportes/bi/export/', bi_export_csv, name='reporte-bi-export'),
+    path('reportes/bi/export-pdf/', bi_export_pdf, name='reporte-bi-export-pdf'),
+    path('reportes/bi/resumen-diario/', bi_resumen_diario, name='reporte-bi-resumen-diario'),
+    
+    # Incluir todas las rutas del router
+    path('', include(router.urls)),
+]
