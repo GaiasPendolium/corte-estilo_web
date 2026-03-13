@@ -4,21 +4,15 @@ import { toast } from 'react-toastify';
 import { usuariosService } from '../services/api';
 import useAuthStore from '../store/authStore';
 import ModalForm from '../components/ModalForm';
+import { ROLES, roleLabel } from '../utils/roles';
 
 const INITIAL_FORM = {
   username: '',
   nombre_completo: '',
-  rol: 'empleado',
+  rol: 'recepcion',
   activo: true,
   password: '',
 };
-
-const ROLES = [
-  { value: 'administrador', label: 'Administrador' },
-  { value: 'recepcionista', label: 'Recepcionista' },
-  { value: 'empleado', label: 'Empleado' },
-  { value: 'visualizador', label: 'Visualizador' },
-];
 
 const extractRows = (payload) => {
   if (Array.isArray(payload)) return payload;
@@ -124,7 +118,7 @@ const Usuarios = () => {
     setForm({
       username: usuario.username || '',
       nombre_completo: usuario.nombre_completo || '',
-      rol: usuario.rol || 'empleado',
+      rol: usuario.rol || 'recepcion',
       activo: Boolean(usuario.activo),
       password: '',
     });
@@ -292,7 +286,7 @@ const Usuarios = () => {
                   <tr key={usuario.id} className="hover:bg-gray-50">
                     <td className="table-cell font-medium">{usuario.username}</td>
                     <td className="table-cell">{usuario.nombre_completo}</td>
-                    <td className="table-cell capitalize">{usuario.rol}</td>
+                    <td className="table-cell">{roleLabel(usuario.rol)}</td>
                     <td className="table-cell">
                       {usuario.activo ? (
                         <span className="px-2 py-1 rounded-full text-xs bg-green-100 text-green-800">Activo</span>

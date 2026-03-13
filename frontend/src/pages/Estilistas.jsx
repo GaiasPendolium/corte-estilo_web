@@ -7,8 +7,9 @@ import ModalForm from '../components/ModalForm';
 const INITIAL_FORM = {
   nombre: '',
   telefono: '',
-  tipo_cobro_espacio: 'ninguno',
+  tipo_cobro_espacio: 'sin_cobro',
   valor_cobro_espacio: '0',
+  comision_ventas_productos: '0',
 };
 
 const extractRows = (payload) => {
@@ -61,14 +62,15 @@ const Estilistas = () => {
         telefono: form.telefono.trim() || null,
         tipo_cobro_espacio: form.tipo_cobro_espacio,
         valor_cobro_espacio: Number(form.valor_cobro_espacio || 0),
+        comision_ventas_productos: Number(form.comision_ventas_productos || 0),
       };
 
       if (editingId) {
         await estilistasService.update(editingId, payload);
-        toast.success('Estilista actualizado');
+        toast.success('Empleado actualizado');
       } else {
         await estilistasService.create(payload);
-        toast.success('Estilista creado correctamente');
+        toast.success('Empleado creado correctamente');
       }
 
       setForm(INITIAL_FORM);
@@ -78,9 +80,7 @@ const Estilistas = () => {
     } catch (error) {
       const data = error?.response?.data;
       const firstError = typeof data === 'object' ? Object.values(data)[0] : null;
-      const message = Array.isArray(firstError)
-        ? firstError[0]
-        : firstError || 'No se pudo crear el estilista';
+      const message = Array.isArray(firstError) ? firstError[0] : firstError || 'No se pudo guardar el empleado';
       toast.error(String(message));
     } finally {
       setSaving(false);
@@ -92,22 +92,23 @@ const Estilistas = () => {
     setForm({
       nombre: item.nombre || '',
       telefono: item.telefono || '',
-      tipo_cobro_espacio: item.tipo_cobro_espacio || 'ninguno',
+      tipo_cobro_espacio: item.tipo_cobro_espacio || 'sin_cobro',
       valor_cobro_espacio: String(item.valor_cobro_espacio ?? 0),
+      comision_ventas_productos: String(item.comision_ventas_productos ?? 0),
     });
     setShowForm(true);
   };
 
   const eliminarEstilista = async (item) => {
-    const ok = window.confirm(`¿Eliminar estilista "${item.nombre}"?`);
+    const ok = window.confirm(`¿Eliminar empleado "${item.nombre}"?`);
     if (!ok) return;
 
     try {
       await estilistasService.delete(item.id);
-      toast.success('Estilista eliminado');
+      toast.success('Empleado eliminado');
       await cargarEstilistas();
     } catch (error) {
-      toast.error('No se pudo eliminar el estilista');
+      toast.error('No se pudo eliminar el empleado');
     }
   };
 
@@ -115,8 +116,8 @@ const Estilistas = () => {
     <div className="space-y-6 fade-in">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Estilistas</h1>
-          <p className="text-gray-600 mt-1">Registra estilistas con nombre y numero de telefono</p>
+          <h1 className="text-3xl font-bold text-gray-900">Empleados</h1>
+          <p className="text-gray-600 mt-1">Configura forma de cobro de espacio y comisión por ventas de productos</p>
         </div>
         <div className="flex gap-2">
           <button
@@ -135,7 +136,7 @@ const Estilistas = () => {
               setShowForm(true);
             }}
           >
-            <FiPlus /> Nuevo estilista
+            <FiPlus /> Nuevo empleado
           </button>
         </div>
       </div>
@@ -143,8 +144,8 @@ const Estilistas = () => {
       <ModalForm
         isOpen={showForm}
         onClose={() => setShowForm(false)}
-        title={editingId ? 'Editar estilista' : 'Nuevo estilista'}
-        subtitle="Configura datos de contacto y tipo de cobro"
+        title={editingId ? 'Editar empleado' : 'Nuevo empleado'}
+        subtitle="Configura datos de contacto y condiciones de pago"
         size="md"
       >
       <form onSubmit={guardarEstilista} className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -154,7 +155,7 @@ const Estilistas = () => {
             className="input-field"
             value={form.nombre}
             onChange={(e) => onInputChange('nombre', e.target.value)}
-            placeholder="Nombre del estilista"
+            placeholder="Nombre del empleado"
           />
         </div>
 
@@ -168,24 +169,6 @@ const Estilistas = () => {
           />
         </div>
 
-        <div className="md:col-span-2 flex items-end gap-2">
-          <button type="submit" className="btn-primary w-full inline-flex items-center justify-center gap-2" disabled={saving}>
-            <FiPlus />
-            {saving ? 'Guardando...' : editingId ? 'Guardar cambios' : 'Crear estilista'}
-          </button>
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={() => {
-              setShowForm(false);
-              setEditingId(null);
-              setForm(INITIAL_FORM);
-            }}
-          >
-            Cancelar
-          </button>
-        </div>
-
         <div>
           <label className="block text-sm text-gray-600 mb-1">Cobro por espacio</label>
           <select
@@ -193,9 +176,9 @@ const Estilistas = () => {
             value={form.tipo_cobro_espacio}
             onChange={(e) => onInputChange('tipo_cobro_espacio', e.target.value)}
           >
-            <option value="ninguno">Sin cobro</option>
-            <option value="alquiler">Alquiler fijo</option>
-            <option value="comision">Comisión sobre ganancias</option>
+            <option value="sin_cobro">Sin cobro (100% empleado)</option>
+            <option value="porcentaje_neto">% sobre neto</option>
+            <option value="costo_fijo_neto">Costo fijo sobre neto</option>
           </select>
         </div>
 
@@ -208,8 +191,39 @@ const Estilistas = () => {
             step="0.01"
             value={form.valor_cobro_espacio}
             onChange={(e) => onInputChange('valor_cobro_espacio', e.target.value)}
-            placeholder={form.tipo_cobro_espacio === 'comision' ? 'Porcentaje %' : 'Monto'}
+            placeholder={form.tipo_cobro_espacio === 'porcentaje_neto' ? 'Porcentaje %' : 'Monto'}
           />
+        </div>
+
+        <div className="md:col-span-2">
+          <label className="block text-sm text-gray-600 mb-1">Comisión por venta de productos (%)</label>
+          <input
+            className="input-field"
+            type="number"
+            min="0"
+            step="0.01"
+            value={form.comision_ventas_productos}
+            onChange={(e) => onInputChange('comision_ventas_productos', e.target.value)}
+            placeholder="Aplica solo para productos"
+          />
+        </div>
+
+        <div className="md:col-span-2 flex items-end gap-2">
+          <button type="submit" className="btn-primary w-full inline-flex items-center justify-center gap-2" disabled={saving}>
+            <FiPlus />
+            {saving ? 'Guardando...' : editingId ? 'Guardar cambios' : 'Crear empleado'}
+          </button>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => {
+              setShowForm(false);
+              setEditingId(null);
+              setForm(INITIAL_FORM);
+            }}
+          >
+            Cancelar
+          </button>
         </div>
       </form>
       </ModalForm>
@@ -224,6 +238,7 @@ const Estilistas = () => {
         {!loading && estilistas.length === 0 && (
           <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-8 text-center">
             <h2 className="text-lg font-semibold text-gray-800">Sin estilistas registrados</h2>
+            <h2 className="text-lg font-semibold text-gray-800">Sin empleados registrados</h2>
             <p className="text-gray-600 mt-1">Crea el primero con el formulario de arriba.</p>
           </div>
         )}
@@ -238,6 +253,7 @@ const Estilistas = () => {
                   <th className="px-6 py-3 text-left">Email</th>
                   <th className="px-6 py-3 text-left">Comision</th>
                   <th className="px-6 py-3 text-left">Cobro espacio</th>
+                  <th className="px-6 py-3 text-left">Comisión ventas</th>
                   <th className="px-6 py-3 text-right">Acciones</th>
                 </tr>
               </thead>
@@ -248,7 +264,8 @@ const Estilistas = () => {
                     <td className="table-cell">{item.telefono || '-'}</td>
                     <td className="table-cell">{item.email || '-'}</td>
                     <td className="table-cell">{item.comision_porcentaje ?? 0}%</td>
-                    <td className="table-cell">{item.tipo_cobro_espacio || 'ninguno'} ({Number(item.valor_cobro_espacio || 0).toFixed(2)})</td>
+                    <td className="table-cell">{item.tipo_cobro_espacio || 'sin_cobro'} ({Number(item.valor_cobro_espacio || 0).toFixed(2)})</td>
+                    <td className="table-cell">{Number(item.comision_ventas_productos || 0).toFixed(2)}%</td>
                     <td className="table-cell">
                       <div className="flex justify-end gap-2">
                         <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => editarEstilista(item)}>

@@ -2,6 +2,7 @@ from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.exceptions import PermissionDenied
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Sum, Count, Q, F
 from django.utils import timezone
@@ -21,6 +22,15 @@ from .serializers import (
     MovimientoInventarioSerializer, ReporteVentasSerializer,
     ReporteServiciosSerializer, EstadisticasGeneralesSerializer
 )
+
+
+def _es_admin_o_gerente(user):
+    return getattr(user, 'rol', None) in ['administrador', 'gerente']
+
+
+def _validar_edicion_admin_gerente(user, recurso):
+    if not _es_admin_o_gerente(user):
+        raise PermissionDenied(f'Solo administrador o gerente puede modificar {recurso}.')
 
 
 class UsuarioViewSet(viewsets.ModelViewSet):
@@ -111,6 +121,22 @@ class ServicioViewSet(viewsets.ModelViewSet):
     ordering_fields = ['nombre', 'precio']
     ordering = ['nombre']
 
+    def create(self, request, *args, **kwargs):
+        _validar_edicion_admin_gerente(request.user, 'servicios')
+        return super().create(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        _validar_edicion_admin_gerente(request.user, 'servicios')
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        _validar_edicion_admin_gerente(request.user, 'servicios')
+        return super().partial_update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        _validar_edicion_admin_gerente(request.user, 'servicios')
+        return super().destroy(request, *args, **kwargs)
+
 
 class ClienteViewSet(viewsets.ModelViewSet):
     """ViewSet para el modelo Cliente"""
@@ -135,6 +161,22 @@ class ProductoViewSet(viewsets.ModelViewSet):
     search_fields = ['nombre', 'codigo_barras', 'marca', 'presentacion', 'descripcion']
     ordering_fields = ['nombre', 'precio_venta', 'precio_compra', 'stock']
     ordering = ['nombre']
+
+    def create(self, request, *args, **kwargs):
+        _validar_edicion_admin_gerente(request.user, 'productos')
+        return super().create(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        _validar_edicion_admin_gerente(request.user, 'productos')
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        _validar_edicion_admin_gerente(request.user, 'productos')
+        return super().partial_update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        _validar_edicion_admin_gerente(request.user, 'productos')
+        return super().destroy(request, *args, **kwargs)
     
     @action(detail=False, methods=['get'])
     def bajo_stock(self, request):
@@ -293,6 +335,22 @@ class VentaProductoViewSet(viewsets.ModelViewSet):
     search_fields = ['producto__nombre', 'producto__codigo_barras', 'cliente_nombre', 'numero_factura']
     ordering_fields = ['fecha_hora', 'total']
     ordering = ['-fecha_hora']
+
+    def create(self, request, *args, **kwargs):
+        _validar_edicion_admin_gerente(request.user, 'facturas de venta')
+        return super().create(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        _validar_edicion_admin_gerente(request.user, 'facturas de venta')
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        _validar_edicion_admin_gerente(request.user, 'facturas de venta')
+        return super().partial_update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        _validar_edicion_admin_gerente(request.user, 'facturas de venta')
+        return super().destroy(request, *args, **kwargs)
     
     def get_queryset(self):
         """Filtrar por rango de fechas si se proporciona"""
@@ -516,7 +574,7 @@ def _calcular_datos_bi(request):
         costo_productos += costo_unitario * Decimal(venta.cantidad)
 
         if venta.estilista:
-            pct = Decimal(venta.producto.comision_estilista or 0)
+            pct = Decimal(venta.estilista.comision_ventas_productos or 0)
             comision_producto_estilistas += (Decimal(venta.total) * pct) / Decimal(100)
 
         key = venta.producto_id
@@ -550,27 +608,20 @@ def _calcular_datos_bi(request):
         dias_con_servicios = servicios_est.values_list('fecha_hora__date', flat=True).distinct().count()
         comision_ventas_producto_est = Decimal(0)
         for v in ventas_est:
-            pct = Decimal(v.producto.comision_estilista or 0)
+            pct = Decimal(estilista.comision_ventas_productos or 0)
             comision_ventas_producto_est += (Decimal(v.total) * pct) / Decimal(100)
 
         ganancias_brutas_est = ganancia_servicios_est + comision_ventas_producto_est
 
         descuento_espacio = Decimal(0)
-        if estilista.tipo_cobro_espacio == 'alquiler':
-            # Alquiler fijo: se descuentan los 50,000 (o el valor configurado) por cada día trabajado, SÍ O SÍ.
-            # Si no ganó suficiente, genera saldo negativo (deuda).
-            alquiler_diario = Decimal(estilista.valor_cobro_espacio or 0)
-            descuento_espacio = alquiler_diario * Decimal(dias_con_servicios)
-                
-        elif estilista.tipo_cobro_espacio == 'comision':
-            # Comision por ganancias: porcentaje para el establecimiento sobre el total de servicios.
-            descuento_espacio = (total_servicios_est * Decimal(estilista.valor_cobro_espacio or 0)) / Decimal(100)
-            # Para comisión, sí aplicamos un cap (no puede deber)
-            if descuento_espacio > ganancias_brutas_est:
-                descuento_espacio = ganancias_brutas_est
+        if estilista.tipo_cobro_espacio == 'porcentaje_neto':
+            descuento_espacio = (ganancias_brutas_est * Decimal(estilista.valor_cobro_espacio or 0)) / Decimal(100)
+        elif estilista.tipo_cobro_espacio == 'costo_fijo_neto':
+            descuento_espacio = Decimal(estilista.valor_cobro_espacio or 0)
 
-        # Para alquiler NO aplicamos cap, puede quedar negativo
-        # Para comisión o ninguno, el cap ya está aplicado arriba
+        if descuento_espacio > ganancias_brutas_est:
+            descuento_espacio = ganancias_brutas_est
+
         pago_neto = ganancias_brutas_est - descuento_espacio
 
         total_descuentos_espacio += descuento_espacio

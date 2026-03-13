@@ -51,7 +51,7 @@ class EstilistaSerializer(serializers.ModelSerializer):
         model = Estilista
         fields = [
             'id', 'nombre', 'telefono', 'email',
-            'comision_porcentaje', 'tipo_cobro_espacio', 'valor_cobro_espacio',
+            'comision_porcentaje', 'tipo_cobro_espacio', 'valor_cobro_espacio', 'comision_ventas_productos',
             'activo', 'fecha_ingreso',
             'servicios_count'
         ]
@@ -102,6 +102,7 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
     servicio_nombre = serializers.CharField(source='servicio.nombre', read_only=True)
     servicio_duracion = serializers.IntegerField(source='servicio.duracion_minutos', read_only=True)
     cliente_nombre = serializers.CharField(source='cliente.nombre', read_only=True)
+    adicional_otro_producto_nombre = serializers.CharField(source='adicional_otro_producto.nombre', read_only=True)
     
     class Meta:
         model = ServicioRealizado
@@ -111,51 +112,99 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
             'estado', 'fecha_inicio', 'fecha_fin', 'fecha_hora',
             'precio_cobrado', 'medio_pago', 'tipo_reparto_establecimiento',
             'valor_reparto_establecimiento', 'monto_establecimiento',
-            'monto_estilista', 'numero_factura', 'factura_texto', 'notas'
+            'monto_estilista', 'neto_servicio', 'tiene_adicionales',
+            'adicional_shampoo', 'adicional_guantes', 'adicional_otro_producto',
+            'adicional_otro_producto_nombre', 'adicional_otro_cantidad', 'valor_adicionales',
+            'numero_factura', 'factura_texto', 'notas'
         ]
-        read_only_fields = ['monto_establecimiento', 'monto_estilista', 'numero_factura', 'factura_texto']
+        read_only_fields = ['monto_establecimiento', 'monto_estilista', 'neto_servicio', 'valor_adicionales', 'numero_factura', 'factura_texto']
 
     def validate(self, attrs):
         estado = attrs.get('estado') or getattr(self.instance, 'estado', 'en_proceso')
 
         if estado == 'finalizado':
             medio_pago = attrs.get('medio_pago') if 'medio_pago' in attrs else getattr(self.instance, 'medio_pago', None)
-            tipo_reparto = attrs.get('tipo_reparto_establecimiento') if 'tipo_reparto_establecimiento' in attrs else getattr(self.instance, 'tipo_reparto_establecimiento', None)
-            valor_reparto = attrs.get('valor_reparto_establecimiento') if 'valor_reparto_establecimiento' in attrs else getattr(self.instance, 'valor_reparto_establecimiento', None)
 
             if not medio_pago:
                 raise serializers.ValidationError({'medio_pago': 'El medio de pago es obligatorio al finalizar.'})
-            if not tipo_reparto:
-                raise serializers.ValidationError({'tipo_reparto_establecimiento': 'Selecciona tipo de reparto.'})
-            if valor_reparto is None:
-                raise serializers.ValidationError({'valor_reparto_establecimiento': 'Ingresa valor de reparto.'})
+
+        tiene_adicionales = attrs.get('tiene_adicionales')
+        if tiene_adicionales is None and self.instance is not None:
+            tiene_adicionales = self.instance.tiene_adicionales
+
+        adicional_otro_cantidad = attrs.get('adicional_otro_cantidad')
+        if adicional_otro_cantidad is None and self.instance is not None:
+            adicional_otro_cantidad = self.instance.adicional_otro_cantidad
+
+        if adicional_otro_cantidad is not None and int(adicional_otro_cantidad) < 1:
+            raise serializers.ValidationError({'adicional_otro_cantidad': 'La cantidad debe ser mayor o igual a 1.'})
+
+        if tiene_adicionales:
+            adicional_otro_producto = attrs.get('adicional_otro_producto')
+            if adicional_otro_producto is None and self.instance is not None:
+                adicional_otro_producto = self.instance.adicional_otro_producto
+
+            if adicional_otro_producto and adicional_otro_producto.stock < int(adicional_otro_cantidad or 1):
+                raise serializers.ValidationError(
+                    {'adicional_otro_producto': f'Stock insuficiente para adicional. Disponible: {adicional_otro_producto.stock}'}
+                )
 
         return attrs
 
+    def _calcular_adicionales(self, servicio):
+        if not servicio.tiene_adicionales:
+            servicio.valor_adicionales = 0
+            return
+
+        total_adicionales = 0
+        if servicio.adicional_shampoo:
+            total_adicionales += 4000
+        if servicio.adicional_guantes:
+            total_adicionales += 1500
+
+        if servicio.adicional_otro_producto:
+            cantidad = int(servicio.adicional_otro_cantidad or 1)
+            total_adicionales += float(servicio.adicional_otro_producto.precio_venta or 0) * cantidad
+
+        servicio.valor_adicionales = total_adicionales
+
     def _calcular_reparto(self, servicio):
-        precio = servicio.precio_cobrado or 0
-        tipo_reparto = servicio.tipo_reparto_establecimiento
-        valor_reparto = servicio.valor_reparto_establecimiento or 0
+        precio = float(servicio.precio_cobrado or 0)
+        neto = max(precio - float(servicio.valor_adicionales or 0), 0)
+        tipo_cobro = servicio.estilista.tipo_cobro_espacio or 'sin_cobro'
+        valor_cobro = float(servicio.estilista.valor_cobro_espacio or 0)
 
         monto_establecimiento = 0
-        if tipo_reparto == 'porcentaje':
-            monto_establecimiento = (precio * valor_reparto) / 100
-        elif tipo_reparto == 'monto':
-            monto_establecimiento = valor_reparto
+        if tipo_cobro == 'porcentaje_neto':
+            monto_establecimiento = (neto * valor_cobro) / 100
+        elif tipo_cobro == 'costo_fijo_neto':
+            monto_establecimiento = valor_cobro
 
         if monto_establecimiento < 0:
             monto_establecimiento = 0
-        if monto_establecimiento > precio:
-            monto_establecimiento = precio
+        if monto_establecimiento > neto:
+            monto_establecimiento = neto
 
+        servicio.neto_servicio = neto
         servicio.monto_establecimiento = monto_establecimiento
-        servicio.monto_estilista = precio - monto_establecimiento
+        servicio.monto_estilista = neto - monto_establecimiento
 
     def _generar_factura(self, servicio):
         if not servicio.numero_factura:
             servicio.numero_factura = f"FS-{timezone.now().strftime('%Y%m%d')}-{servicio.id:06d}"
 
         cliente = servicio.cliente.nombre if servicio.cliente else 'Cliente no registrado'
+        adicionales = []
+        if servicio.adicional_shampoo:
+            adicionales.append('Shampoo $4000')
+        if servicio.adicional_guantes:
+            adicionales.append('Guantes $1500')
+        if servicio.adicional_otro_producto:
+            adicionales.append(
+                f"{servicio.adicional_otro_producto.nombre} x{servicio.adicional_otro_cantidad} = ${float((servicio.adicional_otro_producto.precio_venta or 0) * servicio.adicional_otro_cantidad):.2f}"
+            )
+        adicionales_texto = ', '.join(adicionales) if adicionales else 'Sin adicionales'
+
         servicio.factura_texto = (
             f"Factura: {servicio.numero_factura}\n"
             f"Tipo: Servicio\n"
@@ -164,9 +213,12 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
             f"Estilista: {servicio.estilista.nombre}\n"
             f"Servicio: {servicio.servicio.nombre}\n"
             f"Total: ${float(servicio.precio_cobrado):.2f}\n"
+            f"Adicionales: {adicionales_texto}\n"
+            f"Valor adicionales: ${float(servicio.valor_adicionales):.2f}\n"
+            f"Neto del servicio: ${float(servicio.neto_servicio):.2f}\n"
             f"Medio de pago: {servicio.get_medio_pago_display() if servicio.medio_pago else '-'}\n"
             f"Establecimiento: ${float(servicio.monto_establecimiento):.2f}\n"
-            f"Estilista: ${float(servicio.monto_estilista):.2f}"
+            f"Empleado: ${float(servicio.monto_estilista):.2f}"
         )
 
     def create(self, validated_data):
@@ -176,6 +228,7 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
         servicio_realizado = ServicioRealizado.objects.create(**validated_data)
 
         if servicio_realizado.estado == 'finalizado':
+            self._calcular_adicionales(servicio_realizado)
             self._calcular_reparto(servicio_realizado)
             self._generar_factura(servicio_realizado)
             servicio_realizado.save()
@@ -190,6 +243,7 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
             instance.fecha_fin = timezone.now()
 
         if instance.estado == 'finalizado':
+            self._calcular_adicionales(instance)
             self._calcular_reparto(instance)
             self._generar_factura(instance)
 
@@ -219,6 +273,8 @@ class VentaProductoSerializer(serializers.ModelSerializer):
         if not venta.numero_factura:
             venta.numero_factura = f"FP-{timezone.now().strftime('%Y%m%d')}-{venta.id:06d}"
         cliente = venta.cliente_nombre or 'Cliente no registrado'
+        comision_pct = float(venta.estilista.comision_ventas_productos) if venta.estilista else 0
+        comision_valor = float(venta.total or 0) * comision_pct / 100
         venta.factura_texto = (
             f"Factura: {venta.numero_factura}\n"
             f"Tipo: Producto\n"
@@ -228,6 +284,7 @@ class VentaProductoSerializer(serializers.ModelSerializer):
             f"Cantidad: {venta.cantidad}\n"
             f"Valor unitario: ${float(venta.precio_unitario):.2f}\n"
             f"Total: ${float(venta.total):.2f}\n"
+            f"Comisión empleado por venta: {comision_pct:.2f}% (${comision_valor:.2f})\n"
             f"Medio de pago: {venta.get_medio_pago_display()}"
         )
     

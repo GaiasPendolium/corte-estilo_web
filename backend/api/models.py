@@ -36,14 +36,13 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
     
     ROLES = [
         ('administrador', 'Administrador'),
-        ('recepcionista', 'Recepcionista'),
-        ('empleado', 'Empleado'),
-        ('visualizador', 'Visualizador'),
+        ('gerente', 'Gerente'),
+        ('recepcion', 'Recepción'),
     ]
     
     username = models.CharField(max_length=150, unique=True, verbose_name='Usuario')
     nombre_completo = models.CharField(max_length=255, verbose_name='Nombre Completo')
-    rol = models.CharField(max_length=20, choices=ROLES, default='empleado', verbose_name='Rol')
+    rol = models.CharField(max_length=20, choices=ROLES, default='recepcion', verbose_name='Rol')
     activo = models.BooleanField(default=True, verbose_name='Activo')
     fecha_creacion = models.DateTimeField(default=timezone.now, verbose_name='Fecha de Creación')
     
@@ -70,9 +69,9 @@ class Estilista(models.Model):
     """Modelo de Estilista"""
     
     TIPOS_COBRO_ESPACIO = [
-        ('ninguno', 'Sin Cobro'),
-        ('alquiler', 'Alquiler Fijo'),
-        ('comision', 'Comisión sobre Ganancias'),
+        ('sin_cobro', 'Sin cobro (100% empleado)'),
+        ('porcentaje_neto', '% sobre neto del empleado'),
+        ('costo_fijo_neto', 'Costo fijo sobre neto del empleado'),
     ]
 
     nombre = models.CharField(max_length=255, verbose_name='Nombre')
@@ -96,13 +95,19 @@ class Estilista(models.Model):
         default=0,
         verbose_name='Valor Cobro Espacio'
     )
+    comision_ventas_productos = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=0,
+        verbose_name='Comisión Ventas Productos (%)'
+    )
     activo = models.BooleanField(default=True, verbose_name='Activo')
     fecha_ingreso = models.DateField(blank=True, null=True, verbose_name='Fecha de Ingreso')
     
     class Meta:
         db_table = 'estilistas'
-        verbose_name = 'Estilista'
-        verbose_name_plural = 'Estilistas'
+        verbose_name = 'Empleado'
+        verbose_name_plural = 'Empleados'
         ordering = ['nombre']
     
     def __str__(self):
@@ -266,6 +271,20 @@ class ServicioRealizado(models.Model):
     )
     monto_establecimiento = models.DecimalField(max_digits=10, decimal_places=2, default=0, verbose_name='Monto Establecimiento')
     monto_estilista = models.DecimalField(max_digits=10, decimal_places=2, default=0, verbose_name='Monto Estilista')
+    neto_servicio = models.DecimalField(max_digits=10, decimal_places=2, default=0, verbose_name='Neto Servicio')
+    tiene_adicionales = models.BooleanField(default=False, verbose_name='Tiene Adicionales')
+    adicional_shampoo = models.BooleanField(default=False, verbose_name='Adicional Shampoo')
+    adicional_guantes = models.BooleanField(default=False, verbose_name='Adicional Guantes')
+    adicional_otro_producto = models.ForeignKey(
+        Producto,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='servicios_adicionales',
+        verbose_name='Adicional Otro Producto'
+    )
+    adicional_otro_cantidad = models.IntegerField(default=1, verbose_name='Cantidad Adicional Otro')
+    valor_adicionales = models.DecimalField(max_digits=10, decimal_places=2, default=0, verbose_name='Valor Adicionales')
     numero_factura = models.CharField(max_length=40, blank=True, null=True, verbose_name='Número Factura')
     factura_texto = models.TextField(blank=True, null=True, verbose_name='Texto Factura')
     notas = models.TextField(blank=True, null=True, verbose_name='Notas')

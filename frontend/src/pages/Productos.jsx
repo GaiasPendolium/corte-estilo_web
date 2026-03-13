@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { FiEdit2, FiPlus, FiRefreshCw, FiSearch, FiTrash2 } from 'react-icons/fi';
 import { toast } from 'react-toastify';
-import { productosService } from '../services/api';
+import { productosService, serviciosService } from '../services/api';
 import ModalForm from '../components/ModalForm';
+import useAuthStore from '../store/authStore';
+import { canManageCatalog } from '../utils/roles';
 
 const INITIAL_FORM = {
   codigo_barras: '',
@@ -23,7 +25,11 @@ const extractRows = (payload) => {
 };
 
 const Productos = () => {
+  const { user } = useAuthStore();
+  const puedeEditar = canManageCatalog(user);
+  const [modoVista, setModoVista] = useState('inventario');
   const [productos, setProductos] = useState([]);
+  const [serviciosCatalogo, setServiciosCatalogo] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -31,12 +37,19 @@ const Productos = () => {
   const [form, setForm] = useState(INITIAL_FORM);
   const [codigoBusqueda, setCodigoBusqueda] = useState('');
   const [productoEncontrado, setProductoEncontrado] = useState(null);
+  const [showServicioForm, setShowServicioForm] = useState(false);
+  const [servicioEditingId, setServicioEditingId] = useState(null);
+  const [servicioForm, setServicioForm] = useState({ nombre: '', descripcion: '', precio: '', duracion_minutos: '' });
 
   const cargarProductos = async () => {
     try {
       setLoading(true);
-      const payload = await productosService.getAll();
-      setProductos(extractRows(payload));
+      const [payloadProductos, payloadServicios] = await Promise.all([
+        productosService.getAll(),
+        serviciosService.getAll(),
+      ]);
+      setProductos(extractRows(payloadProductos));
+      setServiciosCatalogo(extractRows(payloadServicios));
     } catch (error) {
       toast.error('No se pudo cargar inventario');
       setProductos([]);
@@ -51,6 +64,10 @@ const Productos = () => {
 
   const guardarProducto = async (e) => {
     e.preventDefault();
+    if (!puedeEditar) {
+      toast.warning('Solo administrador o gerente puede modificar inventario');
+      return;
+    }
     if (!form.nombre.trim()) {
       toast.warning('El nombre es obligatorio');
       return;
@@ -122,6 +139,10 @@ const Productos = () => {
   };
 
   const cambiarEstado = async (producto) => {
+    if (!puedeEditar) {
+      toast.warning('Solo administrador o gerente puede modificar inventario');
+      return;
+    }
     const accion = producto.activo ? 'desactivar' : 'activar';
     const ok = window.confirm(`¿Deseas ${accion} el producto "${producto.nombre}"?`);
     if (!ok) return;
@@ -148,6 +169,10 @@ const Productos = () => {
   };
 
   const eliminarProducto = async (producto) => {
+    if (!puedeEditar) {
+      toast.warning('Solo administrador o gerente puede modificar inventario');
+      return;
+    }
     const ok = window.confirm(`¿Eliminar el producto "${producto.nombre}"? Esta acción no se puede deshacer.`);
     if (!ok) return;
 
@@ -189,12 +214,75 @@ const Productos = () => {
     [productos]
   );
 
+  const guardarServicioCatalogo = async (e) => {
+    e.preventDefault();
+    if (!puedeEditar) {
+      toast.warning('Solo administrador o gerente puede modificar servicios');
+      return;
+    }
+    if (!servicioForm.nombre.trim() || !servicioForm.precio) {
+      toast.warning('Nombre y precio son obligatorios');
+      return;
+    }
+
+    try {
+      const payload = {
+        nombre: servicioForm.nombre.trim(),
+        descripcion: servicioForm.descripcion.trim() || null,
+        precio: Number(servicioForm.precio),
+        duracion_minutos: servicioForm.duracion_minutos ? Number(servicioForm.duracion_minutos) : null,
+        activo: true,
+      };
+      if (servicioEditingId) {
+        await serviciosService.update(servicioEditingId, payload);
+        toast.success('Servicio actualizado');
+      } else {
+        await serviciosService.create(payload);
+        toast.success('Servicio creado');
+      }
+      setShowServicioForm(false);
+      setServicioEditingId(null);
+      setServicioForm({ nombre: '', descripcion: '', precio: '', duracion_minutos: '' });
+      await cargarProductos();
+    } catch (error) {
+      toast.error('No se pudo guardar el servicio');
+    }
+  };
+
+  const editarServicioCatalogo = (servicio) => {
+    setServicioEditingId(servicio.id);
+    setServicioForm({
+      nombre: servicio.nombre || '',
+      descripcion: servicio.descripcion || '',
+      precio: String(servicio.precio || ''),
+      duracion_minutos: String(servicio.duracion_minutos || ''),
+    });
+    setShowServicioForm(true);
+  };
+
+  const eliminarServicioCatalogo = async (servicio) => {
+    if (!puedeEditar) {
+      toast.warning('Solo administrador o gerente puede modificar servicios');
+      return;
+    }
+    const ok = window.confirm(`¿Eliminar el servicio "${servicio.nombre}"?`);
+    if (!ok) return;
+
+    try {
+      await serviciosService.delete(servicio.id);
+      toast.success('Servicio eliminado');
+      await cargarProductos();
+    } catch (error) {
+      toast.error('No se pudo eliminar el servicio');
+    }
+  };
+
   return (
     <div className="space-y-6 fade-in">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Inventario de Productos</h1>
-          <p className="text-gray-600 mt-1">Gestión por código de barras, costos y comisiones</p>
+          <h1 className="text-3xl font-bold text-gray-900">Inventario y Servicio</h1>
+          <p className="text-gray-600 mt-1">Solo administrador o gerente pueden editar y eliminar</p>
         </div>
         <div className="flex gap-2">
           <button className="btn-secondary inline-flex items-center gap-2" onClick={cargarProductos} disabled={loading}>
@@ -207,11 +295,35 @@ const Productos = () => {
               setForm(INITIAL_FORM);
               setShowForm(true);
             }}
+            disabled={!puedeEditar || modoVista !== 'inventario'}
           >
-            <FiPlus /> Nuevo producto
+            <FiPlus /> {modoVista === 'inventario' ? 'Nuevo producto' : 'Nuevo servicio'}
           </button>
         </div>
       </div>
+
+      <div className="card p-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <button className={modoVista === 'inventario' ? 'btn-primary' : 'btn-secondary'} onClick={() => setModoVista('inventario')}>
+            Inventario
+          </button>
+          <button
+            className={modoVista === 'servicios' ? 'btn-primary' : 'btn-secondary'}
+            onClick={() => {
+              setModoVista('servicios');
+              if (!showServicioForm) {
+                setServicioEditingId(null);
+                setServicioForm({ nombre: '', descripcion: '', precio: '', duracion_minutos: '' });
+              }
+            }}
+          >
+            Servicios
+          </button>
+        </div>
+      </div>
+
+      {modoVista === 'inventario' && (
+      <>
 
       <div className="card">
         <h2 className="card-header">Búsqueda por lector de código de barras</h2>
@@ -330,15 +442,21 @@ const Productos = () => {
                     </td>
                     <td className="table-cell">
                       <div className="flex justify-end gap-2">
-                        <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => iniciarEdicion(p)}>
-                          <FiEdit2 size={14} /> Editar
-                        </button>
-                        <button className="btn-secondary !px-3 !py-2" onClick={() => cambiarEstado(p)}>
-                          {p.activo ? 'Desactivar' : 'Activar'}
-                        </button>
-                        <button className="btn-danger !px-3 !py-2 inline-flex items-center gap-1" onClick={() => eliminarProducto(p)}>
-                          <FiTrash2 size={14} /> Eliminar
-                        </button>
+                        {puedeEditar ? (
+                          <>
+                            <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => iniciarEdicion(p)}>
+                              <FiEdit2 size={14} /> Editar
+                            </button>
+                            <button className="btn-secondary !px-3 !py-2" onClick={() => cambiarEstado(p)}>
+                              {p.activo ? 'Desactivar' : 'Activar'}
+                            </button>
+                            <button className="btn-danger !px-3 !py-2 inline-flex items-center gap-1" onClick={() => eliminarProducto(p)}>
+                              <FiTrash2 size={14} /> Eliminar
+                            </button>
+                          </>
+                        ) : (
+                          <span className="text-sm text-gray-500">Solo visualización</span>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -348,6 +466,97 @@ const Productos = () => {
           </div>
         )}
       </div>
+      </>
+      )}
+
+      {modoVista === 'servicios' && (
+      <>
+      <div className="card">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="card-header mb-0">Catálogo de servicios</h2>
+          {puedeEditar && (
+            <button
+              className="btn-primary inline-flex items-center gap-2"
+              onClick={() => {
+                setServicioEditingId(null);
+                setServicioForm({ nombre: '', descripcion: '', precio: '', duracion_minutos: '' });
+                setShowServicioForm(true);
+              }}
+            >
+              <FiPlus /> Nuevo servicio
+            </button>
+          )}
+        </div>
+
+        {!puedeEditar && <p className="text-gray-600 mb-3">Perfil con acceso de solo lectura para servicios.</p>}
+
+        {serviciosCatalogo.length === 0 && <p className="text-gray-600">No hay servicios registrados.</p>}
+
+        {serviciosCatalogo.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="table-header">
+                <tr>
+                  <th className="px-6 py-3 text-left">Nombre</th>
+                  <th className="px-6 py-3 text-left">Descripción</th>
+                  <th className="px-6 py-3 text-left">Precio</th>
+                  <th className="px-6 py-3 text-left">Duración</th>
+                  <th className="px-6 py-3 text-right">Acciones</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {serviciosCatalogo.map((servicio) => (
+                  <tr key={servicio.id} className="hover:bg-gray-50">
+                    <td className="table-cell font-medium">{servicio.nombre}</td>
+                    <td className="table-cell">{servicio.descripcion || '-'}</td>
+                    <td className="table-cell">${Number(servicio.precio || 0).toFixed(2)}</td>
+                    <td className="table-cell">{servicio.duracion_minutos || '-'} min</td>
+                    <td className="table-cell">
+                      <div className="flex justify-end gap-2">
+                        {puedeEditar ? (
+                          <>
+                            <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => editarServicioCatalogo(servicio)}>
+                              <FiEdit2 size={14} /> Editar
+                            </button>
+                            <button className="btn-danger !px-3 !py-2 inline-flex items-center gap-1" onClick={() => eliminarServicioCatalogo(servicio)}>
+                              <FiTrash2 size={14} /> Eliminar
+                            </button>
+                          </>
+                        ) : (
+                          <span className="text-sm text-gray-500">Solo visualización</span>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <ModalForm
+        isOpen={showServicioForm}
+        onClose={() => setShowServicioForm(false)}
+        title={servicioEditingId ? 'Editar servicio' : 'Nuevo servicio'}
+        subtitle="Catálogo usado para facturación"
+        size="md"
+      >
+        <form className="space-y-3" onSubmit={guardarServicioCatalogo}>
+          <input className="input-field" placeholder="Nombre" value={servicioForm.nombre} onChange={(e) => setServicioForm((p) => ({ ...p, nombre: e.target.value }))} />
+          <input className="input-field" placeholder="Descripción" value={servicioForm.descripcion} onChange={(e) => setServicioForm((p) => ({ ...p, descripcion: e.target.value }))} />
+          <div className="grid grid-cols-2 gap-3">
+            <input className="input-field" type="number" min="0" step="0.01" placeholder="Precio" value={servicioForm.precio} onChange={(e) => setServicioForm((p) => ({ ...p, precio: e.target.value }))} />
+            <input className="input-field" type="number" min="1" placeholder="Duración (min)" value={servicioForm.duracion_minutos} onChange={(e) => setServicioForm((p) => ({ ...p, duracion_minutos: e.target.value }))} />
+          </div>
+          <div className="flex gap-2">
+            <button className="btn-primary" type="submit">{servicioEditingId ? 'Actualizar' : 'Crear servicio'}</button>
+            <button type="button" className="btn-secondary" onClick={() => setShowServicioForm(false)}>Cancelar</button>
+          </div>
+        </form>
+      </ModalForm>
+      </>
+      )}
     </div>
   );
 };

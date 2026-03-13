@@ -3,6 +3,8 @@ import { FiCopy, FiEdit2, FiPlus, FiRefreshCw, FiSearch, FiTrash2 } from 'react-
 import { toast } from 'react-toastify';
 import { estilistasService, productosService, serviciosRealizadosService, ventasService } from '../services/api';
 import ModalForm from '../components/ModalForm';
+import useAuthStore from '../store/authStore';
+import { canManageInvoices } from '../utils/roles';
 
 const MEDIOS_PAGO = [
   { value: 'nequi', label: 'Nequi' },
@@ -18,6 +20,11 @@ const extractRows = (payload) => {
 };
 
 const Ventas = () => {
+  const { user } = useAuthStore();
+  const puedeEditarFacturas = canManageInvoices(user);
+  const [modoVista, setModoVista] = useState('ventas');
+  const [fechaInicio, setFechaInicio] = useState('');
+  const [fechaFin, setFechaFin] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [editandoId, setEditandoId] = useState(null);
@@ -42,11 +49,15 @@ const Ventas = () => {
   const cargarDatos = async () => {
     try {
       setLoading(true);
+      const paramsFecha = {
+        ...(fechaInicio ? { fecha_inicio: fechaInicio } : {}),
+        ...(fechaFin ? { fecha_fin: fechaFin } : {}),
+      };
       const [productosRes, estilistasRes, ventasRes, serviciosRes] = await Promise.all([
         productosService.getAll(),
         estilistasService.getAll({ activo: true }),
-        ventasService.getAll(),
-        serviciosRealizadosService.getAll({ estado: 'finalizado' }),
+        ventasService.getAll(paramsFecha),
+        serviciosRealizadosService.getAll({ estado: 'finalizado', ...paramsFecha }),
       ]);
       setProductos(extractRows(productosRes));
       setEstilistas(extractRows(estilistasRes));
@@ -61,7 +72,7 @@ const Ventas = () => {
 
   useEffect(() => {
     cargarDatos();
-  }, []);
+  }, [fechaInicio, fechaFin]);
 
   const buscarProducto = async () => {
     if (!busquedaProducto.trim()) {
@@ -95,6 +106,11 @@ const Ventas = () => {
 
   const guardarVenta = async (e) => {
     e.preventDefault();
+
+    if (!puedeEditarFacturas) {
+      toast.warning('Solo administrador o gerente pueden crear o editar facturas');
+      return;
+    }
 
     if (!productoSeleccionado) {
       toast.warning('Selecciona un producto');
@@ -158,6 +174,10 @@ const Ventas = () => {
   };
 
   const eliminarVenta = async (venta) => {
+    if (!puedeEditarFacturas) {
+      toast.warning('Solo administrador o gerente pueden eliminar facturas');
+      return;
+    }
     const ok = window.confirm(`¿Eliminar la factura ${venta.numero_factura || venta.id}?`);
     if (!ok) return;
 
@@ -185,13 +205,18 @@ const Ventas = () => {
   };
 
   const totalVentas = useMemo(() => ventas.reduce((acc, v) => acc + Number(v.total || 0), 0), [ventas]);
+  const ticketPromedio = useMemo(() => (ventas.length ? totalVentas / ventas.length : 0), [totalVentas, ventas.length]);
+  const totalServicios = useMemo(
+    () => serviciosFinalizados.reduce((acc, s) => acc + Number(s.precio_cobrado || 0), 0),
+    [serviciosFinalizados]
+  );
 
   return (
     <div className="space-y-6 fade-in">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Facturador de Ventas</h1>
-          <p className="text-gray-600 mt-1">Facturas de productos y facturas de servicios listas para enviar por WhatsApp</p>
+          <p className="text-gray-600 mt-1">Histórico con filtros por fecha, resumen y control por perfil</p>
         </div>
         <div className="flex gap-2">
           <button className="btn-secondary inline-flex items-center gap-2" onClick={cargarDatos} disabled={loading}>
@@ -206,12 +231,47 @@ const Ventas = () => {
               setBusquedaProducto('');
               setForm({ cliente_nombre: '', estilista: '', medio_pago: 'efectivo', cantidad: '1', precio_unitario: '' });
             }}
+            disabled={!puedeEditarFacturas || modoVista !== 'ventas'}
           >
             <FiPlus /> Nueva factura
           </button>
         </div>
       </div>
 
+      <div className="card p-4 space-y-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <button className={modoVista === 'ventas' ? 'btn-primary' : 'btn-secondary'} onClick={() => setModoVista('ventas')}>
+            Ventas de productos
+          </button>
+          <button className={modoVista === 'servicios' ? 'btn-primary' : 'btn-secondary'} onClick={() => setModoVista('servicios')}>
+            Servicios facturados
+          </button>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+          <input className="input-field" type="date" value={fechaInicio} onChange={(e) => setFechaInicio(e.target.value)} />
+          <input className="input-field" type="date" value={fechaFin} onChange={(e) => setFechaFin(e.target.value)} />
+          <button className="btn-secondary" onClick={() => { setFechaInicio(''); setFechaFin(''); }}>Limpiar filtros</button>
+          <div className="text-sm text-gray-600 flex items-center">Total resultados: {modoVista === 'ventas' ? ventas.length : serviciosFinalizados.length}</div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="card">
+          <p className="text-sm text-gray-500">Total ventas productos</p>
+          <p className="text-2xl font-bold text-gray-900">${totalVentas.toFixed(2)}</p>
+        </div>
+        <div className="card">
+          <p className="text-sm text-gray-500">Ticket promedio</p>
+          <p className="text-2xl font-bold text-gray-900">${ticketPromedio.toFixed(2)}</p>
+        </div>
+        <div className="card">
+          <p className="text-sm text-gray-500">Total servicios facturados</p>
+          <p className="text-2xl font-bold text-gray-900">${totalServicios.toFixed(2)}</p>
+        </div>
+      </div>
+
+      {modoVista === 'ventas' && (
+      <>
       <ModalForm
         isOpen={showForm}
         onClose={limpiarFormulario}
@@ -304,15 +364,19 @@ const Ventas = () => {
                     <td className="table-cell">${Number(v.total || 0).toFixed(2)}</td>
                     <td className="table-cell">
                       <div className="flex justify-end gap-2">
-                        <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => editarVenta(v)}>
-                          <FiEdit2 size={14} /> Editar
-                        </button>
+                        {puedeEditarFacturas && (
+                          <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => editarVenta(v)}>
+                            <FiEdit2 size={14} /> Editar
+                          </button>
+                        )}
                         <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => copiarTexto(v.factura_texto)}>
                           <FiCopy size={14} /> Copiar
                         </button>
-                        <button className="btn-danger !px-3 !py-2 inline-flex items-center gap-1" onClick={() => eliminarVenta(v)}>
-                          <FiTrash2 size={14} /> Eliminar
-                        </button>
+                        {puedeEditarFacturas && (
+                          <button className="btn-danger !px-3 !py-2 inline-flex items-center gap-1" onClick={() => eliminarVenta(v)}>
+                            <FiTrash2 size={14} /> Eliminar
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -322,7 +386,10 @@ const Ventas = () => {
           </div>
         )}
       </div>
+      </>
+      )}
 
+      {modoVista === 'servicios' && (
       <div className="card">
         <h2 className="card-header">Facturas de servicios finalizados</h2>
         {serviciosFinalizados.length === 0 && <p className="text-gray-600">No hay servicios finalizados con factura.</p>}
@@ -357,6 +424,7 @@ const Ventas = () => {
           </div>
         )}
       </div>
+      )}
     </div>
   );
 };
