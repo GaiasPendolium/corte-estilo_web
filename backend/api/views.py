@@ -247,9 +247,9 @@ class ServicioRealizadoViewSet(viewsets.ModelViewSet):
         fecha_fin = self.request.query_params.get('fecha_fin')
         
         if fecha_inicio:
-            queryset = queryset.filter(fecha_hora__gte=fecha_inicio)
+            queryset = queryset.filter(fecha_hora__date__gte=fecha_inicio)
         if fecha_fin:
-            queryset = queryset.filter(fecha_hora__lte=fecha_fin)
+            queryset = queryset.filter(fecha_hora__date__lte=fecha_fin)
         
         return queryset
 
@@ -360,9 +360,9 @@ class VentaProductoViewSet(viewsets.ModelViewSet):
         fecha_fin = self.request.query_params.get('fecha_fin')
         
         if fecha_inicio:
-            queryset = queryset.filter(fecha_hora__gte=fecha_inicio)
+            queryset = queryset.filter(fecha_hora__date__gte=fecha_inicio)
         if fecha_fin:
-            queryset = queryset.filter(fecha_hora__lte=fecha_fin)
+            queryset = queryset.filter(fecha_hora__date__lte=fecha_fin)
         
         return queryset
     

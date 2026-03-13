@@ -29,6 +29,7 @@ const Ventas = () => {
   const [saving, setSaving] = useState(false);
   const [editandoId, setEditandoId] = useState(null);
   const [showForm, setShowForm] = useState(false);
+  const [showServicioForm, setShowServicioForm] = useState(false);
 
   const [productos, setProductos] = useState([]);
   const [estilistas, setEstilistas] = useState([]);
@@ -36,7 +37,9 @@ const Ventas = () => {
   const [serviciosFinalizados, setServiciosFinalizados] = useState([]);
 
   const [busquedaProducto, setBusquedaProducto] = useState('');
+  const [sugerenciasProducto, setSugerenciasProducto] = useState([]);
   const [productoSeleccionado, setProductoSeleccionado] = useState(null);
+  const [servicioEditando, setServicioEditando] = useState(null);
 
   const [form, setForm] = useState({
     cliente_nombre: '',
@@ -44,6 +47,12 @@ const Ventas = () => {
     medio_pago: 'efectivo',
     cantidad: '1',
     precio_unitario: '',
+  });
+
+  const [servicioForm, setServicioForm] = useState({
+    precio_cobrado: '',
+    medio_pago: 'efectivo',
+    notas: '',
   });
 
   const cargarDatos = async () => {
@@ -74,6 +83,19 @@ const Ventas = () => {
     cargarDatos();
   }, [fechaInicio, fechaFin]);
 
+  useEffect(() => {
+    const q = busquedaProducto.trim().toLowerCase();
+    if (!q) {
+      setSugerenciasProducto([]);
+      return;
+    }
+    setSugerenciasProducto(
+      productos
+        .filter((p) => (p.nombre || '').toLowerCase().includes(q) || String(p.codigo_barras || '').toLowerCase().includes(q))
+        .slice(0, 8)
+    );
+  }, [busquedaProducto, productos]);
+
   const buscarProducto = async () => {
     if (!busquedaProducto.trim()) {
       toast.warning('Ingresa código de barras o nombre');
@@ -93,6 +115,15 @@ const Ventas = () => {
       }
     } catch (error) {
       toast.error('Error en búsqueda de producto');
+    }
+  };
+
+  const seleccionarProductoSugerido = (producto) => {
+    setProductoSeleccionado(producto);
+    setBusquedaProducto(producto.codigo_barras || producto.nombre || '');
+    setSugerenciasProducto([]);
+    if (!editandoId) {
+      setForm((prev) => ({ ...prev, precio_unitario: String(producto.precio_venta || '') }));
     }
   };
 
@@ -204,6 +235,60 @@ const Ventas = () => {
     }
   };
 
+  const editarServicio = (servicio) => {
+    setServicioEditando(servicio);
+    setServicioForm({
+      precio_cobrado: String(servicio.precio_cobrado || ''),
+      medio_pago: servicio.medio_pago || 'efectivo',
+      notas: servicio.notas || '',
+    });
+    setShowServicioForm(true);
+  };
+
+  const guardarServicioEditado = async (e) => {
+    e.preventDefault();
+    if (!puedeEditarFacturas) {
+      toast.warning('Solo administrador o gerente pueden editar facturas de servicio');
+      return;
+    }
+    if (!servicioEditando) return;
+
+    try {
+      setSaving(true);
+      await serviciosRealizadosService.update(servicioEditando.id, {
+        estado: 'finalizado',
+        precio_cobrado: Number(servicioForm.precio_cobrado || 0),
+        medio_pago: servicioForm.medio_pago,
+        notas: servicioForm.notas || null,
+      });
+      toast.success('Factura de servicio actualizada');
+      setShowServicioForm(false);
+      setServicioEditando(null);
+      await cargarDatos();
+    } catch (error) {
+      toast.error('No se pudo actualizar la factura de servicio');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const eliminarServicio = async (servicio) => {
+    if (!puedeEditarFacturas) {
+      toast.warning('Solo administrador o gerente pueden eliminar facturas de servicio');
+      return;
+    }
+    const ok = window.confirm(`¿Eliminar la factura de servicio ${servicio.numero_factura || servicio.id}?`);
+    if (!ok) return;
+
+    try {
+      await serviciosRealizadosService.delete(servicio.id);
+      toast.success('Factura de servicio eliminada');
+      await cargarDatos();
+    } catch (error) {
+      toast.error('No se pudo eliminar la factura de servicio');
+    }
+  };
+
   const totalVentas = useMemo(() => ventas.reduce((acc, v) => acc + Number(v.total || 0), 0), [ventas]);
   const ticketPromedio = useMemo(() => (ventas.length ? totalVentas / ventas.length : 0), [totalVentas, ventas.length]);
   const totalServicios = useMemo(
@@ -297,6 +382,16 @@ const Ventas = () => {
           <FiSearch /> Buscar
         </button>
 
+        {sugerenciasProducto.length > 0 && (
+          <div className="md:col-span-4 rounded-lg border border-gray-200 bg-white shadow-lg max-h-56 overflow-auto">
+            {sugerenciasProducto.map((p) => (
+              <button key={p.id} type="button" className="w-full text-left px-3 py-2 hover:bg-gray-50" onClick={() => seleccionarProductoSugerido(p)}>
+                {p.nombre} - {p.codigo_barras || 'sin código'}
+              </button>
+            ))}
+          </div>
+        )}
+
         <input className="input-field" placeholder="Cliente (opcional)" value={form.cliente_nombre} onChange={(e) => setForm((p) => ({ ...p, cliente_nombre: e.target.value }))} />
         <select className="input-field" value={form.estilista} onChange={(e) => setForm((p) => ({ ...p, estilista: e.target.value }))}>
           <option value="">Estilista (opcional)</option>
@@ -343,6 +438,7 @@ const Ventas = () => {
               <thead className="table-header">
                 <tr>
                   <th className="px-6 py-3 text-left">Factura</th>
+                  <th className="px-6 py-3 text-left">Fecha</th>
                   <th className="px-6 py-3 text-left">Producto</th>
                   <th className="px-6 py-3 text-left">Cliente</th>
                   <th className="px-6 py-3 text-left">Estilista</th>
@@ -356,6 +452,7 @@ const Ventas = () => {
                 {ventas.map((v) => (
                   <tr key={v.id} className="hover:bg-gray-50">
                     <td className="table-cell">{v.numero_factura || '-'}</td>
+                    <td className="table-cell">{String(v.fecha_hora || '').slice(0, 10)}</td>
                     <td className="table-cell">{v.producto_nombre}</td>
                     <td className="table-cell">{v.cliente_nombre || '-'}</td>
                     <td className="table-cell">{v.estilista_nombre || '-'}</td>
@@ -390,6 +487,29 @@ const Ventas = () => {
       )}
 
       {modoVista === 'servicios' && (
+      <>
+      <ModalForm
+        isOpen={showServicioForm}
+        onClose={() => setShowServicioForm(false)}
+        title="Editar factura de servicio"
+        subtitle="Ajusta valores de la factura"
+        size="md"
+      >
+        <form className="space-y-3" onSubmit={guardarServicioEditado}>
+          <input className="input-field" type="number" min="0" step="0.01" placeholder="Total cobrado" value={servicioForm.precio_cobrado} onChange={(e) => setServicioForm((p) => ({ ...p, precio_cobrado: e.target.value }))} />
+          <select className="input-field" value={servicioForm.medio_pago} onChange={(e) => setServicioForm((p) => ({ ...p, medio_pago: e.target.value }))}>
+            {MEDIOS_PAGO.map((m) => (
+              <option key={m.value} value={m.value}>{m.label}</option>
+            ))}
+          </select>
+          <input className="input-field" placeholder="Notas" value={servicioForm.notas} onChange={(e) => setServicioForm((p) => ({ ...p, notas: e.target.value }))} />
+          <div className="flex gap-2">
+            <button className="btn-primary" type="submit" disabled={saving}>Guardar cambios</button>
+            <button className="btn-secondary" type="button" onClick={() => setShowServicioForm(false)}>Cancelar</button>
+          </div>
+        </form>
+      </ModalForm>
+
       <div className="card">
         <h2 className="card-header">Facturas de servicios finalizados</h2>
         {serviciosFinalizados.length === 0 && <p className="text-gray-600">No hay servicios finalizados con factura.</p>}
@@ -399,6 +519,7 @@ const Ventas = () => {
               <thead className="table-header">
                 <tr>
                   <th className="px-6 py-3 text-left">Factura</th>
+                  <th className="px-6 py-3 text-left">Fecha</th>
                   <th className="px-6 py-3 text-left">Servicio</th>
                   <th className="px-6 py-3 text-left">Cliente</th>
                   <th className="px-6 py-3 text-left">Total</th>
@@ -409,13 +530,26 @@ const Ventas = () => {
                 {serviciosFinalizados.map((s) => (
                   <tr key={s.id} className="hover:bg-gray-50">
                     <td className="table-cell">{s.numero_factura || '-'}</td>
+                    <td className="table-cell">{String(s.fecha_hora || '').slice(0, 10)}</td>
                     <td className="table-cell">{s.servicio_nombre}</td>
                     <td className="table-cell">{s.cliente_nombre || '-'}</td>
                     <td className="table-cell">${Number(s.precio_cobrado || 0).toFixed(2)}</td>
-                    <td className="table-cell text-right">
-                      <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => copiarTexto(s.factura_texto)}>
-                        <FiCopy size={14} /> Copiar
-                      </button>
+                    <td className="table-cell">
+                      <div className="flex justify-end gap-2">
+                        {puedeEditarFacturas && (
+                          <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => editarServicio(s)}>
+                            <FiEdit2 size={14} /> Editar
+                          </button>
+                        )}
+                        <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => copiarTexto(s.factura_texto)}>
+                          <FiCopy size={14} /> Copiar
+                        </button>
+                        {puedeEditarFacturas && (
+                          <button className="btn-danger !px-3 !py-2 inline-flex items-center gap-1" onClick={() => eliminarServicio(s)}>
+                            <FiTrash2 size={14} /> Eliminar
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -424,6 +558,7 @@ const Ventas = () => {
           </div>
         )}
       </div>
+      </>
       )}
     </div>
   );

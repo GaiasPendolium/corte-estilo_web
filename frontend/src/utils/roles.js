@@ -4,11 +4,18 @@ export const ROLES = [
   { value: 'recepcion', label: 'Recepción' },
 ];
 
-export const canManageCatalog = (user) => ['administrador', 'gerente'].includes(user?.rol);
+const normalizeRole = (rol) => String(rol || '').trim().toLowerCase();
 
-export const canManageInvoices = (user) => ['administrador', 'gerente'].includes(user?.rol);
+const isManagerRole = (rol) => {
+  const normalized = normalizeRole(rol);
+  return normalized === 'administrador' || normalized === 'gerente';
+};
+
+export const canManageCatalog = (user) => isManagerRole(user?.rol);
+
+export const canManageInvoices = (user) => isManagerRole(user?.rol);
 
 export const roleLabel = (rol) => {
-  const match = ROLES.find((item) => item.value === rol);
+  const match = ROLES.find((item) => item.value === normalizeRole(rol));
   return match?.label || rol || '-';
 };

@@ -151,16 +151,25 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
 
         return attrs
 
+    def _valor_adicional_rapido(self, nombre_servicio, valor_default):
+        servicio_cfg = Servicio.objects.filter(nombre__iexact=nombre_servicio, activo=True).first()
+        if not servicio_cfg:
+            return float(valor_default)
+        return float(servicio_cfg.precio or valor_default)
+
     def _calcular_adicionales(self, servicio):
         if not servicio.tiene_adicionales:
             servicio.valor_adicionales = 0
             return
 
+        valor_shampoo = self._valor_adicional_rapido('Adicional Shampoo', 4000)
+        valor_guantes = self._valor_adicional_rapido('Adicional Guantes', 1500)
+
         total_adicionales = 0
         if servicio.adicional_shampoo:
-            total_adicionales += 4000
+            total_adicionales += valor_shampoo
         if servicio.adicional_guantes:
-            total_adicionales += 1500
+            total_adicionales += valor_guantes
 
         if servicio.adicional_otro_producto:
             cantidad = int(servicio.adicional_otro_cantidad or 1)
@@ -194,11 +203,13 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
             servicio.numero_factura = f"FS-{timezone.now().strftime('%Y%m%d')}-{servicio.id:06d}"
 
         cliente = servicio.cliente.nombre if servicio.cliente else 'Cliente no registrado'
+        valor_shampoo = self._valor_adicional_rapido('Adicional Shampoo', 4000)
+        valor_guantes = self._valor_adicional_rapido('Adicional Guantes', 1500)
         adicionales = []
         if servicio.adicional_shampoo:
-            adicionales.append('Shampoo $4000')
+            adicionales.append(f'Shampoo ${valor_shampoo:.2f}')
         if servicio.adicional_guantes:
-            adicionales.append('Guantes $1500')
+            adicionales.append(f'Guantes ${valor_guantes:.2f}')
         if servicio.adicional_otro_producto:
             adicionales.append(
                 f"{servicio.adicional_otro_producto.nombre} x{servicio.adicional_otro_cantidad} = ${float((servicio.adicional_otro_producto.precio_venta or 0) * servicio.adicional_otro_cantidad):.2f}"

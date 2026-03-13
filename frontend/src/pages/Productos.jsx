@@ -36,10 +36,13 @@ const Productos = () => {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(INITIAL_FORM);
   const [codigoBusqueda, setCodigoBusqueda] = useState('');
+  const [sugerenciasProducto, setSugerenciasProducto] = useState([]);
   const [productoEncontrado, setProductoEncontrado] = useState(null);
   const [showServicioForm, setShowServicioForm] = useState(false);
   const [servicioEditingId, setServicioEditingId] = useState(null);
   const [servicioForm, setServicioForm] = useState({ nombre: '', descripcion: '', precio: '', duracion_minutos: '' });
+  const [filtroServicio, setFiltroServicio] = useState('');
+  const [adicionales, setAdicionales] = useState({ shampoo: '4000', guantes: '1500' });
 
   const cargarProductos = async () => {
     try {
@@ -61,6 +64,28 @@ const Productos = () => {
   useEffect(() => {
     cargarProductos();
   }, []);
+
+  useEffect(() => {
+    const q = codigoBusqueda.trim().toLowerCase();
+    if (!q) {
+      setSugerenciasProducto([]);
+      return;
+    }
+    setSugerenciasProducto(
+      productos
+        .filter((p) => (p.nombre || '').toLowerCase().includes(q) || String(p.codigo_barras || '').toLowerCase().includes(q))
+        .slice(0, 8)
+    );
+  }, [codigoBusqueda, productos]);
+
+  useEffect(() => {
+    const shampoo = serviciosCatalogo.find((s) => (s.nombre || '').toLowerCase() === 'adicional shampoo');
+    const guantes = serviciosCatalogo.find((s) => (s.nombre || '').toLowerCase() === 'adicional guantes');
+    setAdicionales({
+      shampoo: String(shampoo?.precio ?? 4000),
+      guantes: String(guantes?.precio ?? 1500),
+    });
+  }, [serviciosCatalogo]);
 
   const guardarProducto = async (e) => {
     e.preventDefault();
@@ -209,6 +234,12 @@ const Productos = () => {
     }
   };
 
+  const seleccionarProductoSugerido = (producto) => {
+    setProductoEncontrado(producto);
+    setCodigoBusqueda(producto.codigo_barras || producto.nombre || '');
+    setSugerenciasProducto([]);
+  };
+
   const totalInventario = useMemo(
     () => productos.reduce((acc, p) => acc + Number(p.precio_compra || 0) * Number(p.stock || 0), 0),
     [productos]
@@ -277,6 +308,44 @@ const Productos = () => {
     }
   };
 
+  const guardarAdicionalesRapidos = async () => {
+    if (!puedeEditar) {
+      toast.warning('Solo administrador o gerente puede modificar servicios');
+      return;
+    }
+
+    const upsert = async (nombre, precio) => {
+      const existente = serviciosCatalogo.find((s) => (s.nombre || '').toLowerCase() === nombre.toLowerCase());
+      const payload = {
+        nombre,
+        descripcion: 'Configuración de adicional rápido para operación diaria',
+        precio: Number(precio || 0),
+        duracion_minutos: null,
+        activo: true,
+      };
+      if (existente) {
+        await serviciosService.update(existente.id, payload);
+      } else {
+        await serviciosService.create(payload);
+      }
+    };
+
+    try {
+      await upsert('Adicional Shampoo', adicionales.shampoo);
+      await upsert('Adicional Guantes', adicionales.guantes);
+      toast.success('Valores de adicionales actualizados');
+      await cargarProductos();
+    } catch (error) {
+      toast.error('No se pudieron actualizar los adicionales');
+    }
+  };
+
+  const serviciosFiltrados = useMemo(() => {
+    const q = filtroServicio.trim().toLowerCase();
+    if (!q) return serviciosCatalogo;
+    return serviciosCatalogo.filter((s) => (s.nombre || '').toLowerCase().includes(q));
+  }, [filtroServicio, serviciosCatalogo]);
+
   return (
     <div className="space-y-6 fade-in">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -288,17 +357,19 @@ const Productos = () => {
           <button className="btn-secondary inline-flex items-center gap-2" onClick={cargarProductos} disabled={loading}>
             <FiRefreshCw className={loading ? 'animate-spin' : ''} /> Actualizar
           </button>
-          <button
-            className="btn-primary inline-flex items-center gap-2"
-            onClick={() => {
-              setEditingId(null);
-              setForm(INITIAL_FORM);
-              setShowForm(true);
-            }}
-            disabled={!puedeEditar || modoVista !== 'inventario'}
-          >
-            <FiPlus /> {modoVista === 'inventario' ? 'Nuevo producto' : 'Nuevo servicio'}
-          </button>
+          {modoVista === 'inventario' && (
+            <button
+              className="btn-primary inline-flex items-center gap-2"
+              onClick={() => {
+                setEditingId(null);
+                setForm(INITIAL_FORM);
+                setShowForm(true);
+              }}
+              disabled={!puedeEditar}
+            >
+              <FiPlus /> Nuevo producto
+            </button>
+          )}
         </div>
       </div>
 
@@ -327,10 +398,10 @@ const Productos = () => {
 
       <div className="card">
         <h2 className="card-header">Búsqueda por lector de código de barras</h2>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 relative">
           <input
             className="input-field md:col-span-3"
-            placeholder="Escanea o ingresa código de barras"
+            placeholder="Escanea o escribe código/nombre"
             value={codigoBusqueda}
             onChange={(e) => setCodigoBusqueda(e.target.value)}
             onKeyDown={(e) => {
@@ -343,6 +414,21 @@ const Productos = () => {
           <button className="btn-primary inline-flex items-center justify-center gap-2" onClick={buscarPorCodigo}>
             <FiSearch /> Buscar
           </button>
+
+          {sugerenciasProducto.length > 0 && (
+            <div className="md:col-span-4 rounded-lg border border-gray-200 bg-white shadow-lg max-h-56 overflow-auto">
+              {sugerenciasProducto.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  className="w-full text-left px-3 py-2 hover:bg-gray-50"
+                  onClick={() => seleccionarProductoSugerido(p)}
+                >
+                  {p.nombre} - {p.codigo_barras || 'sin código'}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {productoEncontrado && (
@@ -490,9 +576,46 @@ const Productos = () => {
 
         {!puedeEditar && <p className="text-gray-600 mb-3">Perfil con acceso de solo lectura para servicios.</p>}
 
+        <div className="mb-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+          <input
+            className="input-field md:col-span-2"
+            placeholder="Buscar servicio por nombre"
+            value={filtroServicio}
+            onChange={(e) => setFiltroServicio(e.target.value)}
+          />
+          <button className="btn-secondary" onClick={() => setFiltroServicio('')}>Limpiar búsqueda</button>
+        </div>
+
+        <div className="mb-5 rounded-lg border border-blue-100 bg-blue-50 p-4">
+          <h3 className="font-semibold text-blue-900 mb-2">Adicionales usados en operación diaria</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <input
+              className="input-field"
+              type="number"
+              min="0"
+              step="0.01"
+              value={adicionales.shampoo}
+              onChange={(e) => setAdicionales((p) => ({ ...p, shampoo: e.target.value }))}
+              placeholder="Valor Shampoo"
+              disabled={!puedeEditar}
+            />
+            <input
+              className="input-field"
+              type="number"
+              min="0"
+              step="0.01"
+              value={adicionales.guantes}
+              onChange={(e) => setAdicionales((p) => ({ ...p, guantes: e.target.value }))}
+              placeholder="Valor Guantes"
+              disabled={!puedeEditar}
+            />
+            <button className="btn-primary" onClick={guardarAdicionalesRapidos} disabled={!puedeEditar}>Guardar adicionales</button>
+          </div>
+        </div>
+
         {serviciosCatalogo.length === 0 && <p className="text-gray-600">No hay servicios registrados.</p>}
 
-        {serviciosCatalogo.length > 0 && (
+        {serviciosFiltrados.length > 0 && (
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="table-header">
@@ -505,7 +628,7 @@ const Productos = () => {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {serviciosCatalogo.map((servicio) => (
+                {serviciosFiltrados.map((servicio) => (
                   <tr key={servicio.id} className="hover:bg-gray-50">
                     <td className="table-cell font-medium">{servicio.nombre}</td>
                     <td className="table-cell">{servicio.descripcion || '-'}</td>

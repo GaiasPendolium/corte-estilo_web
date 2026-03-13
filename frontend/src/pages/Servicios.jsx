@@ -1,14 +1,17 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
-import { FiEdit2, FiPlus, FiRefreshCw, FiSearch, FiTrash2 } from 'react-icons/fi';
+import { FiPlus, FiRefreshCw, FiSearch } from 'react-icons/fi';
 import { toast } from 'react-toastify';
 import {
   clientesService,
   estilistasService,
   productosService,
   serviciosRealizadosService,
+  ventasService,
   serviciosService,
 } from '../services/api';
 import ModalForm from '../components/ModalForm';
+import useAuthStore from '../store/authStore';
+import { canManageInvoices } from '../utils/roles';
 
 const mediosPago = [
   { value: 'nequi', label: 'Nequi' },
@@ -26,6 +29,7 @@ const extractRows = (payload) => {
 const INITIAL_INICIO = {
   estilista: '',
   servicio: '',
+  servicio_busqueda: '',
   cliente: '',
   notas: '',
   agregar_cliente: false,
@@ -35,10 +39,12 @@ const INITIAL_INICIO = {
 };
 
 const Servicios = () => {
+  const { user } = useAuthStore();
+  const puedeFacturar = canManageInvoices(user);
+
   const [modoVista, setModoVista] = useState('servicios');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [showNuevoServicioModal, setShowNuevoServicioModal] = useState(false);
   const [showNuevoClienteModal, setShowNuevoClienteModal] = useState(false);
   const [showIniciarModal, setShowIniciarModal] = useState(false);
   const [showFinalizarModal, setShowFinalizarModal] = useState(false);
@@ -49,18 +55,15 @@ const Servicios = () => {
   const [clientes, setClientes] = useState([]);
   const [estadoEstilistas, setEstadoEstilistas] = useState([]);
   const [serviciosEnProceso, setServiciosEnProceso] = useState([]);
-  const [serviciosHistoricos, setServiciosHistoricos] = useState([]);
 
-  const [nuevoServicio, setNuevoServicio] = useState({ nombre: '', descripcion: '', precio: '', duracion_minutos: '' });
   const [nuevoCliente, setNuevoCliente] = useState({ nombre: '', telefono: '', fecha_nacimiento: '' });
   const [inicioServicio, setInicioServicio] = useState(INITIAL_INICIO);
+  const [sugerenciasServicio, setSugerenciasServicio] = useState([]);
 
   const [servicioFinalizarId, setServicioFinalizarId] = useState('');
   const [finalizacion, setFinalizacion] = useState({
     precio_cobrado: '',
     medio_pago: 'efectivo',
-    tipo_reparto_establecimiento: 'porcentaje',
-    valor_reparto_establecimiento: '',
     tiene_adicionales: false,
     adicional_shampoo: false,
     adicional_guantes: false,
@@ -69,15 +72,27 @@ const Servicios = () => {
     busqueda_adicional: '',
     notas: '',
   });
+  const [sugerenciasAdicional, setSugerenciasAdicional] = useState([]);
+
+  const [ventaForm, setVentaForm] = useState({
+    cliente_nombre: '',
+    estilista: '',
+    medio_pago: 'efectivo',
+    cantidad: '1',
+    precio_unitario: '',
+  });
+  const [ventaBusqueda, setVentaBusqueda] = useState('');
+  const [ventaSugerencias, setVentaSugerencias] = useState([]);
+  const [productoVentaSeleccionado, setProductoVentaSeleccionado] = useState(null);
 
   const cargarTodo = async () => {
     try {
       setLoading(true);
       const [estilistasRes, serviciosRes, clientesRes, serviciosRealizadosRes, estadoRes, productosRes] = await Promise.all([
-        estilistasService.getAll(),
-        serviciosService.getAll(),
+        estilistasService.getAll({ activo: true }),
+        serviciosService.getAll({ activo: true }),
         clientesService.getAll(),
-        serviciosRealizadosService.getAll(),
+        serviciosRealizadosService.getAll({ estado: 'en_proceso' }),
         serviciosRealizadosService.getEstadoEstilistas(),
         productosService.getAll({ activo: true }),
       ]);
@@ -94,7 +109,6 @@ const Servicios = () => {
       setProductos(listaProductos);
       setEstadoEstilistas(Array.isArray(estadoRes) ? estadoRes : []);
       setServiciosEnProceso(listaRealizados.filter((s) => s.estado === 'en_proceso'));
-      setServiciosHistoricos(listaRealizados);
     } catch (error) {
       toast.error('No se pudo cargar el módulo operativo');
     } finally {
@@ -105,6 +119,41 @@ const Servicios = () => {
   useEffect(() => {
     cargarTodo();
   }, []);
+
+  useEffect(() => {
+    const q = inicioServicio.servicio_busqueda.trim().toLowerCase();
+    if (!q) {
+      setSugerenciasServicio([]);
+      return;
+    }
+    setSugerenciasServicio(servicios.filter((s) => s.nombre?.toLowerCase().includes(q)).slice(0, 8));
+  }, [inicioServicio.servicio_busqueda, servicios]);
+
+  useEffect(() => {
+    const q = finalizacion.busqueda_adicional.trim().toLowerCase();
+    if (!q) {
+      setSugerenciasAdicional([]);
+      return;
+    }
+    setSugerenciasAdicional(
+      productos
+        .filter((p) => (p.nombre || '').toLowerCase().includes(q) || String(p.codigo_barras || '').toLowerCase().includes(q))
+        .slice(0, 8)
+    );
+  }, [finalizacion.busqueda_adicional, productos]);
+
+  useEffect(() => {
+    const q = ventaBusqueda.trim().toLowerCase();
+    if (!q) {
+      setVentaSugerencias([]);
+      return;
+    }
+    setVentaSugerencias(
+      productos
+        .filter((p) => (p.nombre || '').toLowerCase().includes(q) || String(p.codigo_barras || '').toLowerCase().includes(q))
+        .slice(0, 8)
+    );
+  }, [ventaBusqueda, productos]);
 
   const estilistasOcupados = useMemo(
     () => new Set(estadoEstilistas.filter((e) => e.estado === 'ocupado').map((e) => e.estilista_id)),
@@ -121,10 +170,26 @@ const Servicios = () => {
     [servicios, inicioServicio.servicio]
   );
 
-  const servicioSeleccionadoFinalizacion = useMemo(
-    () => serviciosHistoricos.find((s) => String(s.id) === String(servicioFinalizarId)),
-    [serviciosHistoricos, servicioFinalizarId]
+  const servicioEnProcesoSeleccionado = useMemo(
+    () => serviciosEnProceso.find((s) => String(s.id) === String(servicioFinalizarId)),
+    [serviciosEnProceso, servicioFinalizarId]
   );
+
+  const valorShampoo = useMemo(() => {
+    const srv = servicios.find((s) => (s.nombre || '').toLowerCase() === 'adicional shampoo');
+    return Number(srv?.precio || 4000);
+  }, [servicios]);
+
+  const valorGuantes = useMemo(() => {
+    const srv = servicios.find((s) => (s.nombre || '').toLowerCase() === 'adicional guantes');
+    return Number(srv?.precio || 1500);
+  }, [servicios]);
+
+  const totalVentaCaja = useMemo(() => {
+    const cantidad = Number(ventaForm.cantidad || 0);
+    const precio = Number(ventaForm.precio_unitario || 0);
+    return cantidad * precio;
+  }, [ventaForm]);
 
   const abrirInicioDesdePanel = (estilistaId) => {
     setInicioServicio({ ...INITIAL_INICIO, estilista: String(estilistaId) });
@@ -137,8 +202,6 @@ const Servicios = () => {
     setFinalizacion({
       precio_cobrado: srv.precio_cobrado || '',
       medio_pago: srv.medio_pago || 'efectivo',
-      tipo_reparto_establecimiento: srv.tipo_reparto_establecimiento || 'porcentaje',
-      valor_reparto_establecimiento: srv.valor_reparto_establecimiento || '',
       tiene_adicionales: Boolean(srv.tiene_adicionales),
       adicional_shampoo: Boolean(srv.adicional_shampoo),
       adicional_guantes: Boolean(srv.adicional_guantes),
@@ -149,74 +212,13 @@ const Servicios = () => {
     });
   };
 
-  const eliminarServicioHistorico = async (srv) => {
-    const ok = window.confirm(`¿Eliminar factura de servicio ${srv.numero_factura || srv.id}?`);
-    if (!ok) return;
-
-    try {
-      await serviciosRealizadosService.delete(srv.id);
-      toast.success('Servicio eliminado');
-      await cargarTodo();
-    } catch (error) {
-      toast.error('No se pudo eliminar el servicio');
-    }
-  };
-
-  const buscarProductoAdicional = async () => {
-    if (!finalizacion.busqueda_adicional.trim()) {
-      toast.warning('Escribe nombre o código de barras');
-      return;
-    }
-
-    try {
-      const payload = await productosService.getAll({ search: finalizacion.busqueda_adicional.trim(), activo: true });
-      const encontrados = extractRows(payload);
-      const exacto = encontrados.find((p) => p.codigo_barras === finalizacion.busqueda_adicional.trim());
-      const producto = exacto || encontrados[0] || null;
-      if (!producto) {
-        toast.info('No se encontró producto para adicional');
-        return;
-      }
-      setFinalizacion((p) => ({ ...p, adicional_otro_producto: String(producto.id) }));
-    } catch (error) {
-      toast.error('No se pudo buscar el producto adicional');
-    }
-  };
-
   const prepararFinalizacionPorTarjeta = (tarjeta) => {
     const srv = serviciosEnProceso.find((s) => s.id === tarjeta.servicio_realizado_id);
     if (!srv) {
-      toast.warning('No se encontro el servicio en proceso');
+      toast.warning('No se encontró el servicio en proceso');
       return;
     }
     prepararFinalizacion(srv);
-  };
-
-  const crearServicioCatalogo = async (e) => {
-    e.preventDefault();
-    if (!nuevoServicio.nombre.trim() || !nuevoServicio.precio) {
-      toast.warning('Nombre y precio del servicio son obligatorios');
-      return;
-    }
-
-    try {
-      setSaving(true);
-      await serviciosService.create({
-        nombre: nuevoServicio.nombre.trim(),
-        descripcion: nuevoServicio.descripcion.trim() || null,
-        precio: Number(nuevoServicio.precio),
-        duracion_minutos: nuevoServicio.duracion_minutos ? Number(nuevoServicio.duracion_minutos) : null,
-        activo: true,
-      });
-      toast.success('Servicio del catalogo creado');
-      setNuevoServicio({ nombre: '', descripcion: '', precio: '', duracion_minutos: '' });
-      setShowNuevoServicioModal(false);
-      await cargarTodo();
-    } catch (error) {
-      toast.error('No se pudo crear el servicio');
-    } finally {
-      setSaving(false);
-    }
   };
 
   const crearCliente = async (e) => {
@@ -247,12 +249,12 @@ const Servicios = () => {
   const iniciarServicio = async (e) => {
     e.preventDefault();
     if (!inicioServicio.estilista || !inicioServicio.servicio) {
-      toast.warning('Selecciona estilista y servicio');
+      toast.warning('Selecciona empleado y servicio');
       return;
     }
 
     if (estilistasOcupados.has(Number(inicioServicio.estilista))) {
-      toast.warning('Ese estilista ya esta ocupado');
+      toast.warning('Ese empleado ya está ocupado');
       return;
     }
 
@@ -286,7 +288,7 @@ const Servicios = () => {
         notas: inicioServicio.notas || null,
       });
 
-      toast.success('Servicio iniciado, estilista en estado ocupado');
+      toast.success('Servicio iniciado, empleado en estado ocupado');
       setInicioServicio(INITIAL_INICIO);
       setShowIniciarModal(false);
       await cargarTodo();
@@ -310,14 +312,9 @@ const Servicios = () => {
 
     try {
       setSaving(true);
-      const seleccionado = serviciosHistoricos.find((s) => String(s.id) === String(servicioFinalizarId));
-      const payload = {
+      const res = await serviciosRealizadosService.finalizar(servicioFinalizarId, {
         precio_cobrado: Number(finalizacion.precio_cobrado),
         medio_pago: finalizacion.medio_pago,
-        tipo_reparto_establecimiento: finalizacion.tipo_reparto_establecimiento,
-        valor_reparto_establecimiento: finalizacion.valor_reparto_establecimiento
-          ? Number(finalizacion.valor_reparto_establecimiento)
-          : 0,
         tiene_adicionales: finalizacion.tiene_adicionales,
         adicional_shampoo: finalizacion.tiene_adicionales ? finalizacion.adicional_shampoo : false,
         adicional_guantes: finalizacion.tiene_adicionales ? finalizacion.adicional_guantes : false,
@@ -327,29 +324,19 @@ const Servicios = () => {
             : null,
         adicional_otro_cantidad: Number(finalizacion.adicional_otro_cantidad || 1),
         notas: finalizacion.notas || null,
-      };
+      });
 
-      let res;
-      if (seleccionado?.estado === 'finalizado') {
-        res = await serviciosRealizadosService.update(servicioFinalizarId, {
-          ...payload,
-          estado: 'finalizado',
-        });
-      } else {
-        res = await serviciosRealizadosService.finalizar(servicioFinalizarId, payload);
-      }
       toast.success(
         `Factura guardada. Empleado: $${Number(res.monto_estilista || 0).toFixed(2)} | Establecimiento: $${Number(
           res.monto_establecimiento || 0
         ).toFixed(2)}`
       );
+
       setServicioFinalizarId('');
       setShowFinalizarModal(false);
       setFinalizacion({
         precio_cobrado: '',
         medio_pago: 'efectivo',
-        tipo_reparto_establecimiento: 'porcentaje',
-        valor_reparto_establecimiento: '',
         tiene_adicionales: false,
         adicional_shampoo: false,
         adicional_guantes: false,
@@ -367,19 +354,66 @@ const Servicios = () => {
     }
   };
 
+  const seleccionarProductoCaja = (producto) => {
+    setProductoVentaSeleccionado(producto);
+    setVentaBusqueda(producto.nombre || '');
+    setVentaSugerencias([]);
+    setVentaForm((prev) => ({ ...prev, precio_unitario: String(producto.precio_venta || '') }));
+  };
+
+  const registrarVentaCaja = async (e) => {
+    e.preventDefault();
+    if (!puedeFacturar) {
+      toast.warning('Solo administrador o gerente pueden crear facturas');
+      return;
+    }
+    if (!productoVentaSeleccionado) {
+      toast.warning('Selecciona un producto');
+      return;
+    }
+
+    const cantidad = Number(ventaForm.cantidad || 0);
+    const precioUnitario = Number(ventaForm.precio_unitario || 0);
+    if (cantidad <= 0 || precioUnitario <= 0) {
+      toast.warning('Cantidad y valor unitario deben ser mayores a cero');
+      return;
+    }
+
+    try {
+      setSaving(true);
+      await ventasService.create({
+        producto: productoVentaSeleccionado.id,
+        cantidad,
+        precio_unitario: precioUnitario,
+        cliente_nombre: ventaForm.cliente_nombre.trim() || null,
+        estilista: ventaForm.estilista ? Number(ventaForm.estilista) : null,
+        medio_pago: ventaForm.medio_pago,
+      });
+
+      toast.success('Venta registrada correctamente');
+      setVentaForm({ cliente_nombre: '', estilista: '', medio_pago: 'efectivo', cantidad: '1', precio_unitario: '' });
+      setVentaBusqueda('');
+      setProductoVentaSeleccionado(null);
+      setVentaSugerencias([]);
+      await cargarTodo();
+    } catch (error) {
+      const msg = error?.response?.data?.cantidad?.[0] || error?.response?.data?.detail || 'No se pudo registrar la venta';
+      toast.error(String(msg));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="space-y-6 fade-in">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Operación diaria y facturación</h1>
-          <p className="text-gray-600 mt-1">Gestiona servicios por empleado y genera factura con adicionales</p>
+          <h1 className="text-3xl font-bold text-gray-900">Operación diaria</h1>
+          <p className="text-gray-600 mt-1">Gestiona servicios en curso y caja rápida de venta</p>
         </div>
         <div className="flex flex-wrap gap-2 justify-end">
           <button className="btn-secondary inline-flex items-center gap-2" onClick={cargarTodo} disabled={loading}>
             <FiRefreshCw className={loading ? 'animate-spin' : ''} /> Actualizar
-          </button>
-          <button className="btn-primary inline-flex items-center gap-2" onClick={() => setShowNuevoServicioModal(true)}>
-            <FiPlus /> Nuevo servicio
           </button>
           <button className="btn-primary inline-flex items-center gap-2" onClick={() => setShowNuevoClienteModal(true)}>
             <FiPlus /> Nuevo cliente
@@ -389,33 +423,87 @@ const Servicios = () => {
 
       <div className="card p-2">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          <button
-            className={`${modoVista === 'servicios' ? 'btn-primary' : 'btn-secondary'}`}
-            onClick={() => setModoVista('servicios')}
-          >
+          <button className={modoVista === 'servicios' ? 'btn-primary' : 'btn-secondary'} onClick={() => setModoVista('servicios')}>
             Modo servicios
           </button>
-          <button
-            className={`${modoVista === 'ventas' ? 'btn-primary' : 'btn-secondary'}`}
-            onClick={() => setModoVista('ventas')}
-          >
-            Modo venta de productos
+          <button className={modoVista === 'ventas' ? 'btn-primary' : 'btn-secondary'} onClick={() => setModoVista('ventas')}>
+            Modo venta productos
           </button>
         </div>
       </div>
 
       {modoVista === 'ventas' && (
-        <div className="card border border-blue-200 bg-blue-50">
-          <h2 className="card-header">Venta de productos</h2>
-          <p className="text-blue-900">Para crear y editar facturas de productos usa el módulo de Histórico de ventas, donde ya tienes filtros por fecha y resumen.</p>
+        <div className="card space-y-4">
+          <h2 className="card-header">Caja registradora - Venta de productos</h2>
+          {!puedeFacturar && <p className="text-amber-700">Este perfil solo puede visualizar. Para facturar usa Administrador o Gerente.</p>}
+
+          <form className="grid grid-cols-1 md:grid-cols-4 gap-3" onSubmit={registrarVentaCaja}>
+            <div className="md:col-span-4 relative">
+              <label className="block text-sm text-gray-600 mb-1">Escanear código de barras o buscar por nombre</label>
+              <input
+                className="input-field"
+                placeholder="Ej: 770123456 o Shampoo"
+                value={ventaBusqueda}
+                onChange={(e) => setVentaBusqueda(e.target.value)}
+              />
+              {ventaSugerencias.length > 0 && (
+                <div className="absolute z-20 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg max-h-56 overflow-auto">
+                  {ventaSugerencias.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      className="w-full text-left px-3 py-2 hover:bg-gray-50"
+                      onClick={() => seleccionarProductoCaja(p)}
+                    >
+                      {p.nombre} - ${Number(p.precio_venta || 0).toFixed(2)} (stock {p.stock})
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <input className="input-field" placeholder="Cliente" value={ventaForm.cliente_nombre} onChange={(e) => setVentaForm((p) => ({ ...p, cliente_nombre: e.target.value }))} />
+
+            <select className="input-field" value={ventaForm.estilista} onChange={(e) => setVentaForm((p) => ({ ...p, estilista: e.target.value }))}>
+              <option value="">Empleado (opcional)</option>
+              {estilistas.map((e) => (
+                <option key={e.id} value={e.id}>{e.nombre}</option>
+              ))}
+            </select>
+
+            <select className="input-field" value={ventaForm.medio_pago} onChange={(e) => setVentaForm((p) => ({ ...p, medio_pago: e.target.value }))}>
+              {mediosPago.map((m) => (
+                <option key={m.value} value={m.value}>{m.label}</option>
+              ))}
+            </select>
+
+            <input className="input-field" type="number" min="1" placeholder="Cantidad" value={ventaForm.cantidad} onChange={(e) => setVentaForm((p) => ({ ...p, cantidad: e.target.value }))} />
+            <input className="input-field" type="number" min="0" step="0.01" placeholder="Valor unitario" value={ventaForm.precio_unitario} onChange={(e) => setVentaForm((p) => ({ ...p, precio_unitario: e.target.value }))} />
+
+            <div className="md:col-span-4 rounded-lg border border-blue-200 bg-blue-50 p-4 flex items-center justify-between">
+              <div>
+                <p className="text-sm text-blue-800">Producto seleccionado</p>
+                <p className="font-semibold text-blue-950">{productoVentaSeleccionado?.nombre || 'Ninguno'}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-sm text-blue-800">Total a cobrar</p>
+                <p className="text-2xl font-bold text-blue-950">${totalVentaCaja.toFixed(2)}</p>
+              </div>
+            </div>
+
+            <div className="md:col-span-4">
+              <button className="btn-primary w-full" type="submit" disabled={saving || !puedeFacturar}>
+                {saving ? 'Guardando...' : 'Registrar venta'}
+              </button>
+            </div>
+          </form>
         </div>
       )}
 
       {modoVista === 'servicios' && (
       <>
-
       <div className="card border border-dashed border-gray-300 bg-gray-50">
-        <p className="text-gray-700">Tip: usa directamente los botones de cada tarjeta en el panel de empleados para cambiar entre libre y ocupado.</p>
+        <p className="text-gray-700">Tip: usa los botones en cada tarjeta para iniciar o finalizar servicio rápidamente.</p>
       </div>
 
       <div className="card">
@@ -456,7 +544,7 @@ const Servicios = () => {
                   <th className="px-6 py-3 text-left">Servicio</th>
                   <th className="px-6 py-3 text-left">Cliente</th>
                   <th className="px-6 py-3 text-left">Precio base</th>
-                  <th className="px-6 py-3 text-right">Accion</th>
+                  <th className="px-6 py-3 text-right">Acción</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
@@ -478,38 +566,19 @@ const Servicios = () => {
           </div>
         )}
       </div>
-
-      <ModalForm
-        isOpen={showNuevoServicioModal}
-        onClose={() => setShowNuevoServicioModal(false)}
-        title="Nuevo servicio de catalogo"
-        subtitle="Crea un servicio para usarlo en la operacion diaria"
-        size="md"
-      >
-        <form className="space-y-3" onSubmit={crearServicioCatalogo}>
-          <input className="input-field" placeholder="Nombre del servicio" value={nuevoServicio.nombre} onChange={(e) => setNuevoServicio((p) => ({ ...p, nombre: e.target.value }))} />
-          <input className="input-field" placeholder="Descripcion" value={nuevoServicio.descripcion} onChange={(e) => setNuevoServicio((p) => ({ ...p, descripcion: e.target.value }))} />
-          <div className="grid grid-cols-2 gap-3">
-            <input className="input-field" type="number" min="0" step="0.01" placeholder="Precio" value={nuevoServicio.precio} onChange={(e) => setNuevoServicio((p) => ({ ...p, precio: e.target.value }))} />
-            <input className="input-field" type="number" min="1" placeholder="Duracion (min)" value={nuevoServicio.duracion_minutos} onChange={(e) => setNuevoServicio((p) => ({ ...p, duracion_minutos: e.target.value }))} />
-          </div>
-          <div className="flex gap-2">
-            <button className="btn-primary" type="submit" disabled={saving}>Crear servicio</button>
-            <button className="btn-secondary" type="button" onClick={() => setShowNuevoServicioModal(false)}>Cancelar</button>
-          </div>
-        </form>
-      </ModalForm>
+      </>
+      )}
 
       <ModalForm
         isOpen={showNuevoClienteModal}
         onClose={() => setShowNuevoClienteModal(false)}
         title="Nuevo cliente"
-        subtitle="Registro rapido de cliente"
+        subtitle="Registro rápido"
         size="md"
       >
         <form className="space-y-3" onSubmit={crearCliente}>
           <input className="input-field" placeholder="Nombre del cliente" value={nuevoCliente.nombre} onChange={(e) => setNuevoCliente((p) => ({ ...p, nombre: e.target.value }))} />
-          <input className="input-field" placeholder="Telefono" value={nuevoCliente.telefono} onChange={(e) => setNuevoCliente((p) => ({ ...p, telefono: e.target.value }))} />
+          <input className="input-field" placeholder="Teléfono" value={nuevoCliente.telefono} onChange={(e) => setNuevoCliente((p) => ({ ...p, telefono: e.target.value }))} />
           <input className="input-field" type="date" value={nuevoCliente.fecha_nacimiento} onChange={(e) => setNuevoCliente((p) => ({ ...p, fecha_nacimiento: e.target.value }))} />
           <div className="flex gap-2">
             <button className="btn-primary" type="submit" disabled={saving}>Guardar cliente</button>
@@ -522,7 +591,7 @@ const Servicios = () => {
         isOpen={showIniciarModal}
         onClose={() => setShowIniciarModal(false)}
         title="Iniciar servicio"
-        subtitle="Tipo de servicio, cobro estipulado y cliente opcional"
+        subtitle="Selecciona el servicio y cliente"
         size="lg"
       >
         <form className="grid grid-cols-1 md:grid-cols-4 gap-3" onSubmit={iniciarServicio}>
@@ -533,12 +602,28 @@ const Servicios = () => {
             ))}
           </select>
 
-          <select className="input-field" value={inicioServicio.servicio} onChange={(e) => setInicioServicio((p) => ({ ...p, servicio: e.target.value }))}>
-            <option value="">Selecciona servicio</option>
-            {servicios.map((s) => (
-              <option key={s.id} value={s.id}>{s.nombre}</option>
-            ))}
-          </select>
+          <div className="md:col-span-2 relative">
+            <input
+              className="input-field"
+              placeholder="Buscar servicio por nombre"
+              value={inicioServicio.servicio_busqueda}
+              onChange={(e) => setInicioServicio((p) => ({ ...p, servicio_busqueda: e.target.value, servicio: '' }))}
+            />
+            {sugerenciasServicio.length > 0 && (
+              <div className="absolute z-20 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg max-h-56 overflow-auto">
+                {sugerenciasServicio.map((s) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    className="w-full text-left px-3 py-2 hover:bg-gray-50"
+                    onClick={() => setInicioServicio((p) => ({ ...p, servicio: String(s.id), servicio_busqueda: s.nombre }))}
+                  >
+                    {s.nombre} - ${Number(s.precio || 0).toFixed(2)}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
 
           <select
             className="input-field"
@@ -552,11 +637,11 @@ const Servicios = () => {
             ))}
           </select>
 
-          <input className="input-field" placeholder="Notas (opcional)" value={inicioServicio.notas} onChange={(e) => setInicioServicio((p) => ({ ...p, notas: e.target.value }))} />
+          <input className="input-field md:col-span-4" placeholder="Notas (opcional)" value={inicioServicio.notas} onChange={(e) => setInicioServicio((p) => ({ ...p, notas: e.target.value }))} />
 
           <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900 md:col-span-4">
             <p><strong>Empleado:</strong> {estilistaSeleccionadoInicio?.nombre || 'Sin seleccionar'}</p>
-            <p><strong>Tipo de servicio:</strong> {servicioSeleccionadoInicio?.nombre || 'Sin seleccionar'}</p>
+            <p><strong>Servicio:</strong> {servicioSeleccionadoInicio?.nombre || 'Sin seleccionar'}</p>
             <p><strong>Cobro estipulado:</strong> ${Number(servicioSeleccionadoInicio?.precio || 0).toFixed(2)}</p>
           </div>
 
@@ -566,34 +651,19 @@ const Servicios = () => {
               checked={inicioServicio.agregar_cliente}
               onChange={(e) => setInicioServicio((p) => ({ ...p, agregar_cliente: e.target.checked, cliente: e.target.checked ? '' : p.cliente }))}
             />
-            Agregar informacion de cliente
+            Agregar información de cliente
           </label>
 
           {inicioServicio.agregar_cliente && (
             <>
-              <input
-                className="input-field"
-                placeholder="Nombre cliente"
-                value={inicioServicio.cliente_nombre}
-                onChange={(e) => setInicioServicio((p) => ({ ...p, cliente_nombre: e.target.value }))}
-              />
-              <input
-                className="input-field"
-                placeholder="Telefono"
-                value={inicioServicio.cliente_telefono}
-                onChange={(e) => setInicioServicio((p) => ({ ...p, cliente_telefono: e.target.value }))}
-              />
-              <input
-                className="input-field"
-                type="date"
-                value={inicioServicio.cliente_fecha_nacimiento}
-                onChange={(e) => setInicioServicio((p) => ({ ...p, cliente_fecha_nacimiento: e.target.value }))}
-              />
+              <input className="input-field" placeholder="Nombre cliente" value={inicioServicio.cliente_nombre} onChange={(e) => setInicioServicio((p) => ({ ...p, cliente_nombre: e.target.value }))} />
+              <input className="input-field" placeholder="Teléfono" value={inicioServicio.cliente_telefono} onChange={(e) => setInicioServicio((p) => ({ ...p, cliente_telefono: e.target.value }))} />
+              <input className="input-field" type="date" value={inicioServicio.cliente_fecha_nacimiento} onChange={(e) => setInicioServicio((p) => ({ ...p, cliente_fecha_nacimiento: e.target.value }))} />
             </>
           )}
 
           <div className="md:col-span-4 flex gap-2">
-            <button className="btn-primary" type="submit" disabled={saving}>Iniciar y marcar ocupado</button>
+            <button className="btn-primary" type="submit" disabled={saving}>Iniciar servicio</button>
             <button className="btn-secondary" type="button" onClick={() => setShowIniciarModal(false)}>Cancelar</button>
           </div>
         </form>
@@ -603,21 +673,20 @@ const Servicios = () => {
         isOpen={showFinalizarModal}
         onClose={() => setShowFinalizarModal(false)}
         title="Finalizar servicio"
-        subtitle="Cierra factura y registra adicionales"
+        subtitle="Confirma pago y adicionales"
         size="lg"
       >
         <form className="grid grid-cols-1 md:grid-cols-3 gap-3" onSubmit={finalizarServicio}>
           <select className="input-field" value={servicioFinalizarId} onChange={(e) => setServicioFinalizarId(e.target.value)}>
-            <option value="">Selecciona factura de servicio</option>
-            {serviciosHistoricos.map((srv) => (
-              <option key={srv.id} value={srv.id}>{srv.estilista_nombre} - {srv.servicio_nombre} ({srv.estado})</option>
+            <option value="">Servicio en proceso a finalizar</option>
+            {serviciosEnProceso.map((srv) => (
+              <option key={srv.id} value={srv.id}>{srv.estilista_nombre} - {srv.servicio_nombre}</option>
             ))}
           </select>
 
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 md:col-span-2">
-            <p><strong>Tipo de servicio:</strong> {servicioSeleccionadoFinalizacion?.servicio_nombre || 'Sin seleccionar'}</p>
-            <p><strong>Cobro estipulado:</strong> ${Number(servicioSeleccionadoFinalizacion?.precio_cobrado || 0).toFixed(2)}</p>
-            <p><strong>Cliente:</strong> {servicioSeleccionadoFinalizacion?.cliente_nombre || 'No registrado'}</p>
+            <p><strong>Servicio:</strong> {servicioEnProcesoSeleccionado?.servicio_nombre || 'Sin seleccionar'}</p>
+            <p><strong>Cliente:</strong> {servicioEnProcesoSeleccionado?.cliente_nombre || 'No registrado'}</p>
           </div>
 
           <input className="input-field" type="number" min="0" step="0.01" placeholder="Total servicio" value={finalizacion.precio_cobrado} onChange={(e) => setFinalizacion((p) => ({ ...p, precio_cobrado: e.target.value }))} />
@@ -627,13 +696,6 @@ const Servicios = () => {
               <option key={m.value} value={m.value}>{m.label}</option>
             ))}
           </select>
-
-          <select className="input-field" value={finalizacion.tipo_reparto_establecimiento} onChange={(e) => setFinalizacion((p) => ({ ...p, tipo_reparto_establecimiento: e.target.value }))}>
-            <option value="porcentaje">El establecimiento se queda porcentaje</option>
-            <option value="monto">El establecimiento se queda monto fijo</option>
-          </select>
-
-          <input className="input-field" type="number" min="0" step="0.01" placeholder={finalizacion.tipo_reparto_establecimiento === 'porcentaje' ? 'Porcentaje para establecimiento' : 'Monto para establecimiento'} value={finalizacion.valor_reparto_establecimiento} onChange={(e) => setFinalizacion((p) => ({ ...p, valor_reparto_establecimiento: e.target.value }))} />
 
           <input className="input-field" placeholder="Notas finales (opcional)" value={finalizacion.notas} onChange={(e) => setFinalizacion((p) => ({ ...p, notas: e.target.value }))} />
 
@@ -649,51 +711,43 @@ const Servicios = () => {
           {finalizacion.tiene_adicionales && (
             <>
               <label className="inline-flex items-center gap-2 text-sm text-gray-700">
-                <input
-                  type="checkbox"
-                  checked={finalizacion.adicional_shampoo}
-                  onChange={(e) => setFinalizacion((p) => ({ ...p, adicional_shampoo: e.target.checked }))}
-                />
-                Shampoo ($4000)
+                <input type="checkbox" checked={finalizacion.adicional_shampoo} onChange={(e) => setFinalizacion((p) => ({ ...p, adicional_shampoo: e.target.checked }))} />
+                Shampoo (${valorShampoo.toFixed(0)})
               </label>
 
               <label className="inline-flex items-center gap-2 text-sm text-gray-700">
-                <input
-                  type="checkbox"
-                  checked={finalizacion.adicional_guantes}
-                  onChange={(e) => setFinalizacion((p) => ({ ...p, adicional_guantes: e.target.checked }))}
-                />
-                Guantes ($1500)
+                <input type="checkbox" checked={finalizacion.adicional_guantes} onChange={(e) => setFinalizacion((p) => ({ ...p, adicional_guantes: e.target.checked }))} />
+                Guantes (${valorGuantes.toFixed(0)})
               </label>
 
-              <div className="grid grid-cols-3 gap-2 md:col-span-3">
+              <div className="md:col-span-3 relative">
                 <input
-                  className="input-field col-span-2"
+                  className="input-field"
                   placeholder="Otro producto por nombre o código"
                   value={finalizacion.busqueda_adicional}
-                  onChange={(e) => setFinalizacion((p) => ({ ...p, busqueda_adicional: e.target.value }))}
+                  onChange={(e) => setFinalizacion((p) => ({ ...p, busqueda_adicional: e.target.value, adicional_otro_producto: '' }))}
                 />
-                <button type="button" className="btn-secondary inline-flex items-center justify-center gap-2" onClick={buscarProductoAdicional}>
-                  <FiSearch /> Buscar producto
-                </button>
+                {sugerenciasAdicional.length > 0 && (
+                  <div className="absolute z-20 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg max-h-56 overflow-auto">
+                    {sugerenciasAdicional.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        className="w-full text-left px-3 py-2 hover:bg-gray-50"
+                        onClick={() => setFinalizacion((f) => ({ ...f, adicional_otro_producto: String(p.id), busqueda_adicional: p.nombre }))}
+                      >
+                        {p.nombre} - ${Number(p.precio_venta || 0).toFixed(2)} (stock {p.stock})
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
 
-              <select
-                className="input-field md:col-span-2"
-                value={finalizacion.adicional_otro_producto}
-                onChange={(e) => setFinalizacion((p) => ({ ...p, adicional_otro_producto: e.target.value }))}
-              >
-                <option value="">Sin otro producto</option>
-                {productos.map((p) => (
-                  <option key={p.id} value={p.id}>{p.nombre} - ${Number(p.precio_venta || 0).toFixed(2)} (stock {p.stock})</option>
-                ))}
-              </select>
-
               <input
-                className="input-field"
+                className="input-field md:col-span-3"
                 type="number"
                 min="1"
-                placeholder="Cantidad otro producto"
+                placeholder="Cantidad del otro producto"
                 value={finalizacion.adicional_otro_cantidad}
                 onChange={(e) => setFinalizacion((p) => ({ ...p, adicional_otro_cantidad: e.target.value }))}
               />
@@ -701,57 +755,11 @@ const Servicios = () => {
           )}
 
           <div className="md:col-span-3 flex gap-2">
-            <button className="btn-primary" type="submit" disabled={saving}>Finalizar y calcular reparto</button>
+            <button className="btn-primary" type="submit" disabled={saving}>Finalizar servicio</button>
             <button className="btn-secondary" type="button" onClick={() => setShowFinalizarModal(false)}>Cancelar</button>
           </div>
         </form>
       </ModalForm>
-
-      <div className="card">
-        <h2 className="card-header">Histórico de servicios facturados</h2>
-        {serviciosHistoricos.length === 0 && <p className="text-gray-600">No hay facturas de servicio.</p>}
-        {serviciosHistoricos.length > 0 && (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="table-header">
-                <tr>
-                  <th className="px-6 py-3 text-left">Factura</th>
-                  <th className="px-6 py-3 text-left">Empleado</th>
-                  <th className="px-6 py-3 text-left">Servicio</th>
-                  <th className="px-6 py-3 text-left">Estado</th>
-                  <th className="px-6 py-3 text-left">Total</th>
-                  <th className="px-6 py-3 text-left">Adicionales</th>
-                  <th className="px-6 py-3 text-right">Acciones</th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {serviciosHistoricos.map((srv) => (
-                  <tr key={srv.id} className="hover:bg-gray-50">
-                    <td className="table-cell">{srv.numero_factura || '-'}</td>
-                    <td className="table-cell">{srv.estilista_nombre}</td>
-                    <td className="table-cell">{srv.servicio_nombre}</td>
-                    <td className="table-cell capitalize">{srv.estado}</td>
-                    <td className="table-cell">${Number(srv.precio_cobrado || 0).toFixed(2)}</td>
-                    <td className="table-cell">${Number(srv.valor_adicionales || 0).toFixed(2)}</td>
-                    <td className="table-cell">
-                      <div className="flex justify-end gap-2">
-                        <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => prepararFinalizacion(srv)}>
-                          <FiEdit2 size={14} /> Editar
-                        </button>
-                        <button className="btn-danger !px-3 !py-2 inline-flex items-center gap-1" onClick={() => eliminarServicioHistorico(srv)}>
-                          <FiTrash2 size={14} /> Eliminar
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-      </>
-      )}
     </div>
   );
 };
