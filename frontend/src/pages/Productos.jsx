@@ -25,6 +25,24 @@ const extractRows = (payload) => {
   return [];
 };
 
+const productMatchesSearch = (producto, query) => {
+  const q = query.trim().toLowerCase();
+  return (
+    (producto.descripcion || '').toLowerCase().includes(q) ||
+    (producto.nombre || '').toLowerCase().includes(q) ||
+    (producto.marca || '').toLowerCase().includes(q) ||
+    String(producto.codigo_barras || '').toLowerCase().includes(q)
+  );
+};
+
+const formatProductSearchLabel = (producto) => {
+  return [producto.marca, producto.descripcion, producto.nombre].filter(Boolean).join(' - ') || producto.nombre || 'Producto';
+};
+
+const formatServiceSearchLabel = (servicio) => {
+  return [servicio.descripcion, servicio.nombre].filter(Boolean).join(' - ') || servicio.nombre || 'Servicio';
+};
+
 const Productos = () => {
   const { user } = useAuthStore();
   const puedeEditar = canManageCatalog(user);
@@ -74,12 +92,7 @@ const Productos = () => {
     }
     setSugerenciasProducto(
       productos
-        .filter(
-          (p) =>
-            (p.descripcion || '').toLowerCase().includes(q) ||
-            (p.nombre || '').toLowerCase().includes(q) ||
-            String(p.codigo_barras || '').toLowerCase().includes(q)
-        )
+        .filter((p) => productMatchesSearch(p, q))
         .slice(0, 8)
     );
   }, [codigoBusqueda, productos]);
@@ -244,7 +257,7 @@ const Productos = () => {
 
   const seleccionarProductoSugerido = (producto) => {
     setProductoEncontrado(producto);
-    setCodigoBusqueda(producto.codigo_barras || producto.nombre || '');
+    setCodigoBusqueda(formatProductSearchLabel(producto));
     setSugerenciasProducto([]);
   };
 
@@ -257,13 +270,7 @@ const Productos = () => {
   const productosFiltrados = useMemo(() => {
     const q = codigoBusqueda.trim().toLowerCase();
     if (!q) return productos;
-    return productos.filter(
-      (p) =>
-        (p.descripcion || '').toLowerCase().includes(q) ||
-        (p.nombre || '').toLowerCase().includes(q) ||
-        String(p.codigo_barras || '').toLowerCase().includes(q) ||
-        (p.marca || '').toLowerCase().includes(q)
-    );
+    return productos.filter((p) => productMatchesSearch(p, q));
   }, [codigoBusqueda, productos]);
 
   const guardarServicioCatalogo = async (e) => {
@@ -364,7 +371,9 @@ const Productos = () => {
   const serviciosFiltrados = useMemo(() => {
     const q = filtroServicio.trim().toLowerCase();
     if (!q) return serviciosCatalogo;
-    return serviciosCatalogo.filter((s) => (s.nombre || '').toLowerCase().includes(q));
+    return serviciosCatalogo.filter(
+      (s) => (s.nombre || '').toLowerCase().includes(q) || (s.descripcion || '').toLowerCase().includes(q)
+    );
   }, [filtroServicio, serviciosCatalogo]);
 
   return (
@@ -422,7 +431,7 @@ const Productos = () => {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3 relative">
           <input
             className="input-field md:col-span-3"
-            placeholder="Escanea o escribe código/nombre"
+            placeholder="Escanea o escribe código, marca, descripción o nombre"
             value={codigoBusqueda}
             onChange={(e) => setCodigoBusqueda(e.target.value)}
             onKeyDown={(e) => {
@@ -445,7 +454,7 @@ const Productos = () => {
                   className="w-full text-left px-3 py-2 hover:bg-gray-50"
                   onClick={() => seleccionarProductoSugerido(p)}
                 >
-                  {p.descripcion ? `${p.descripcion} - ${p.nombre}` : p.nombre} — {p.codigo_barras || 'sin código'}
+                  {formatProductSearchLabel(p)} — {p.codigo_barras || 'sin código'}
                 </button>
               ))}
             </div>
@@ -454,7 +463,7 @@ const Productos = () => {
 
         {productoEncontrado && (
           <div className="mt-4 rounded-lg border border-green-200 bg-green-50 p-4">
-            <p className="font-semibold text-green-900">Producto encontrado: {productoEncontrado.nombre}</p>
+            <p className="font-semibold text-green-900">Producto encontrado: {formatProductSearchLabel(productoEncontrado)}</p>
             <p className="text-sm text-green-800 mt-1">
               Marca: {productoEncontrado.marca || '-'} | Presentación: {productoEncontrado.presentacion || '-'} | Stock: {productoEncontrado.stock}
             </p>
@@ -645,7 +654,7 @@ const Productos = () => {
         <div className="mb-4 grid grid-cols-1 md:grid-cols-3 gap-3">
           <input
             className="input-field md:col-span-2"
-            placeholder="Buscar servicio por nombre"
+            placeholder="Buscar servicio por descripción o nombre"
             value={filtroServicio}
             onChange={(e) => setFiltroServicio(e.target.value)}
           />
@@ -696,7 +705,7 @@ const Productos = () => {
               <tbody className="bg-white divide-y divide-gray-200">
                 {serviciosFiltrados.map((servicio) => (
                   <tr key={servicio.id} className="hover:bg-gray-50">
-                    <td className="table-cell font-medium">{servicio.nombre}</td>
+                    <td className="table-cell font-medium">{formatServiceSearchLabel(servicio)}</td>
                     <td className="table-cell">{servicio.descripcion || '-'}</td>
                     <td className="table-cell">${Number(servicio.precio || 0).toFixed(2)}</td>
                     <td className="table-cell">{servicio.duracion_minutos || '-'} min</td>

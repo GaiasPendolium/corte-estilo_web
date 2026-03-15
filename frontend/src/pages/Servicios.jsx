@@ -29,6 +29,24 @@ const extractRows = (payload) => {
   return [];
 };
 
+const productMatchesSearch = (producto, query) => {
+  const q = query.trim().toLowerCase();
+  return (
+    (producto.descripcion || '').toLowerCase().includes(q) ||
+    (producto.nombre || '').toLowerCase().includes(q) ||
+    (producto.marca || '').toLowerCase().includes(q) ||
+    String(producto.codigo_barras || '').toLowerCase().includes(q)
+  );
+};
+
+const formatProductSearchLabel = (producto) => {
+  return [producto.marca, producto.descripcion, producto.nombre].filter(Boolean).join(' - ') || producto.nombre || 'Producto';
+};
+
+const formatServiceSearchLabel = (servicio) => {
+  return [servicio.descripcion, servicio.nombre].filter(Boolean).join(' - ') || servicio.nombre || 'Servicio';
+};
+
 const INITIAL_INICIO = {
   estilista: '',
   servicio: '',
@@ -129,7 +147,11 @@ const Servicios = () => {
       setSugerenciasServicio([]);
       return;
     }
-    setSugerenciasServicio(servicios.filter((s) => s.nombre?.toLowerCase().includes(q)).slice(0, 8));
+    setSugerenciasServicio(
+      servicios
+        .filter((s) => (s.nombre || '').toLowerCase().includes(q) || (s.descripcion || '').toLowerCase().includes(q))
+        .slice(0, 8)
+    );
   }, [inicioServicio.servicio_busqueda, servicios]);
 
   useEffect(() => {
@@ -140,7 +162,7 @@ const Servicios = () => {
     }
     setSugerenciasAdicional(
       productos
-        .filter((p) => (p.nombre || '').toLowerCase().includes(q) || String(p.codigo_barras || '').toLowerCase().includes(q))
+        .filter((p) => productMatchesSearch(p, q))
         .slice(0, 8)
     );
   }, [finalizacion.busqueda_adicional, productos]);
@@ -153,12 +175,7 @@ const Servicios = () => {
     }
     setVentaSugerencias(
       productos
-        .filter(
-          (p) =>
-            (p.descripcion || '').toLowerCase().includes(q) ||
-            (p.nombre || '').toLowerCase().includes(q) ||
-            String(p.codigo_barras || '').toLowerCase().includes(q)
-        )
+        .filter((p) => productMatchesSearch(p, q))
         .slice(0, 8)
     );
   }, [ventaBusqueda, productos]);
@@ -364,7 +381,7 @@ const Servicios = () => {
 
   const seleccionarProductoCaja = (producto) => {
     setProductoVentaSeleccionado(producto);
-    setVentaBusqueda(producto.descripcion ? `${producto.descripcion} - ${producto.nombre}` : producto.nombre || '');
+    setVentaBusqueda(formatProductSearchLabel(producto));
     setVentaSugerencias([]);
     setVentaForm((prev) => ({ ...prev, precio_unitario: String(producto.precio_venta || '') }));
   };
@@ -447,10 +464,10 @@ const Servicios = () => {
 
           <form className="grid grid-cols-1 md:grid-cols-4 gap-3" onSubmit={registrarVentaCaja}>
             <div className="md:col-span-4 relative">
-              <label className="block text-sm text-gray-600 mb-1">Escanear código de barras o buscar por descripción / nombre</label>
+              <label className="block text-sm text-gray-600 mb-1">Escanear código de barras o buscar por marca / descripción / nombre</label>
               <input
                 className="input-field"
-                placeholder="Ej: hidratante, shampoo o 770123456"
+                placeholder="Ej: L'Oréal, hidratante, shampoo o 770123456"
                 value={ventaBusqueda}
                 onChange={(e) => setVentaBusqueda(e.target.value)}
               />
@@ -463,7 +480,7 @@ const Servicios = () => {
                       className="w-full text-left px-3 py-2 hover:bg-gray-50"
                       onClick={() => seleccionarProductoCaja(p)}
                     >
-                      {p.descripcion ? `${p.descripcion} - ${p.nombre}` : p.nombre} - ${Number(p.precio_venta || 0).toFixed(2)} (stock {p.stock})
+                      {formatProductSearchLabel(p)} - ${Number(p.precio_venta || 0).toFixed(2)} (stock {p.stock})
                     </button>
                   ))}
                 </div>
@@ -491,7 +508,7 @@ const Servicios = () => {
             <div className="md:col-span-4 rounded-lg border border-blue-200 bg-blue-50 p-4 flex items-center justify-between">
               <div>
                 <p className="text-sm text-blue-800">Producto seleccionado</p>
-                <p className="font-semibold text-blue-950">{productoVentaSeleccionado ? (productoVentaSeleccionado.descripcion ? `${productoVentaSeleccionado.descripcion} - ${productoVentaSeleccionado.nombre}` : productoVentaSeleccionado.nombre) : 'Ninguno'}</p>
+                <p className="font-semibold text-blue-950">{productoVentaSeleccionado ? formatProductSearchLabel(productoVentaSeleccionado) : 'Ninguno'}</p>
               </div>
               <div className="text-right">
                 <p className="text-sm text-blue-800">Total a cobrar</p>
@@ -613,7 +630,7 @@ const Servicios = () => {
           <div className="md:col-span-2 relative">
             <input
               className="input-field"
-              placeholder="Buscar servicio por nombre"
+              placeholder="Buscar servicio por descripción o nombre"
               value={inicioServicio.servicio_busqueda}
               onChange={(e) => setInicioServicio((p) => ({ ...p, servicio_busqueda: e.target.value, servicio: '' }))}
             />
@@ -624,9 +641,9 @@ const Servicios = () => {
                     key={s.id}
                     type="button"
                     className="w-full text-left px-3 py-2 hover:bg-gray-50"
-                    onClick={() => setInicioServicio((p) => ({ ...p, servicio: String(s.id), servicio_busqueda: s.nombre }))}
+                    onClick={() => setInicioServicio((p) => ({ ...p, servicio: String(s.id), servicio_busqueda: formatServiceSearchLabel(s) }))}
                   >
-                    {s.nombre} - ${Number(s.precio || 0).toFixed(2)}
+                    {formatServiceSearchLabel(s)} - ${Number(s.precio || 0).toFixed(2)}
                   </button>
                 ))}
               </div>
@@ -731,7 +748,7 @@ const Servicios = () => {
               <div className="md:col-span-3 relative">
                 <input
                   className="input-field"
-                  placeholder="Otro producto por nombre o código"
+                  placeholder="Otro producto por marca, descripción, nombre o código"
                   value={finalizacion.busqueda_adicional}
                   onChange={(e) => setFinalizacion((p) => ({ ...p, busqueda_adicional: e.target.value, adicional_otro_producto: '' }))}
                 />
@@ -742,9 +759,9 @@ const Servicios = () => {
                         key={p.id}
                         type="button"
                         className="w-full text-left px-3 py-2 hover:bg-gray-50"
-                        onClick={() => setFinalizacion((f) => ({ ...f, adicional_otro_producto: String(p.id), busqueda_adicional: p.nombre }))}
+                        onClick={() => setFinalizacion((f) => ({ ...f, adicional_otro_producto: String(p.id), busqueda_adicional: formatProductSearchLabel(p) }))}
                       >
-                        {p.nombre} - ${Number(p.precio_venta || 0).toFixed(2)} (stock {p.stock})
+                        {formatProductSearchLabel(p)} - ${Number(p.precio_venta || 0).toFixed(2)} (stock {p.stock})
                       </button>
                     ))}
                   </div>

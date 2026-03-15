@@ -19,6 +19,20 @@ const extractRows = (payload) => {
   return [];
 };
 
+const productMatchesSearch = (producto, query) => {
+  const q = query.trim().toLowerCase();
+  return (
+    (producto.descripcion || '').toLowerCase().includes(q) ||
+    (producto.nombre || '').toLowerCase().includes(q) ||
+    (producto.marca || '').toLowerCase().includes(q) ||
+    String(producto.codigo_barras || '').toLowerCase().includes(q)
+  );
+};
+
+const formatProductSearchLabel = (producto) => {
+  return [producto.marca, producto.descripcion, producto.nombre].filter(Boolean).join(' - ') || producto.nombre || 'Producto';
+};
+
 const Ventas = () => {
   const { user } = useAuthStore();
   const puedeEditarFacturas = canManageInvoices(user);
@@ -91,7 +105,7 @@ const Ventas = () => {
     }
     setSugerenciasProducto(
       productos
-        .filter((p) => (p.nombre || '').toLowerCase().includes(q) || String(p.codigo_barras || '').toLowerCase().includes(q))
+        .filter((p) => productMatchesSearch(p, q))
         .slice(0, 8)
     );
   }, [busquedaProducto, productos]);
@@ -120,7 +134,7 @@ const Ventas = () => {
 
   const seleccionarProductoSugerido = (producto) => {
     setProductoSeleccionado(producto);
-    setBusquedaProducto(producto.codigo_barras || producto.nombre || '');
+    setBusquedaProducto(formatProductSearchLabel(producto));
     setSugerenciasProducto([]);
     if (!editandoId) {
       setForm((prev) => ({ ...prev, precio_unitario: String(producto.precio_venta || '') }));
@@ -194,7 +208,7 @@ const Ventas = () => {
     setShowForm(true);
     const producto = productos.find((p) => p.id === venta.producto) || null;
     setProductoSeleccionado(producto);
-    setBusquedaProducto(producto?.codigo_barras || producto?.nombre || '');
+    setBusquedaProducto(producto ? formatProductSearchLabel(producto) : '');
     setForm({
       cliente_nombre: venta.cliente_nombre || '',
       estilista: venta.estilista ? String(venta.estilista) : '',
@@ -361,14 +375,14 @@ const Ventas = () => {
         isOpen={showForm}
         onClose={limpiarFormulario}
         title={editandoId ? 'Editar factura de producto' : 'Nueva factura de producto'}
-        subtitle="Busca producto por código o nombre y registra la venta"
+        subtitle="Busca producto por marca, descripción, código o nombre y registra la venta"
         size="xl"
       >
       <form className="grid grid-cols-1 md:grid-cols-4 gap-3" onSubmit={guardarVenta}>
         <h2 className="card-header md:col-span-4">Factura de producto</h2>
         <input
           className="input-field md:col-span-3"
-          placeholder="Buscar producto por código de barras o nombre"
+          placeholder="Buscar producto por marca, descripción, código o nombre"
           value={busquedaProducto}
           onChange={(e) => setBusquedaProducto(e.target.value)}
           onKeyDown={(e) => {
@@ -386,7 +400,7 @@ const Ventas = () => {
           <div className="md:col-span-4 rounded-lg border border-gray-200 bg-white shadow-lg max-h-56 overflow-auto">
             {sugerenciasProducto.map((p) => (
               <button key={p.id} type="button" className="w-full text-left px-3 py-2 hover:bg-gray-50" onClick={() => seleccionarProductoSugerido(p)}>
-                {p.nombre} - {p.codigo_barras || 'sin código'}
+                {formatProductSearchLabel(p)} - {p.codigo_barras || 'sin código'}
               </button>
             ))}
           </div>
@@ -409,7 +423,7 @@ const Ventas = () => {
 
         {productoSeleccionado && (
           <div className="md:col-span-4 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
-            Producto: <strong>{productoSeleccionado.nombre}</strong> | Stock: <strong>{productoSeleccionado.stock}</strong>
+            Producto: <strong>{formatProductSearchLabel(productoSeleccionado)}</strong> | Stock: <strong>{productoSeleccionado.stock}</strong>
           </div>
         )}
 
