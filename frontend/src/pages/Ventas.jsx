@@ -39,6 +39,8 @@ const Ventas = () => {
   const [modoVista, setModoVista] = useState('ventas');
   const [fechaInicio, setFechaInicio] = useState('');
   const [fechaFin, setFechaFin] = useState('');
+  const [filtroUsuario, setFiltroUsuario] = useState('');
+  const [filtroEmpleado, setFiltroEmpleado] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [editandoId, setEditandoId] = useState(null);
@@ -303,11 +305,35 @@ const Ventas = () => {
     }
   };
 
-  const totalVentas = useMemo(() => ventas.reduce((acc, v) => acc + Number(v.total || 0), 0), [ventas]);
-  const ticketPromedio = useMemo(() => (ventas.length ? totalVentas / ventas.length : 0), [totalVentas, ventas.length]);
+  const ventasFiltradas = useMemo(() => {
+    const qUsuario = filtroUsuario.trim().toLowerCase();
+    const qEmpleado = filtroEmpleado.trim().toLowerCase();
+    return ventas.filter((v) => {
+      const usuario = String(v.usuario_nombre || '').toLowerCase();
+      const empleado = String(v.estilista_nombre || '').toLowerCase();
+      const okUsuario = !qUsuario || usuario.includes(qUsuario);
+      const okEmpleado = !qEmpleado || empleado.includes(qEmpleado);
+      return okUsuario && okEmpleado;
+    });
+  }, [ventas, filtroUsuario, filtroEmpleado]);
+
+  const serviciosFiltrados = useMemo(() => {
+    const qUsuario = filtroUsuario.trim().toLowerCase();
+    const qEmpleado = filtroEmpleado.trim().toLowerCase();
+    return serviciosFinalizados.filter((s) => {
+      const usuario = String(s.usuario_nombre || '').toLowerCase();
+      const empleado = String(s.estilista_nombre || '').toLowerCase();
+      const okUsuario = !qUsuario || usuario.includes(qUsuario);
+      const okEmpleado = !qEmpleado || empleado.includes(qEmpleado);
+      return okUsuario && okEmpleado;
+    });
+  }, [serviciosFinalizados, filtroUsuario, filtroEmpleado]);
+
+  const totalVentas = useMemo(() => ventasFiltradas.reduce((acc, v) => acc + Number(v.total || 0), 0), [ventasFiltradas]);
+  const ticketPromedio = useMemo(() => (ventasFiltradas.length ? totalVentas / ventasFiltradas.length : 0), [totalVentas, ventasFiltradas.length]);
   const totalServicios = useMemo(
-    () => serviciosFinalizados.reduce((acc, s) => acc + Number(s.precio_cobrado || 0), 0),
-    [serviciosFinalizados]
+    () => serviciosFiltrados.reduce((acc, s) => acc + Number(s.precio_cobrado || 0), 0),
+    [serviciosFiltrados]
   );
 
   return (
@@ -346,11 +372,35 @@ const Ventas = () => {
             Servicios facturados
           </button>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3">
           <input className="input-field" type="date" value={fechaInicio} onChange={(e) => setFechaInicio(e.target.value)} />
           <input className="input-field" type="date" value={fechaFin} onChange={(e) => setFechaFin(e.target.value)} />
-          <button className="btn-secondary" onClick={() => { setFechaInicio(''); setFechaFin(''); }}>Limpiar filtros</button>
-          <div className="text-sm text-gray-600 flex items-center">Total resultados: {modoVista === 'ventas' ? ventas.length : serviciosFinalizados.length}</div>
+          <input
+            className="input-field"
+            placeholder="Filtrar por usuario que facturó"
+            value={filtroUsuario}
+            onChange={(e) => setFiltroUsuario(e.target.value)}
+          />
+          <input
+            className="input-field"
+            placeholder="Filtrar por empleado"
+            value={filtroEmpleado}
+            onChange={(e) => setFiltroEmpleado(e.target.value)}
+          />
+          <button
+            className="btn-secondary"
+            onClick={() => {
+              setFechaInicio('');
+              setFechaFin('');
+              setFiltroUsuario('');
+              setFiltroEmpleado('');
+            }}
+          >
+            Limpiar filtros
+          </button>
+          <div className="text-sm text-gray-600 flex items-center">
+            Total resultados: {modoVista === 'ventas' ? ventasFiltradas.length : serviciosFiltrados.length}
+          </div>
         </div>
       </div>
 
@@ -444,9 +494,9 @@ const Ventas = () => {
           <span className="text-sm text-gray-600">Total: ${totalVentas.toFixed(2)}</span>
         </div>
 
-        {!loading && ventas.length === 0 && <p className="text-gray-600">No hay facturas de productos registradas.</p>}
+        {!loading && ventasFiltradas.length === 0 && <p className="text-gray-600">No hay facturas de productos con los filtros actuales.</p>}
 
-        {!loading && ventas.length > 0 && (
+        {!loading && ventasFiltradas.length > 0 && (
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="table-header">
@@ -456,6 +506,7 @@ const Ventas = () => {
                   <th className="px-6 py-3 text-left">Producto</th>
                   <th className="px-6 py-3 text-left">Cliente</th>
                   <th className="px-6 py-3 text-left">Estilista</th>
+                  <th className="px-6 py-3 text-left">Usuario facturó</th>
                   <th className="px-6 py-3 text-left">Medio pago</th>
                   <th className="px-6 py-3 text-left">Cantidad</th>
                   <th className="px-6 py-3 text-left">Total</th>
@@ -463,13 +514,14 @@ const Ventas = () => {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {ventas.map((v) => (
+                {ventasFiltradas.map((v) => (
                   <tr key={v.id} className="hover:bg-gray-50">
                     <td className="table-cell">{v.numero_factura || '-'}</td>
                     <td className="table-cell">{String(v.fecha_hora || '').slice(0, 10)}</td>
                     <td className="table-cell">{v.producto_nombre}</td>
                     <td className="table-cell">{v.cliente_nombre || '-'}</td>
                     <td className="table-cell">{v.estilista_nombre || '-'}</td>
+                    <td className="table-cell">{v.usuario_nombre || '-'}</td>
                     <td className="table-cell capitalize">{v.medio_pago || '-'}</td>
                     <td className="table-cell">{v.cantidad}</td>
                     <td className="table-cell">${Number(v.total || 0).toFixed(2)}</td>
@@ -526,8 +578,8 @@ const Ventas = () => {
 
       <div className="card">
         <h2 className="card-header">Facturas de servicios finalizados</h2>
-        {serviciosFinalizados.length === 0 && <p className="text-gray-600">No hay servicios finalizados con factura.</p>}
-        {serviciosFinalizados.length > 0 && (
+        {serviciosFiltrados.length === 0 && <p className="text-gray-600">No hay servicios finalizados con los filtros actuales.</p>}
+        {serviciosFiltrados.length > 0 && (
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="table-header">
@@ -536,17 +588,21 @@ const Ventas = () => {
                   <th className="px-6 py-3 text-left">Fecha</th>
                   <th className="px-6 py-3 text-left">Servicio</th>
                   <th className="px-6 py-3 text-left">Cliente</th>
+                  <th className="px-6 py-3 text-left">Empleado (servicio)</th>
+                  <th className="px-6 py-3 text-left">Usuario facturó</th>
                   <th className="px-6 py-3 text-left">Total</th>
                   <th className="px-6 py-3 text-right">Acción</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {serviciosFinalizados.map((s) => (
+                {serviciosFiltrados.map((s) => (
                   <tr key={s.id} className="hover:bg-gray-50">
                     <td className="table-cell">{s.numero_factura || '-'}</td>
                     <td className="table-cell">{String(s.fecha_hora || '').slice(0, 10)}</td>
                     <td className="table-cell">{s.servicio_nombre}</td>
                     <td className="table-cell">{s.cliente_nombre || '-'}</td>
+                    <td className="table-cell">{s.estilista_nombre || '-'}</td>
+                    <td className="table-cell">{s.usuario_nombre || '-'}</td>
                     <td className="table-cell">${Number(s.precio_cobrado || 0).toFixed(2)}</td>
                     <td className="table-cell">
                       <div className="flex justify-end gap-2">

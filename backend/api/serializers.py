@@ -102,6 +102,7 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
     servicio_nombre = serializers.CharField(source='servicio.nombre', read_only=True)
     servicio_duracion = serializers.IntegerField(source='servicio.duracion_minutos', read_only=True)
     cliente_nombre = serializers.CharField(source='cliente.nombre', read_only=True)
+    usuario_nombre = serializers.CharField(source='usuario.username', read_only=True)
     adicional_otro_producto_nombre = serializers.CharField(source='adicional_otro_producto.nombre', read_only=True)
     
     class Meta:
@@ -109,6 +110,7 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'estilista', 'estilista_nombre', 'servicio',
             'servicio_nombre', 'servicio_duracion', 'cliente', 'cliente_nombre',
+            'usuario', 'usuario_nombre',
             'estado', 'fecha_inicio', 'fecha_fin', 'fecha_hora',
             'precio_cobrado', 'medio_pago', 'tipo_reparto_establecimiento',
             'valor_reparto_establecimiento', 'monto_establecimiento',
@@ -233,6 +235,7 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
             f"Tipo: Servicio\n"
             f"Fecha: {timezone.localtime(servicio.fecha_hora).strftime('%Y-%m-%d %H:%M')}\n"
             f"Cliente: {cliente}\n"
+            f"Facturado por: {(servicio.usuario.username if servicio.usuario else 'No especificado')}\n"
             f"Estilista: {servicio.estilista.nombre}\n"
             f"Servicio: {servicio.servicio.nombre}\n"
             f"Total: ${float(servicio.precio_cobrado):.2f}\n"

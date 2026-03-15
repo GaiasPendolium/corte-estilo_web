@@ -245,11 +245,11 @@ class ProductoViewSet(viewsets.ModelViewSet):
 class ServicioRealizadoViewSet(viewsets.ModelViewSet):
     """ViewSet para el modelo ServicioRealizado"""
     
-    queryset = ServicioRealizado.objects.select_related('estilista', 'servicio', 'cliente').all()
+    queryset = ServicioRealizado.objects.select_related('estilista', 'servicio', 'cliente', 'usuario').all()
     serializer_class = ServicioRealizadoSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['estilista', 'servicio', 'cliente', 'estado', 'medio_pago']
+    filterset_fields = ['estilista', 'servicio', 'cliente', 'estado', 'medio_pago', 'usuario']
     search_fields = ['notas', 'estilista__nombre', 'servicio__nombre', 'cliente__nombre']
     ordering_fields = ['fecha_hora', 'precio_cobrado']
     ordering = ['-fecha_hora']
@@ -265,6 +265,9 @@ class ServicioRealizadoViewSet(viewsets.ModelViewSet):
     def destroy(self, request, *args, **kwargs):
         _validar_edicion_admin_gerente(request.user, 'servicios facturados')
         return super().destroy(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        serializer.save(usuario=self.request.user)
     
     def get_queryset(self):
         """Filtrar por rango de fechas si se proporciona"""
@@ -332,6 +335,7 @@ class ServicioRealizadoViewSet(viewsets.ModelViewSet):
             'tipo_reparto_establecimiento': request.data.get('tipo_reparto_establecimiento'),
             'valor_reparto_establecimiento': request.data.get('valor_reparto_establecimiento'),
             'notas': request.data.get('notas', servicio_realizado.notas),
+            'usuario': request.user.id,
             'fecha_fin': timezone.now(),
         }
 

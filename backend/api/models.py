@@ -288,6 +288,14 @@ class ServicioRealizado(models.Model):
     valor_adicionales = models.DecimalField(max_digits=10, decimal_places=2, default=0, verbose_name='Valor Adicionales')
     numero_factura = models.CharField(max_length=40, blank=True, null=True, verbose_name='Número Factura')
     factura_texto = models.TextField(blank=True, null=True, verbose_name='Texto Factura')
+    usuario = models.ForeignKey(
+        Usuario,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='servicios_facturados',
+        verbose_name='Usuario Facturador'
+    )
     notas = models.TextField(blank=True, null=True, verbose_name='Notas')
     
     class Meta:
