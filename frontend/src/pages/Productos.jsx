@@ -73,7 +73,12 @@ const Productos = () => {
     }
     setSugerenciasProducto(
       productos
-        .filter((p) => (p.nombre || '').toLowerCase().includes(q) || String(p.codigo_barras || '').toLowerCase().includes(q))
+        .filter(
+          (p) =>
+            (p.descripcion || '').toLowerCase().includes(q) ||
+            (p.nombre || '').toLowerCase().includes(q) ||
+            String(p.codigo_barras || '').toLowerCase().includes(q)
+        )
         .slice(0, 8)
     );
   }, [codigoBusqueda, productos]);
@@ -245,15 +250,15 @@ const Productos = () => {
     [productos]
   );
 
-  // Filtra el listado principal cuando hay texto en el buscador
+  // Filtra el listado principal cuando hay texto en el buscador (descripción + nombre + código + marca)
   const productosFiltrados = useMemo(() => {
     const q = codigoBusqueda.trim().toLowerCase();
     if (!q) return productos;
     return productos.filter(
       (p) =>
+        (p.descripcion || '').toLowerCase().includes(q) ||
         (p.nombre || '').toLowerCase().includes(q) ||
         String(p.codigo_barras || '').toLowerCase().includes(q) ||
-        (p.descripcion || '').toLowerCase().includes(q) ||
         (p.marca || '').toLowerCase().includes(q)
     );
   }, [codigoBusqueda, productos]);
@@ -437,7 +442,7 @@ const Productos = () => {
                   className="w-full text-left px-3 py-2 hover:bg-gray-50"
                   onClick={() => seleccionarProductoSugerido(p)}
                 >
-                  {p.nombre} - {p.codigo_barras || 'sin código'}
+                  {p.descripcion ? `${p.descripcion} - ${p.nombre}` : p.nombre} — {p.codigo_barras || 'sin código'}
                 </button>
               ))}
             </div>
@@ -509,7 +514,7 @@ const Productos = () => {
         )}
 
         {!loading && productosFiltrados.length > 0 && (
-          <div className="overflow-x-scroll">
+          <div className="overflow-x-auto" style={{ maxHeight: 'calc(100vh - 22rem)', overflowY: 'auto' }}>
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="table-header">
                 <tr>
@@ -529,7 +534,7 @@ const Productos = () => {
                 {productosFiltrados.map((p) => (
                   <tr key={p.id} className="hover:bg-gray-50">
                     <td className="table-cell">{p.codigo_barras || '-'}</td>
-                    <td className="table-cell font-medium">{p.nombre}{p.descripcion ? ` - ${p.descripcion}` : ''}</td>
+                    <td className="table-cell font-medium">{p.descripcion ? `${p.descripcion} - ${p.nombre}` : p.nombre}</td>
                     <td className="table-cell">{p.marca || '-'}</td>
                     <td className="table-cell">{p.presentacion || '-'}</td>
                     <td className="table-cell">${Number(p.precio_compra || 0).toFixed(2)}</td>
