@@ -104,6 +104,11 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
     cliente_nombre = serializers.CharField(source='cliente.nombre', read_only=True)
     usuario_nombre = serializers.CharField(source='usuario.username', read_only=True)
     adicional_otro_producto_nombre = serializers.CharField(source='adicional_otro_producto.nombre', read_only=True)
+    adicionales_servicio_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        write_only=True,
+        required=False,
+    )
     
     class Meta:
         model = ServicioRealizado
@@ -116,6 +121,7 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
             'valor_reparto_establecimiento', 'monto_establecimiento',
             'monto_estilista', 'neto_servicio', 'tiene_adicionales',
             'adicional_shampoo', 'adicional_guantes', 'adicional_otro_producto',
+            'adicionales_servicio_ids',
             'adicional_otro_producto_nombre', 'adicional_otro_cantidad', 'valor_adicionales',
             'numero_factura', 'factura_texto', 'notas'
         ]
@@ -142,6 +148,18 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({'adicional_otro_cantidad': 'La cantidad debe ser mayor o igual a 1.'})
 
         if tiene_adicionales:
+            adicionales_ids = attrs.get('adicionales_servicio_ids')
+            if adicionales_ids is not None:
+                ids_norm = sorted({int(x) for x in adicionales_ids if x is not None})
+                if ids_norm:
+                    validos = Servicio.objects.filter(id__in=ids_norm, es_adicional=True, activo=True).values_list('id', flat=True)
+                    validos_set = {int(v) for v in validos}
+                    faltantes = [x for x in ids_norm if x not in validos_set]
+                    if faltantes:
+                        raise serializers.ValidationError(
+                            {'adicionales_servicio_ids': f'Servicios adicionales no válidos o inactivos: {faltantes}'}
+                        )
+
             adicional_otro_producto = attrs.get('adicional_otro_producto')
             if adicional_otro_producto is None and self.instance is not None:
                 adicional_otro_producto = self.instance.adicional_otro_producto
@@ -166,19 +184,32 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
             return float(valor_default)
         return float(servicio_cfg.precio or valor_default)
 
-    def _calcular_adicionales(self, servicio):
+    def _calcular_adicionales(self, servicio, adicionales_servicio_ids=None):
         if not servicio.tiene_adicionales:
             servicio.valor_adicionales = 0
             return
 
-        valor_shampoo = self._valor_adicional_rapido('Adicional Shampoo', 4000)
-        valor_guantes = self._valor_adicional_rapido('Adicional Guantes', 1500)
-
         total_adicionales = 0
-        if servicio.adicional_shampoo:
-            total_adicionales += valor_shampoo
-        if servicio.adicional_guantes:
-            total_adicionales += valor_guantes
+
+        # Si llegan IDs dinámicos, se calcula directamente desde servicios configurados como adicionales.
+        if adicionales_servicio_ids is not None:
+            ids_norm = sorted({int(x) for x in adicionales_servicio_ids if x is not None})
+            servicios_adicionales = list(Servicio.objects.filter(id__in=ids_norm, es_adicional=True, activo=True)) if ids_norm else []
+
+            for srv_ad in servicios_adicionales:
+                total_adicionales += float(srv_ad.precio or 0)
+
+            # Mantener flags legacy sincronizados cuando aplica.
+            nombres_lower = [(srv_ad.nombre or '').lower() for srv_ad in servicios_adicionales]
+            servicio.adicional_shampoo = any('shampoo' in nombre for nombre in nombres_lower)
+            servicio.adicional_guantes = any('guantes' in nombre for nombre in nombres_lower)
+        else:
+            valor_shampoo = self._valor_adicional_rapido('Adicional Shampoo', 4000)
+            valor_guantes = self._valor_adicional_rapido('Adicional Guantes', 1500)
+            if servicio.adicional_shampoo:
+                total_adicionales += valor_shampoo
+            if servicio.adicional_guantes:
+                total_adicionales += valor_guantes
 
         if servicio.adicional_otro_producto:
             cantidad = int(servicio.adicional_otro_cantidad or 1)
@@ -249,13 +280,14 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
         )
 
     def create(self, validated_data):
+        adicionales_servicio_ids = validated_data.pop('adicionales_servicio_ids', None)
         if 'precio_cobrado' not in validated_data:
             validated_data['precio_cobrado'] = validated_data['servicio'].precio
 
         servicio_realizado = ServicioRealizado.objects.create(**validated_data)
 
         if servicio_realizado.estado == 'finalizado':
-            self._calcular_adicionales(servicio_realizado)
+            self._calcular_adicionales(servicio_realizado, adicionales_servicio_ids=adicionales_servicio_ids)
             self._calcular_reparto(servicio_realizado)
             self._generar_factura(servicio_realizado)
             servicio_realizado.save()
@@ -263,6 +295,7 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
         return servicio_realizado
 
     def update(self, instance, validated_data):
+        adicionales_servicio_ids = validated_data.pop('adicionales_servicio_ids', None)
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
 
@@ -270,7 +303,7 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
             instance.fecha_fin = timezone.now()
 
         if instance.estado == 'finalizado':
-            self._calcular_adicionales(instance)
+            self._calcular_adicionales(instance, adicionales_servicio_ids=adicionales_servicio_ids)
             self._calcular_reparto(instance)
             self._generar_factura(instance)
 

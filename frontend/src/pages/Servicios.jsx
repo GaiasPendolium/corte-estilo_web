@@ -351,6 +351,9 @@ const Servicios = () => {
         precio_cobrado: Number(finalizacion.precio_cobrado),
         medio_pago: finalizacion.medio_pago,
         tiene_adicionales: finalizacion.tiene_adicionales,
+        adicionales_servicio_ids: finalizacion.tiene_adicionales
+          ? finalizacion.adicionales_servicio_ids
+          : [],
         adicional_shampoo: finalizacion.tiene_adicionales ? flagsLegacy.adicional_shampoo : false,
         adicional_guantes: finalizacion.tiene_adicionales ? flagsLegacy.adicional_guantes : false,
         adicional_otro_producto:
