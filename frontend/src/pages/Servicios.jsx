@@ -10,8 +10,9 @@ import {
   serviciosService,
 } from '../services/api';
 import ModalForm from '../components/ModalForm';
+import PrinterPanel from '../components/PrinterPanel';
+import { ticketPrintService } from '../services/printing/ticketPrintService';
 import useAuthStore from '../store/authStore';
-import { canManageInvoices } from '../utils/roles';
 
 // Todos los perfiles autenticados pueden registrar ventas y servicios (operación diaria)
 // Solo admin/gerente pueden EDITAR o ELIMINAR del historial (controlado en Ventas.jsx y backend)
@@ -375,6 +376,13 @@ const Servicios = () => {
             ).toFixed(2)}`
       );
 
+      try {
+        await ticketPrintService.printServiceSaleAndOpenDrawer(res);
+        toast.success('Ticket de servicio impreso y caja abierta');
+      } catch (printError) {
+        toast.error(printError.message || 'El servicio se finalizo, pero no se pudo imprimir el ticket');
+      }
+
       setServicioFinalizarId('');
       setShowFinalizarModal(false);
       setFinalizacion({
@@ -423,7 +431,7 @@ const Servicios = () => {
 
     try {
       setSaving(true);
-      await ventasService.create({
+      const ventaCreada = await ventasService.create({
         producto: productoVentaSeleccionado.id,
         cantidad,
         precio_unitario: precioUnitario,
@@ -433,6 +441,14 @@ const Servicios = () => {
       });
 
       toast.success('Venta registrada correctamente');
+
+      try {
+        await ticketPrintService.printProductSaleAndOpenDrawer(ventaCreada);
+        toast.success('Ticket impreso y caja abierta');
+      } catch (printError) {
+        toast.error(printError.message || 'La venta se guardo, pero no se pudo imprimir el ticket');
+      }
+
       setVentaForm({ cliente_nombre: '', estilista: '', medio_pago: 'efectivo', cantidad: '1', precio_unitario: '' });
       setVentaBusqueda('');
       setProductoVentaSeleccionado(null);
@@ -473,6 +489,8 @@ const Servicios = () => {
           </button>
         </div>
       </div>
+
+      <PrinterPanel />
 
       {modoVista === 'ventas' && (
         <div className="card space-y-4">

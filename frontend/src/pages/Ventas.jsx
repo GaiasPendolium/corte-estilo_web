@@ -2,9 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { FiCopy, FiEdit2, FiPlus, FiRefreshCw, FiSearch, FiTrash2 } from 'react-icons/fi';
 import { toast } from 'react-toastify';
 import { estilistasService, productosService, serviciosRealizadosService, ventasService } from '../services/api';
-import { posBridgeService } from '../services/posBridge';
+import PrinterPanel from '../components/PrinterPanel';
 import ModalForm from '../components/ModalForm';
 import useAuthStore from '../store/authStore';
+import { qzTrayService } from '../services/printing/qzTrayService';
+import { ticketPrintService } from '../services/printing/ticketPrintService';
 import { canManageInvoices } from '../utils/roles';
 
 const MEDIOS_PAGO = [
@@ -192,8 +194,15 @@ const Ventas = () => {
         await ventasService.update(editandoId, payload);
         toast.success('Factura de producto actualizada');
       } else {
-        await ventasService.create(payload);
+        const ventaCreada = await ventasService.create(payload);
         toast.success('Factura de producto creada');
+
+        try {
+          await ticketPrintService.printProductSaleAndOpenDrawer(ventaCreada);
+          toast.success('Ticket impreso y caja abierta');
+        } catch (printError) {
+          toast.error(printError.message || 'La venta se guardo, pero no se pudo imprimir el ticket');
+        }
       }
 
       limpiarFormulario();
@@ -252,36 +261,30 @@ const Ventas = () => {
     }
   };
 
-  const imprimirTexto = async (texto) => {
-    if (!texto) {
-      toast.info('No hay texto de factura para imprimir');
-      return;
-    }
-
+  const reimprimirVenta = async (venta) => {
     try {
-      if (!posBridgeService.isEnabled()) {
-        toast.warning('Bridge SAT no configurado. Define VITE_POS_BRIDGE_URL para imprimir en TP-1580');
-        return;
-      }
-      await posBridgeService.printTicket(texto);
-      toast.success('Ticket enviado a impresora SAT');
+      await ticketPrintService.reprintProductSale(venta);
+      toast.success('Ticket reenviado a impresora');
     } catch (error) {
-      const msg = error?.response?.data?.detail || 'No se pudo imprimir en SAT';
-      toast.error(String(msg));
+      toast.error(error.message || 'No se pudo reimprimir el ticket');
+    }
+  };
+
+  const reimprimirServicio = async (servicio) => {
+    try {
+      await ticketPrintService.reprintServiceSale(servicio);
+      toast.success('Ticket reenviado a impresora');
+    } catch (error) {
+      toast.error(error.message || 'No se pudo reimprimir el ticket');
     }
   };
 
   const abrirCaja = async () => {
     try {
-      if (!posBridgeService.isEnabled()) {
-        toast.warning('Bridge SAT no configurado. Define VITE_POS_BRIDGE_URL para abrir cajon');
-        return;
-      }
-      await posBridgeService.openDrawer();
+      await qzTrayService.openDrawer();
       toast.success('Comando de apertura enviado al cajon');
     } catch (error) {
-      const msg = error?.response?.data?.detail || 'No se pudo abrir el cajon SAT';
-      toast.error(String(msg));
+      toast.error(error.message || 'No se pudo abrir el cajon SAT');
     }
   };
 
@@ -453,6 +456,8 @@ const Ventas = () => {
         </div>
       </div>
 
+      <PrinterPanel />
+
       {modoVista === 'ventas' && (
       <>
       <ModalForm
@@ -569,7 +574,7 @@ const Ventas = () => {
                         <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => copiarTexto(v.factura_texto)}>
                           <FiCopy size={14} /> Copiar
                         </button>
-                        <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => imprimirTexto(v.factura_texto)}>
+                        <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => reimprimirVenta(v)}>
                           Imprimir
                         </button>
                         <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={abrirCaja}>
@@ -654,7 +659,7 @@ const Ventas = () => {
                         <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => copiarTexto(s.factura_texto)}>
                           <FiCopy size={14} /> Copiar
                         </button>
-                        <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => imprimirTexto(s.factura_texto)}>
+                        <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => reimprimirServicio(s)}>
                           Imprimir
                         </button>
                         <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={abrirCaja}>

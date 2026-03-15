@@ -1,0 +1,105 @@
+import { useEffect, useState } from 'react';
+import { FiPrinter, FiRefreshCw } from 'react-icons/fi';
+import { toast } from 'react-toastify';
+import { buildEscPosTicket } from '../services/printing/escposTicket';
+import { qzTrayService } from '../services/printing/qzTrayService';
+
+const PRUEBA_PAYLOAD = {
+  businessName: 'CORTE Y ESTILO',
+  ticketTitle: 'PRUEBA IMPRESORA',
+  numero_factura: 'TEST-0001',
+  fecha_hora: new Date().toISOString(),
+  cliente_nombre: 'Prueba local',
+  usuario_nombre: 'Sistema',
+  medio_pago: 'efectivo',
+  total: 1000,
+  items: [
+    {
+      nombre: 'Prueba de impresion ESC/POS',
+      cantidad: 1,
+      precio_unitario: 1000,
+      total: 1000,
+    },
+  ],
+  footerLines: ['Si lees esto, QZ Tray esta integrado correctamente.'],
+};
+
+const PrinterPanel = () => {
+  const [loading, setLoading] = useState(false);
+  const [printers, setPrinters] = useState([]);
+  const [selectedPrinter, setSelectedPrinter] = useState(qzTrayService.getSelectedPrinter());
+
+  const cargarImpresoras = async () => {
+    try {
+      setLoading(true);
+      const list = await qzTrayService.listPrinters();
+      setPrinters(list);
+      if (!selectedPrinter && list.length) {
+        setSelectedPrinter(list[0]);
+      }
+    } catch (error) {
+      toast.error(error.message || 'No se pudo consultar QZ Tray');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    cargarImpresoras();
+  }, []);
+
+  const guardarImpresora = () => {
+    qzTrayService.setSelectedPrinter(selectedPrinter);
+    toast.success(selectedPrinter ? `Impresora guardada: ${selectedPrinter}` : 'Impresora predeterminada restablecida');
+  };
+
+  const imprimirPrueba = async () => {
+    try {
+      const raw = buildEscPosTicket(PRUEBA_PAYLOAD);
+      await qzTrayService.printTicket(raw);
+      toast.success('Ticket de prueba enviado');
+    } catch (error) {
+      toast.error(error.message || 'No se pudo imprimir ticket de prueba');
+    }
+  };
+
+  const probarCajon = async () => {
+    try {
+      await qzTrayService.openDrawer();
+      toast.success('Comando de apertura enviado');
+    } catch (error) {
+      toast.error(error.message || 'No se pudo abrir el cajon');
+    }
+  };
+
+  return (
+    <div className="card p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <h2 className="card-header mb-0 inline-flex items-center gap-2">
+          <FiPrinter /> Impresion POS (QZ Tray)
+        </h2>
+        <button className="btn-secondary inline-flex items-center gap-2" onClick={cargarImpresoras} disabled={loading}>
+          <FiRefreshCw className={loading ? 'animate-spin' : ''} /> Actualizar
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <select className="input-field md:col-span-2" value={selectedPrinter} onChange={(e) => setSelectedPrinter(e.target.value)}>
+          <option value="">Impresora predeterminada del sistema</option>
+          {printers.map((name) => (
+            <option key={name} value={name}>{name}</option>
+          ))}
+        </select>
+
+        <button className="btn-secondary" type="button" onClick={guardarImpresora}>Guardar impresora</button>
+        <button className="btn-secondary" type="button" onClick={imprimirPrueba}>Imprimir prueba</button>
+      </div>
+
+      <div className="flex gap-2">
+        <button className="btn-secondary" type="button" onClick={probarCajon}>Probar apertura de caja</button>
+      </div>
+    </div>
+  );
+};
+
+export default PrinterPanel;
