@@ -176,6 +176,19 @@ const Estilistas = () => {
               setForm(INITIAL_FORM);
               setShowForm(true);
             }}
+          >
+            <FiPlus /> Nuevo empleado
+          </button>
+        </div>
+      </div>
+
+      <ModalForm
+        isOpen={showForm}
+        onClose={() => setShowForm(false)}
+        title={editingId ? 'Editar empleado' : 'Nuevo empleado'}
+        subtitle="Configura datos del empleado y el cobro por espacio"
+        size="md"
+      >
       <form onSubmit={guardarEstilista} className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
           <label className="block text-sm text-gray-600 mb-1">Nombre</label>
@@ -219,32 +232,6 @@ const Estilistas = () => {
         </div>
 
         <div>
-          <label className="block text-sm text-gray-600 mb-1">Comisión por servicio (%)</label>
-          <input
-            className="input-field"
-            type="number"
-            min="0"
-            step="0.01"
-            value={form.comision_porcentaje}
-            onChange={(e) => onInputChange('comision_porcentaje', e.target.value)}
-            placeholder="% que recibe el empleado por servicio"
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm text-gray-600 mb-1">Comisión por venta de productos (%)</label>
-          <input
-            className="input-field"
-            type="number"
-            min="0"
-            step="0.01"
-            value={form.comision_ventas_productos}
-            onChange={(e) => onInputChange('comision_ventas_productos', e.target.value)}
-            placeholder="Aplica solo para productos"
-          />
-        </div>
-
-        <div>
           <label className="block text-sm text-gray-600 mb-1">Cobro por espacio</label>
           <select
             className="input-field"
@@ -264,6 +251,19 @@ const Estilistas = () => {
             type="number"
             min="0"
             step="0.01"
+            value={form.valor_cobro_espacio}
+            onChange={(e) => onInputChange('valor_cobro_espacio', e.target.value)}
+            placeholder={form.tipo_cobro_espacio === 'porcentaje_neto' ? 'Porcentaje %' : 'Monto'}
+          />
+        </div>
+
+        <div className="md:col-span-2 flex items-end gap-2">
+          <button type="submit" className="btn-primary w-full inline-flex items-center justify-center gap-2" disabled={saving}>
+            <FiPlus />
+            {saving ? 'Guardando...' : editingId ? 'Guardar cambios' : 'Crear empleado'}
+          </button>
+          <button
+            type="button"
             className="btn-secondary"
             onClick={() => {
               setShowForm(false);
