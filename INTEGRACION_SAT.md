@@ -13,6 +13,32 @@ Si la maquina SAT no tiene el proyecto web, usa este modo portable:
 
 Con esto no necesitas clonar ni instalar todo el proyecto en la maquina SAT.
 
+## Configuracion amigable sin .bat (recomendada)
+
+Si quieres evitar `.bat`, puedes usar interfaz grafica:
+
+1. Copia carpeta `local_bridge` a la maquina SAT.
+2. En esa carpeta, abre terminal y ejecuta una sola vez:
+
+```bash
+pip install -r requirements.txt
+```
+
+3. Inicia la app GUI:
+
+```bash
+python sat_bridge_gui.py
+```
+
+4. En la ventana:
+- Selecciona impresora SAT TP-1580
+- Clic en `Guardar config`
+- Clic en `Iniciar bridge`
+
+5. Desde Chrome puedes verificar estado en:
+- `http://127.0.0.1:8787/status`
+- `http://127.0.0.1:8787/docs`
+
 ## 1) Instalar bridge local (Windows)
 
 1. Abrir terminal en `peluqueria_web/local_bridge`.

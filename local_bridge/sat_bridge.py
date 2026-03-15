@@ -11,6 +11,10 @@ except Exception as exc:
 
 DEFAULT_PRINTER = os.getenv("SAT_PRINTER_NAME", "SAT TP-1580")
 DEFAULT_ENCODING = os.getenv("SAT_ENCODING", "cp850")
+CONFIG = {
+    "printer_name": DEFAULT_PRINTER,
+    "encoding": DEFAULT_ENCODING,
+}
 
 app = FastAPI(title="SAT Local Bridge", version="1.0.0")
 
@@ -30,6 +34,11 @@ class PrintPayload(BaseModel):
 
 class DrawerPayload(BaseModel):
     printer_name: str | None = None
+
+
+class ConfigPayload(BaseModel):
+    printer_name: str | None = None
+    encoding: str | None = None
 
 
 def _send_raw(printer_name: str, data: bytes, job_name: str):
@@ -57,27 +66,50 @@ def status():
     return {
         "ok": True,
         "default_printer": default_printer,
-        "configured_printer": DEFAULT_PRINTER,
+        "configured_printer": CONFIG["printer_name"],
+        "encoding": CONFIG["encoding"],
+    }
+
+
+@app.get("/config")
+def get_config():
+    return {
+        "printer_name": CONFIG["printer_name"],
+        "encoding": CONFIG["encoding"],
+    }
+
+
+@app.post("/config")
+def set_config(payload: ConfigPayload):
+    if payload.printer_name:
+        CONFIG["printer_name"] = payload.printer_name.strip()
+    if payload.encoding:
+        CONFIG["encoding"] = payload.encoding.strip()
+
+    return {
+        "ok": True,
+        "printer_name": CONFIG["printer_name"],
+        "encoding": CONFIG["encoding"],
     }
 
 
 @app.post("/print-ticket")
 def print_ticket(payload: PrintPayload):
-    printer = payload.printer_name or DEFAULT_PRINTER
+    printer = payload.printer_name or CONFIG["printer_name"]
     text = payload.text.strip()
     if not text:
         raise HTTPException(status_code=400, detail="El ticket esta vacio")
 
     esc_init = b"\x1b@"
     esc_cut = b"\n\n\n\x1dVA0"
-    body = text.encode(DEFAULT_ENCODING, errors="replace")
+    body = text.encode(CONFIG["encoding"], errors="replace")
     _send_raw(printer, esc_init + body + esc_cut, "Ticket SAT")
     return {"ok": True, "printer": printer}
 
 
 @app.post("/open-drawer")
 def open_drawer(payload: DrawerPayload):
-    printer = payload.printer_name or DEFAULT_PRINTER
+    printer = payload.printer_name or CONFIG["printer_name"]
     esc_init = b"\x1b@"
     esc_pulse = b"\x1bp\x00\x19\xfa"
     _send_raw(printer, esc_init + esc_pulse, "Abrir cajon SAT")
