@@ -86,8 +86,7 @@ const Servicios = () => {
     precio_cobrado: '',
     medio_pago: 'efectivo',
     tiene_adicionales: false,
-    adicional_shampoo: false,
-    adicional_guantes: false,
+    adicionales_servicio_ids: [],
     adicional_otro_producto: '',
     adicional_otro_cantidad: '1',
     busqueda_adicional: '',
@@ -200,19 +199,19 @@ const Servicios = () => {
     [serviciosEnProceso, servicioFinalizarId]
   );
 
-  const valorShampoo = useMemo(() => {
-    const srv =
-      servicios.find((s) => s.es_adicional && (s.nombre || '').toLowerCase().includes('shampoo')) ||
-      servicios.find((s) => (s.nombre || '').toLowerCase() === 'adicional shampoo');
-    return Number(srv?.precio || 4000);
-  }, [servicios]);
+  const serviciosAdicionalesConfigurados = useMemo(
+    () => servicios.filter((s) => Boolean(s.es_adicional) && (s.activo ?? true)),
+    [servicios]
+  );
 
-  const valorGuantes = useMemo(() => {
-    const srv =
-      servicios.find((s) => s.es_adicional && (s.nombre || '').toLowerCase().includes('guantes')) ||
-      servicios.find((s) => (s.nombre || '').toLowerCase() === 'adicional guantes');
-    return Number(srv?.precio || 1500);
-  }, [servicios]);
+  const mapearFlagsLegacyAdicionales = (adicionalesIds) => {
+    const ids = new Set((adicionalesIds || []).map((id) => Number(id)));
+    const seleccionados = serviciosAdicionalesConfigurados.filter((s) => ids.has(Number(s.id)));
+    return {
+      adicional_shampoo: seleccionados.some((s) => (s.nombre || '').toLowerCase().includes('shampoo')),
+      adicional_guantes: seleccionados.some((s) => (s.nombre || '').toLowerCase().includes('guantes')),
+    };
+  };
 
   const totalVentaCaja = useMemo(() => {
     const cantidad = Number(ventaForm.cantidad || 0);
@@ -232,8 +231,14 @@ const Servicios = () => {
       precio_cobrado: srv.precio_cobrado || '',
       medio_pago: srv.medio_pago || 'efectivo',
       tiene_adicionales: Boolean(srv.tiene_adicionales),
-      adicional_shampoo: Boolean(srv.adicional_shampoo),
-      adicional_guantes: Boolean(srv.adicional_guantes),
+      adicionales_servicio_ids: serviciosAdicionalesConfigurados
+        .filter((cfg) => {
+          const nombre = (cfg.nombre || '').toLowerCase();
+          if (nombre.includes('shampoo')) return Boolean(srv.adicional_shampoo);
+          if (nombre.includes('guantes')) return Boolean(srv.adicional_guantes);
+          return false;
+        })
+        .map((cfg) => Number(cfg.id)),
       adicional_otro_producto: srv.adicional_otro_producto ? String(srv.adicional_otro_producto) : '',
       adicional_otro_cantidad: String(srv.adicional_otro_cantidad || 1),
       busqueda_adicional: '',
@@ -341,12 +346,13 @@ const Servicios = () => {
 
     try {
       setSaving(true);
+      const flagsLegacy = mapearFlagsLegacyAdicionales(finalizacion.adicionales_servicio_ids);
       const res = await serviciosRealizadosService.finalizar(servicioFinalizarId, {
         precio_cobrado: Number(finalizacion.precio_cobrado),
         medio_pago: finalizacion.medio_pago,
         tiene_adicionales: finalizacion.tiene_adicionales,
-        adicional_shampoo: finalizacion.tiene_adicionales ? finalizacion.adicional_shampoo : false,
-        adicional_guantes: finalizacion.tiene_adicionales ? finalizacion.adicional_guantes : false,
+        adicional_shampoo: finalizacion.tiene_adicionales ? flagsLegacy.adicional_shampoo : false,
+        adicional_guantes: finalizacion.tiene_adicionales ? flagsLegacy.adicional_guantes : false,
         adicional_otro_producto:
           finalizacion.tiene_adicionales && finalizacion.adicional_otro_producto
             ? Number(finalizacion.adicional_otro_producto)
@@ -372,8 +378,7 @@ const Servicios = () => {
         precio_cobrado: '',
         medio_pago: 'efectivo',
         tiene_adicionales: false,
-        adicional_shampoo: false,
-        adicional_guantes: false,
+        adicionales_servicio_ids: [],
         adicional_otro_producto: '',
         adicional_otro_cantidad: '1',
         busqueda_adicional: '',
@@ -744,15 +749,32 @@ const Servicios = () => {
 
           {finalizacion.tiene_adicionales && (
             <>
-              <label className="inline-flex items-center gap-2 text-sm text-gray-700">
-                <input type="checkbox" checked={finalizacion.adicional_shampoo} onChange={(e) => setFinalizacion((p) => ({ ...p, adicional_shampoo: e.target.checked }))} />
-                Shampoo (${valorShampoo.toFixed(0)})
-              </label>
-
-              <label className="inline-flex items-center gap-2 text-sm text-gray-700">
-                <input type="checkbox" checked={finalizacion.adicional_guantes} onChange={(e) => setFinalizacion((p) => ({ ...p, adicional_guantes: e.target.checked }))} />
-                Guantes (${valorGuantes.toFixed(0)})
-              </label>
+              <div className="md:col-span-3 rounded-lg border border-blue-200 bg-blue-50 p-3">
+                <p className="text-sm font-medium text-blue-900 mb-2">Adicionales configurados en servicios</p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {serviciosAdicionalesConfigurados.map((srvAd) => (
+                    <label key={srvAd.id} className="inline-flex items-center gap-2 text-sm text-gray-700">
+                      <input
+                        type="checkbox"
+                        checked={finalizacion.adicionales_servicio_ids.includes(Number(srvAd.id))}
+                        onChange={(e) =>
+                          setFinalizacion((p) => {
+                            const id = Number(srvAd.id);
+                            const actuales = new Set((p.adicionales_servicio_ids || []).map((x) => Number(x)));
+                            if (e.target.checked) actuales.add(id);
+                            else actuales.delete(id);
+                            return { ...p, adicionales_servicio_ids: Array.from(actuales) };
+                          })
+                        }
+                      />
+                      {srvAd.nombre} (${Number(srvAd.precio || 0).toFixed(0)})
+                    </label>
+                  ))}
+                </div>
+                {serviciosAdicionalesConfigurados.length === 0 && (
+                  <p className="text-xs text-blue-800">No hay servicios marcados como adicionales en Inventario y Servicio.</p>
+                )}
+              </div>
 
               <div className="md:col-span-3 relative">
                 <input
