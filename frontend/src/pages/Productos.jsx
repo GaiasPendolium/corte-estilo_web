@@ -478,16 +478,56 @@ const Productos = () => {
             </button>
           )}
         </div>
-        <input className="input-field" placeholder="Código de barras" value={form.codigo_barras} onChange={(e) => setForm((p) => ({ ...p, codigo_barras: e.target.value }))} />
-        <input className="input-field" placeholder="Nombre" value={form.nombre} onChange={(e) => setForm((p) => ({ ...p, nombre: e.target.value }))} />
-        <input className="input-field" placeholder="Marca" value={form.marca} onChange={(e) => setForm((p) => ({ ...p, marca: e.target.value }))} />
-        <input className="input-field" placeholder="Presentación" value={form.presentacion} onChange={(e) => setForm((p) => ({ ...p, presentacion: e.target.value }))} />
-        <textarea className="input-field md:col-span-3" rows={2} placeholder="Descripción (se usa para búsqueda y concatenación en listado)" value={form.descripcion} onChange={(e) => setForm((p) => ({ ...p, descripcion: e.target.value }))} />
-        <input className="input-field" type="number" min="0" step="0.01" placeholder="Valor de compra" value={form.precio_compra} onChange={(e) => setForm((p) => ({ ...p, precio_compra: e.target.value }))} />
-        <input className="input-field" type="number" min="0" step="0.01" placeholder="Valor de venta" value={form.precio_venta} onChange={(e) => setForm((p) => ({ ...p, precio_venta: e.target.value }))} />
-        <input className="input-field" type="number" min="0" step="0.01" placeholder="Comisión estilista (%)" value={form.comision_estilista} onChange={(e) => setForm((p) => ({ ...p, comision_estilista: e.target.value }))} />
-        <input className="input-field" type="number" min="0" placeholder="Stock" value={form.stock} onChange={(e) => setForm((p) => ({ ...p, stock: e.target.value }))} />
-        <input className="input-field" type="number" min="0" placeholder="Stock mínimo" value={form.stock_minimo} onChange={(e) => setForm((p) => ({ ...p, stock_minimo: e.target.value }))} />
+
+        <div>
+          <label className="block text-sm text-gray-600 mb-1">Código de barras</label>
+          <input className="input-field" placeholder="Ej: 7701234567890" value={form.codigo_barras} onChange={(e) => setForm((p) => ({ ...p, codigo_barras: e.target.value }))} />
+        </div>
+        <div>
+          <label className="block text-sm text-gray-600 mb-1">Nombre <span className="text-red-500">*</span></label>
+          <input className="input-field" placeholder="Nombre del producto" value={form.nombre} onChange={(e) => setForm((p) => ({ ...p, nombre: e.target.value }))} />
+        </div>
+        <div>
+          <label className="block text-sm text-gray-600 mb-1">Marca</label>
+          <input className="input-field" placeholder="Ej: L'Oréal" value={form.marca} onChange={(e) => setForm((p) => ({ ...p, marca: e.target.value }))} />
+        </div>
+        <div>
+          <label className="block text-sm text-gray-600 mb-1">Presentación</label>
+          <input className="input-field" placeholder="Ej: 500ml, 1kg" value={form.presentacion} onChange={(e) => setForm((p) => ({ ...p, presentacion: e.target.value }))} />
+        </div>
+        <div className="md:col-span-2">
+          <label className="block text-sm text-gray-600 mb-1">Descripción <span className="text-xs text-gray-400">(aparece antes del nombre en búsquedas y listado)</span></label>
+          <textarea className="input-field" rows={2} placeholder="Ej: Shampoo hidratante para cabello seco" value={form.descripcion} onChange={(e) => setForm((p) => ({ ...p, descripcion: e.target.value }))} />
+        </div>
+
+        <div className="md:col-span-3 border-t pt-2">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Precios y comisiones</p>
+        </div>
+        <div>
+          <label className="block text-sm text-gray-600 mb-1">Valor de compra</label>
+          <input className="input-field" type="number" min="0" step="0.01" placeholder="0.00" value={form.precio_compra} onChange={(e) => setForm((p) => ({ ...p, precio_compra: e.target.value }))} />
+        </div>
+        <div>
+          <label className="block text-sm text-gray-600 mb-1">Valor de venta <span className="text-red-500">*</span></label>
+          <input className="input-field" type="number" min="0" step="0.01" placeholder="0.00" value={form.precio_venta} onChange={(e) => setForm((p) => ({ ...p, precio_venta: e.target.value }))} />
+        </div>
+        <div>
+          <label className="block text-sm text-gray-600 mb-1">Comisión estilista (%)</label>
+          <input className="input-field" type="number" min="0" step="0.01" placeholder="0" value={form.comision_estilista} onChange={(e) => setForm((p) => ({ ...p, comision_estilista: e.target.value }))} />
+        </div>
+
+        <div className="md:col-span-3 border-t pt-2">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Stock</p>
+        </div>
+        <div>
+          <label className="block text-sm text-gray-600 mb-1">Stock actual</label>
+          <input className="input-field" type="number" min="0" placeholder="0" value={form.stock} onChange={(e) => setForm((p) => ({ ...p, stock: e.target.value }))} />
+        </div>
+        <div>
+          <label className="block text-sm text-gray-600 mb-1">Stock mínimo <span className="text-xs text-gray-400">(alerta de reposición)</span></label>
+          <input className="input-field" type="number" min="0" placeholder="5" value={form.stock_minimo} onChange={(e) => setForm((p) => ({ ...p, stock_minimo: e.target.value }))} />
+        </div>
+
         <button className="btn-primary md:col-span-3" type="submit" disabled={saving}>
           {saving ? 'Guardando...' : editingId ? 'Actualizar producto' : 'Guardar producto'}
         </button>
