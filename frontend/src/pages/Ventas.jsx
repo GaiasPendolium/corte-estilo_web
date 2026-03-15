@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { FiCopy, FiEdit2, FiPlus, FiRefreshCw, FiSearch, FiTrash2 } from 'react-icons/fi';
 import { toast } from 'react-toastify';
 import { estilistasService, productosService, serviciosRealizadosService, ventasService } from '../services/api';
+import { posBridgeService } from '../services/posBridge';
 import ModalForm from '../components/ModalForm';
 import useAuthStore from '../store/authStore';
 import { canManageInvoices } from '../utils/roles';
@@ -248,6 +249,39 @@ const Ventas = () => {
       toast.success('Factura copiada para WhatsApp');
     } catch (error) {
       toast.error('No se pudo copiar al portapapeles');
+    }
+  };
+
+  const imprimirTexto = async (texto) => {
+    if (!texto) {
+      toast.info('No hay texto de factura para imprimir');
+      return;
+    }
+
+    try {
+      if (!posBridgeService.isEnabled()) {
+        toast.warning('Bridge SAT no configurado. Define VITE_POS_BRIDGE_URL para imprimir en TP-1580');
+        return;
+      }
+      await posBridgeService.printTicket(texto);
+      toast.success('Ticket enviado a impresora SAT');
+    } catch (error) {
+      const msg = error?.response?.data?.detail || 'No se pudo imprimir en SAT';
+      toast.error(String(msg));
+    }
+  };
+
+  const abrirCaja = async () => {
+    try {
+      if (!posBridgeService.isEnabled()) {
+        toast.warning('Bridge SAT no configurado. Define VITE_POS_BRIDGE_URL para abrir cajon');
+        return;
+      }
+      await posBridgeService.openDrawer();
+      toast.success('Comando de apertura enviado al cajon');
+    } catch (error) {
+      const msg = error?.response?.data?.detail || 'No se pudo abrir el cajon SAT';
+      toast.error(String(msg));
     }
   };
 
@@ -535,6 +569,12 @@ const Ventas = () => {
                         <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => copiarTexto(v.factura_texto)}>
                           <FiCopy size={14} /> Copiar
                         </button>
+                        <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => imprimirTexto(v.factura_texto)}>
+                          Imprimir
+                        </button>
+                        <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={abrirCaja}>
+                          Abrir caja
+                        </button>
                         {puedeEditarFacturas && (
                           <button className="btn-danger !px-3 !py-2 inline-flex items-center gap-1" onClick={() => eliminarVenta(v)}>
                             <FiTrash2 size={14} /> Eliminar
@@ -613,6 +653,12 @@ const Ventas = () => {
                         )}
                         <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => copiarTexto(s.factura_texto)}>
                           <FiCopy size={14} /> Copiar
+                        </button>
+                        <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => imprimirTexto(s.factura_texto)}>
+                          Imprimir
+                        </button>
+                        <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={abrirCaja}>
+                          Abrir caja
                         </button>
                         {puedeEditarFacturas && (
                           <button className="btn-danger !px-3 !py-2 inline-flex items-center gap-1" onClick={() => eliminarServicio(s)}>
