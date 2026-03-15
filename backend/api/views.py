@@ -618,9 +618,6 @@ def _calcular_datos_bi(request):
 
     utilidad_productos = ingresos_productos - costo_productos
     ganancia_establecimiento_productos = utilidad_productos - comision_producto_estilistas
-
-    comision_servicios_establecimiento = Decimal(servicios_qs.aggregate(total=Sum('monto_establecimiento'))['total'] or 0)
-    pago_base_servicios_estilistas = Decimal(servicios_qs.aggregate(total=Sum('monto_estilista'))['total'] or 0)
     ingresos_servicios = Decimal(servicios_qs.aggregate(total=Sum('precio_cobrado'))['total'] or 0)
 
     estilistas_data = []
@@ -631,7 +628,7 @@ def _calcular_datos_bi(request):
         servicios_est = servicios_qs.filter(estilista=estilista)
         ventas_est = ventas_qs.filter(estilista=estilista)
 
-        ganancia_servicios_est = Decimal(servicios_est.aggregate(total=Sum('monto_estilista'))['total'] or 0)
+        ganancia_servicios_est = Decimal(servicios_est.aggregate(total=Sum('neto_servicio'))['total'] or 0)
         total_servicios_est = Decimal(servicios_est.aggregate(total=Sum('precio_cobrado'))['total'] or 0)
         dias_trabajados = {
             *servicios_est.values_list('fecha_hora__date', flat=True).distinct(),
@@ -642,18 +639,18 @@ def _calcular_datos_bi(request):
             pct = Decimal(estilista.comision_ventas_productos or 0)
             comision_ventas_producto_est += (Decimal(v.total) * pct) / Decimal(100)
 
-        ganancias_brutas_est = ganancia_servicios_est + comision_ventas_producto_est
+        subtotal_ingresos_est = ganancia_servicios_est + comision_ventas_producto_est
 
         descuento_espacio = Decimal(0)
         if estilista.tipo_cobro_espacio == 'porcentaje_neto':
-            descuento_espacio = (ganancias_brutas_est * Decimal(estilista.valor_cobro_espacio or 0)) / Decimal(100)
+            descuento_espacio = (ganancia_servicios_est * Decimal(estilista.valor_cobro_espacio or 0)) / Decimal(100)
         elif estilista.tipo_cobro_espacio == 'costo_fijo_neto':
             descuento_espacio = Decimal(estilista.valor_cobro_espacio or 0) * Decimal(len(dias_trabajados))
 
-        if descuento_espacio > ganancias_brutas_est:
-            descuento_espacio = ganancias_brutas_est
+        if descuento_espacio > subtotal_ingresos_est:
+            descuento_espacio = subtotal_ingresos_est
 
-        pago_neto = ganancias_brutas_est - descuento_espacio
+        pago_neto = subtotal_ingresos_est - descuento_espacio
 
         total_descuentos_espacio += descuento_espacio
         total_pago_neto_estilistas += pago_neto
@@ -664,21 +661,21 @@ def _calcular_datos_bi(request):
                 'estilista_nombre': estilista.nombre,
                 'tipo_cobro_espacio': estilista.tipo_cobro_espacio,
                 'valor_cobro_espacio': float(estilista.valor_cobro_espacio or 0),
-                'base_cobro_espacio': float(ganancias_brutas_est),
+                'base_cobro_espacio': float(ganancia_servicios_est),
                 'dias_cobrados_alquiler': int(len(dias_trabajados) if estilista.tipo_cobro_espacio == 'costo_fijo_neto' else 0),
+                'facturacion_servicios': float(total_servicios_est),
                 'ganancias_servicios': float(ganancia_servicios_est),
                 'comision_ventas_producto': float(comision_ventas_producto_est),
-                'ganancias_totales_brutas': float(ganancias_brutas_est),
+                'ganancias_totales_brutas': float(subtotal_ingresos_est),
+                'total_deducciones': float(descuento_espacio),
                 'descuento_espacio': float(descuento_espacio),
                 'pago_neto_estilista': float(pago_neto),
             }
         )
 
-    ganancia_establecimiento_total = (
-        ganancia_establecimiento_productos
-        + comision_servicios_establecimiento
-        + total_descuentos_espacio
-    )
+    comision_servicios_establecimiento = total_descuentos_espacio
+
+    ganancia_establecimiento_total = ganancia_establecimiento_productos + total_descuentos_espacio
 
     venta_neta_total = ingresos_productos + ingresos_servicios
 

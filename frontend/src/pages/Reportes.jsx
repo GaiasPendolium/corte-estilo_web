@@ -334,10 +334,28 @@ const Reportes = () => {
         <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h2 className="card-header mb-0">Liquidación por estilista</h2>
-            <p className="text-sm text-gray-500">El alquiler fijo se cobra solo en días efectivamente trabajados dentro del rango.</p>
+            <p className="text-sm text-gray-500">Lectura simple: cuánto facturó, cuánto realmente cuenta para pagarle, qué deducciones tiene y cuánto neto recibe.</p>
           </div>
           <div className="rounded-2xl bg-slate-100 px-4 py-2 text-sm text-slate-700">
             {estilistaFiltro === 'todos' ? 'Mostrando todos los estilistas' : `Mostrando: ${estilistaFiltro}`}
+          </div>
+        </div>
+        <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-3">
+          <div className="rounded-2xl bg-slate-50 p-4">
+            <p className="text-sm text-slate-500">1. Facturación servicio</p>
+            <p className="mt-2 text-sm text-slate-700">Valor total cobrado al cliente por servicios en el rango.</p>
+          </div>
+          <div className="rounded-2xl bg-slate-50 p-4">
+            <p className="text-sm text-slate-500">2. Base para pagar</p>
+            <p className="mt-2 text-sm text-slate-700">Valor del servicio antes de descontar cobro por espacio.</p>
+          </div>
+          <div className="rounded-2xl bg-slate-50 p-4">
+            <p className="text-sm text-slate-500">3. Deducciones</p>
+            <p className="mt-2 text-sm text-slate-700">Cobro por espacio. Si es fijo, se multiplica por días trabajados.</p>
+          </div>
+          <div className="rounded-2xl bg-slate-50 p-4">
+            <p className="text-sm text-slate-500">4. Neto a pagar</p>
+            <p className="mt-2 text-sm text-slate-700">Base para pagar + comisiones por ventas - deducciones.</p>
           </div>
         </div>
         <div className="mt-4 overflow-x-auto">
@@ -345,29 +363,42 @@ const Reportes = () => {
             <thead className="table-header">
               <tr>
                 <th className="px-6 py-3 text-left">Estilista</th>
-                <th className="px-6 py-3 text-left">Tipo cobro</th>
-                <th className="px-6 py-3 text-left">Valor configurado</th>
-                <th className="px-6 py-3 text-left">Ganancia servicios</th>
-                <th className="px-6 py-3 text-left">Comisión ventas productos</th>
-                <th className="px-6 py-3 text-left">Bruto</th>
+                <th className="px-6 py-3 text-left">Facturación servicio</th>
+                <th className="px-6 py-3 text-left">Base para pagar</th>
+                <th className="px-6 py-3 text-left">Comisión ventas</th>
+                <th className="px-6 py-3 text-left">Subtotal antes deducción</th>
+                <th className="px-6 py-3 text-left">Cobro por espacio</th>
                 <th className="px-6 py-3 text-left">Días trabajados</th>
-                <th className="px-6 py-3 text-left">Descuento espacio</th>
-                <th className="px-6 py-3 text-left">Pago neto</th>
+                <th className="px-6 py-3 text-left">Total deducciones</th>
+                <th className="px-6 py-3 text-left">Neto a pagar</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {liquidacionFiltrada.map((s) => (
                 <tr key={s.estilista_id} className="hover:bg-gray-50">
                   <td className="table-cell font-medium">{s.estilista_nombre}</td>
-                  <td className="table-cell capitalize">{s.tipo_cobro_espacio || 'sin_cobro'}</td>
                   <td className="table-cell">
-                    {s.tipo_cobro_espacio === 'porcentaje_neto' ? `${Number(s.valor_cobro_espacio || 0).toFixed(2)}%` : formatMoney(s.valor_cobro_espacio)}
+                    <div className="font-medium text-slate-900">{formatMoney(s.facturacion_servicios)}</div>
+                    <div className="text-xs text-slate-500">Cobrado al cliente</div>
                   </td>
-                  <td className="table-cell">{formatMoney(s.ganancias_servicios)}</td>
+                  <td className="table-cell">
+                    <div className="font-medium text-slate-900">{formatMoney(s.ganancias_servicios)}</div>
+                    <div className="text-xs text-slate-500">Servicio antes de descontar espacio</div>
+                  </td>
                   <td className="table-cell">{formatMoney(s.comision_ventas_producto)}</td>
-                  <td className="table-cell">{formatMoney(s.ganancias_totales_brutas)}</td>
+                  <td className="table-cell font-medium">{formatMoney(s.ganancias_totales_brutas)}</td>
+                  <td className="table-cell">
+                    <div className="font-medium text-slate-900 capitalize">{s.tipo_cobro_espacio || 'sin_cobro'}</div>
+                    <div className="text-xs text-slate-500">
+                      {s.tipo_cobro_espacio === 'porcentaje_neto'
+                        ? `${Number(s.valor_cobro_espacio || 0).toFixed(2)}% de la base del servicio`
+                        : s.tipo_cobro_espacio === 'costo_fijo_neto'
+                          ? `${formatMoney(s.valor_cobro_espacio)} por día trabajado`
+                          : 'Sin descuento'}
+                    </div>
+                  </td>
                   <td className="table-cell">{moneyFormatter.format(s.dias_cobrados_alquiler || 0)}</td>
-                  <td className="table-cell">{formatMoney(s.descuento_espacio)}</td>
+                  <td className="table-cell text-red-700 font-medium">{formatMoney(s.total_deducciones)}</td>
                   <td className="table-cell font-semibold text-emerald-700">{formatMoney(s.pago_neto_estilista)}</td>
                 </tr>
               ))}
