@@ -153,7 +153,12 @@ const Servicios = () => {
     }
     setVentaSugerencias(
       productos
-        .filter((p) => (p.nombre || '').toLowerCase().includes(q) || String(p.codigo_barras || '').toLowerCase().includes(q))
+        .filter(
+          (p) =>
+            (p.descripcion || '').toLowerCase().includes(q) ||
+            (p.nombre || '').toLowerCase().includes(q) ||
+            String(p.codigo_barras || '').toLowerCase().includes(q)
+        )
         .slice(0, 8)
     );
   }, [ventaBusqueda, productos]);
@@ -359,7 +364,7 @@ const Servicios = () => {
 
   const seleccionarProductoCaja = (producto) => {
     setProductoVentaSeleccionado(producto);
-    setVentaBusqueda(producto.nombre || '');
+    setVentaBusqueda(producto.descripcion ? `${producto.descripcion} - ${producto.nombre}` : producto.nombre || '');
     setVentaSugerencias([]);
     setVentaForm((prev) => ({ ...prev, precio_unitario: String(producto.precio_venta || '') }));
   };
@@ -442,10 +447,10 @@ const Servicios = () => {
 
           <form className="grid grid-cols-1 md:grid-cols-4 gap-3" onSubmit={registrarVentaCaja}>
             <div className="md:col-span-4 relative">
-              <label className="block text-sm text-gray-600 mb-1">Escanear código de barras o buscar por nombre</label>
+              <label className="block text-sm text-gray-600 mb-1">Escanear código de barras o buscar por descripción / nombre</label>
               <input
                 className="input-field"
-                placeholder="Ej: 770123456 o Shampoo"
+                placeholder="Ej: hidratante, shampoo o 770123456"
                 value={ventaBusqueda}
                 onChange={(e) => setVentaBusqueda(e.target.value)}
               />
@@ -458,7 +463,7 @@ const Servicios = () => {
                       className="w-full text-left px-3 py-2 hover:bg-gray-50"
                       onClick={() => seleccionarProductoCaja(p)}
                     >
-                      {p.nombre} - ${Number(p.precio_venta || 0).toFixed(2)} (stock {p.stock})
+                      {p.descripcion ? `${p.descripcion} - ${p.nombre}` : p.nombre} - ${Number(p.precio_venta || 0).toFixed(2)} (stock {p.stock})
                     </button>
                   ))}
                 </div>
@@ -486,7 +491,7 @@ const Servicios = () => {
             <div className="md:col-span-4 rounded-lg border border-blue-200 bg-blue-50 p-4 flex items-center justify-between">
               <div>
                 <p className="text-sm text-blue-800">Producto seleccionado</p>
-                <p className="font-semibold text-blue-950">{productoVentaSeleccionado?.nombre || 'Ninguno'}</p>
+                <p className="font-semibold text-blue-950">{productoVentaSeleccionado ? (productoVentaSeleccionado.descripcion ? `${productoVentaSeleccionado.descripcion} - ${productoVentaSeleccionado.nombre}` : productoVentaSeleccionado.nombre) : 'Ninguno'}</p>
               </div>
               <div className="text-right">
                 <p className="text-sm text-blue-800">Total a cobrar</p>
