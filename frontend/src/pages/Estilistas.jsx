@@ -8,10 +8,8 @@ const INITIAL_FORM = {
   nombre: '',
   telefono: '',
   email: '',
-  comision_porcentaje: '0',
   tipo_cobro_espacio: 'sin_cobro',
   valor_cobro_espacio: '0',
-  comision_ventas_productos: '0',
   fecha_ingreso: '',
   activo: true,
 };
@@ -82,10 +80,10 @@ const Estilistas = () => {
         nombre: form.nombre.trim(),
         telefono: form.telefono.trim() || null,
         email: form.email.trim() || null,
-        comision_porcentaje: Number(form.comision_porcentaje || 0),
+        comision_porcentaje: 0,
         tipo_cobro_espacio: form.tipo_cobro_espacio,
         valor_cobro_espacio: Number(form.valor_cobro_espacio || 0),
-        comision_ventas_productos: Number(form.comision_ventas_productos || 0),
+        comision_ventas_productos: 0,
         fecha_ingreso: form.fecha_ingreso || null,
       };
 
@@ -130,10 +128,8 @@ const Estilistas = () => {
       nombre: item.nombre || '',
       telefono: item.telefono || '',
       email: item.email || '',
-      comision_porcentaje: String(item.comision_porcentaje ?? 0),
       tipo_cobro_espacio: item.tipo_cobro_espacio || 'sin_cobro',
       valor_cobro_espacio: String(item.valor_cobro_espacio ?? 0),
-      comision_ventas_productos: String(item.comision_ventas_productos ?? 0),
       fecha_ingreso: item.fecha_ingreso || '',
       activo: item.activo ?? true,
     });
@@ -180,19 +176,6 @@ const Estilistas = () => {
               setForm(INITIAL_FORM);
               setShowForm(true);
             }}
-          >
-            <FiPlus /> Nuevo empleado
-          </button>
-        </div>
-      </div>
-
-      <ModalForm
-        isOpen={showForm}
-        onClose={() => setShowForm(false)}
-        title={editingId ? 'Editar empleado' : 'Nuevo empleado'}
-        subtitle="Configura datos de contacto y condiciones de pago"
-        size="md"
-      >
       <form onSubmit={guardarEstilista} className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
           <label className="block text-sm text-gray-600 mb-1">Nombre</label>
@@ -281,19 +264,6 @@ const Estilistas = () => {
             type="number"
             min="0"
             step="0.01"
-            value={form.valor_cobro_espacio}
-            onChange={(e) => onInputChange('valor_cobro_espacio', e.target.value)}
-            placeholder={form.tipo_cobro_espacio === 'porcentaje_neto' ? 'Porcentaje %' : 'Monto'}
-          />
-        </div>
-
-        <div className="md:col-span-2 flex items-end gap-2">
-          <button type="submit" className="btn-primary w-full inline-flex items-center justify-center gap-2" disabled={saving}>
-            <FiPlus />
-            {saving ? 'Guardando...' : editingId ? 'Guardar cambios' : 'Crear empleado'}
-          </button>
-          <button
-            type="button"
             className="btn-secondary"
             onClick={() => {
               setShowForm(false);
