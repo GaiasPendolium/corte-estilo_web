@@ -59,7 +59,7 @@ const Productos = () => {
   const [productoEncontrado, setProductoEncontrado] = useState(null);
   const [showServicioForm, setShowServicioForm] = useState(false);
   const [servicioEditingId, setServicioEditingId] = useState(null);
-  const [servicioForm, setServicioForm] = useState({ nombre: '', descripcion: '', precio: '', duracion_minutos: '' });
+  const [servicioForm, setServicioForm] = useState({ nombre: '', descripcion: '', precio: '', duracion_minutos: '', es_adicional: false });
   const [filtroServicio, setFiltroServicio] = useState('');
   const [adicionales, setAdicionales] = useState({ shampoo: '4000', guantes: '1500' });
 
@@ -290,6 +290,7 @@ const Productos = () => {
         descripcion: servicioForm.descripcion.trim() || null,
         precio: Number(servicioForm.precio),
         duracion_minutos: servicioForm.duracion_minutos ? Number(servicioForm.duracion_minutos) : null,
+        es_adicional: Boolean(servicioForm.es_adicional),
         activo: true,
       };
       if (servicioEditingId) {
@@ -301,7 +302,7 @@ const Productos = () => {
       }
       setShowServicioForm(false);
       setServicioEditingId(null);
-      setServicioForm({ nombre: '', descripcion: '', precio: '', duracion_minutos: '' });
+      setServicioForm({ nombre: '', descripcion: '', precio: '', duracion_minutos: '', es_adicional: false });
       await cargarProductos();
     } catch (error) {
       toast.error('No se pudo guardar el servicio');
@@ -315,6 +316,7 @@ const Productos = () => {
       descripcion: servicio.descripcion || '',
       precio: String(servicio.precio || ''),
       duracion_minutos: String(servicio.duracion_minutos || ''),
+      es_adicional: Boolean(servicio.es_adicional),
     });
     setShowServicioForm(true);
   };
@@ -349,6 +351,7 @@ const Productos = () => {
         descripcion: 'Configuración de adicional rápido para operación diaria',
         precio: Number(precio || 0),
         duracion_minutos: null,
+        es_adicional: true,
         activo: true,
       };
       if (existente) {
@@ -414,7 +417,7 @@ const Productos = () => {
               setModoVista('servicios');
               if (!showServicioForm) {
                 setServicioEditingId(null);
-                setServicioForm({ nombre: '', descripcion: '', precio: '', duracion_minutos: '' });
+                setServicioForm({ nombre: '', descripcion: '', precio: '', duracion_minutos: '', es_adicional: false });
               }
             }}
           >
@@ -640,7 +643,7 @@ const Productos = () => {
               className="btn-primary inline-flex items-center gap-2"
               onClick={() => {
                 setServicioEditingId(null);
-                setServicioForm({ nombre: '', descripcion: '', precio: '', duracion_minutos: '' });
+                setServicioForm({ nombre: '', descripcion: '', precio: '', duracion_minutos: '', es_adicional: false });
                 setShowServicioForm(true);
               }}
             >
@@ -705,7 +708,7 @@ const Productos = () => {
               <tbody className="bg-white divide-y divide-gray-200">
                 {serviciosFiltrados.map((servicio) => (
                   <tr key={servicio.id} className="hover:bg-gray-50">
-                    <td className="table-cell font-medium">{formatServiceSearchLabel(servicio)}</td>
+                    <td className="table-cell font-medium">{formatServiceSearchLabel(servicio)} {servicio.es_adicional ? <span className="ml-2 px-2 py-0.5 rounded-full text-xs bg-blue-100 text-blue-800">Adicional</span> : null}</td>
                     <td className="table-cell">{servicio.descripcion || '-'}</td>
                     <td className="table-cell">${Number(servicio.precio || 0).toFixed(2)}</td>
                     <td className="table-cell">{servicio.duracion_minutos || '-'} min</td>
@@ -747,6 +750,14 @@ const Productos = () => {
             <input className="input-field" type="number" min="0" step="0.01" placeholder="Precio" value={servicioForm.precio} onChange={(e) => setServicioForm((p) => ({ ...p, precio: e.target.value }))} />
             <input className="input-field" type="number" min="1" placeholder="Duración (min)" value={servicioForm.duracion_minutos} onChange={(e) => setServicioForm((p) => ({ ...p, duracion_minutos: e.target.value }))} />
           </div>
+          <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+            <input
+              type="checkbox"
+              checked={Boolean(servicioForm.es_adicional)}
+              onChange={(e) => setServicioForm((p) => ({ ...p, es_adicional: e.target.checked }))}
+            />
+            Configurar como servicio adicional (aplica para descuentos en liquidación)
+          </label>
           <div className="flex gap-2">
             <button className="btn-primary" type="submit">{servicioEditingId ? 'Actualizar' : 'Crear servicio'}</button>
             <button type="button" className="btn-secondary" onClick={() => setShowServicioForm(false)}>Cancelar</button>

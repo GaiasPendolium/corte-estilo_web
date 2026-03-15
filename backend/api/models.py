@@ -121,6 +121,7 @@ class Servicio(models.Model):
     descripcion = models.TextField(blank=True, null=True, verbose_name='Descripción')
     precio = models.DecimalField(max_digits=10, decimal_places=2, verbose_name='Precio')
     duracion_minutos = models.IntegerField(blank=True, null=True, verbose_name='Duración (minutos)')
+    es_adicional = models.BooleanField(default=False, verbose_name='Es Servicio Adicional')
     activo = models.BooleanField(default=True, verbose_name='Activo')
     
     class Meta:

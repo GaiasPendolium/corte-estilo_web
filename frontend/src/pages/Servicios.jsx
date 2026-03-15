@@ -201,12 +201,16 @@ const Servicios = () => {
   );
 
   const valorShampoo = useMemo(() => {
-    const srv = servicios.find((s) => (s.nombre || '').toLowerCase() === 'adicional shampoo');
+    const srv =
+      servicios.find((s) => s.es_adicional && (s.nombre || '').toLowerCase().includes('shampoo')) ||
+      servicios.find((s) => (s.nombre || '').toLowerCase() === 'adicional shampoo');
     return Number(srv?.precio || 4000);
   }, [servicios]);
 
   const valorGuantes = useMemo(() => {
-    const srv = servicios.find((s) => (s.nombre || '').toLowerCase() === 'adicional guantes');
+    const srv =
+      servicios.find((s) => s.es_adicional && (s.nombre || '').toLowerCase().includes('guantes')) ||
+      servicios.find((s) => (s.nombre || '').toLowerCase() === 'adicional guantes');
     return Number(srv?.precio || 1500);
   }, [servicios]);
 

@@ -68,7 +68,7 @@ class ServicioSerializer(serializers.ModelSerializer):
         model = Servicio
         fields = [
             'id', 'nombre', 'descripcion', 'precio',
-            'duracion_minutos', 'activo'
+            'duracion_minutos', 'es_adicional', 'activo'
         ]
 
 
@@ -153,6 +153,13 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
 
     def _valor_adicional_rapido(self, nombre_servicio, valor_default):
         servicio_cfg = Servicio.objects.filter(nombre__iexact=nombre_servicio, activo=True).first()
+        if not servicio_cfg:
+            # Fallback por tipo adicional para no depender del nombre exacto.
+            nombre_lower = str(nombre_servicio or '').lower()
+            if 'shampoo' in nombre_lower:
+                servicio_cfg = Servicio.objects.filter(es_adicional=True, nombre__icontains='shampoo', activo=True).first()
+            elif 'guantes' in nombre_lower:
+                servicio_cfg = Servicio.objects.filter(es_adicional=True, nombre__icontains='guantes', activo=True).first()
         if not servicio_cfg:
             return float(valor_default)
         return float(servicio_cfg.precio or valor_default)
