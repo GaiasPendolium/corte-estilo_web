@@ -772,20 +772,95 @@ def bi_export_csv(request):
         response['Content-Disposition'] = f'attachment; filename="reporte_bi_{data["fecha_inicio"]}_{data["fecha_fin"]}.csv"'
 
         writer = csv.writer(response)
-        writer.writerow(['REPORTE BI'])
-        writer.writerow(['Rango', f"{data['fecha_inicio']} a {data['fecha_fin']}"])
+        kpis = data.get('kpis', {})
+        venta_neta_total = Decimal(str(kpis.get('venta_neta_total', 0) or 0))
+        ganancia_establecimiento_total = Decimal(str(kpis.get('ganancia_establecimiento_total', 0) or 0))
+        margen_establecimiento_pct = float((ganancia_establecimiento_total / venta_neta_total) * 100) if venta_neta_total > 0 else 0.0
+
+        writer.writerow(['INFORME_GERENCIAL_BI'])
+        writer.writerow(['RANGO_DESDE', data['fecha_inicio']])
+        writer.writerow(['RANGO_HASTA', data['fecha_fin']])
+        writer.writerow(['GENERADO_EN', timezone.localtime().strftime('%Y-%m-%d %H:%M:%S')])
         writer.writerow([])
-        writer.writerow(['KPI', 'Valor'])
-        for k, v in data['kpis'].items():
+
+        writer.writerow(['RESUMEN_EJECUTIVO', 'VALOR'])
+        writer.writerow(['Venta neta total', float(venta_neta_total)])
+        writer.writerow(['Ganancia establecimiento total', float(ganancia_establecimiento_total)])
+        writer.writerow(['Margen establecimiento (%)', round(margen_establecimiento_pct, 2)])
+        writer.writerow(['Pago total estilistas', kpis.get('pago_total_estilistas', 0)])
+        writer.writerow(['Ingresos servicios adicionales (establecimiento)', kpis.get('ingresos_servicios_adicionales', 0)])
+        writer.writerow(['Descuentos espacio estilistas', kpis.get('descuentos_espacio_estilistas', 0)])
+        writer.writerow([])
+
+        writer.writerow(['KPIS_CLAVE', 'VALOR'])
+        for k, v in kpis.items():
             writer.writerow([k, v])
         writer.writerow([])
-        writer.writerow(['Estilista', 'Ganancias Brutas', 'Descuento Espacio', 'Pago Neto'])
-        for est in data['estilistas']:
+
+        writer.writerow([
+            'LIQUIDACION_ESTILISTAS_RAW',
+            'estilista_id',
+            'estilista_nombre',
+            'tipo_cobro_espacio',
+            'valor_cobro_espacio',
+            'dias_cobrados_alquiler',
+            'facturacion_servicios',
+            'valor_servicios_adicionales',
+            'deduccion_servicios_adicionales',
+            'ganancias_servicios',
+            'comision_ventas_producto',
+            'ganancias_totales_brutas',
+            'descuento_espacio',
+            'total_deducciones',
+            'pago_neto_estilista',
+        ])
+        for est in data.get('estilistas', []):
             writer.writerow([
+                'fila',
+                est.get('estilista_id'),
                 est['estilista_nombre'],
-                est['ganancias_totales_brutas'],
-                est['descuento_espacio'],
-                est['pago_neto_estilista'],
+                est.get('tipo_cobro_espacio'),
+                est.get('valor_cobro_espacio', 0),
+                est.get('dias_cobrados_alquiler', 0),
+                est.get('facturacion_servicios', 0),
+                est.get('valor_servicios_adicionales', 0),
+                est.get('deduccion_servicios_adicionales', 0),
+                est.get('ganancias_servicios', 0),
+                est.get('comision_ventas_producto', 0),
+                est.get('ganancias_totales_brutas', 0),
+                est.get('descuento_espacio', 0),
+                est.get('total_deducciones', 0),
+                est.get('pago_neto_estilista', 0),
+            ])
+        writer.writerow([])
+
+        writer.writerow(['SERIE_DIARIA_RAW', 'fecha', 'ventas_productos', 'ventas_servicios', 'total'])
+        for item in data.get('serie_diaria', []):
+            writer.writerow(['fila', item.get('fecha'), item.get('ventas_productos', 0), item.get('ventas_servicios', 0), item.get('total', 0)])
+        writer.writerow([])
+
+        writer.writerow(['TOP_PRODUCTOS_RAW', 'producto_id', 'producto_nombre', 'producto_marca', 'cantidad', 'total'])
+        for item in data.get('top_ventas_productos', []):
+            writer.writerow([
+                'fila',
+                item.get('producto_id'),
+                item.get('producto_nombre'),
+                item.get('producto_marca'),
+                item.get('cantidad', 0),
+                item.get('total', 0),
+            ])
+        writer.writerow([])
+
+        writer.writerow(['PRODUCTOS_BAJO_STOCK_RAW', 'id', 'nombre', 'marca', 'precio_venta', 'stock', 'stock_minimo'])
+        for p in data.get('productos_bajo_stock', []):
+            writer.writerow([
+                'fila',
+                p.get('id'),
+                p.get('nombre'),
+                p.get('marca'),
+                p.get('precio_venta', 0),
+                p.get('stock', 0),
+                p.get('stock_minimo', 0),
             ])
 
         return response
@@ -821,42 +896,83 @@ def bi_export_pdf(request):
         pdf = canvas.Canvas(buffer, pagesize=letter)
         width, height = letter
 
+        def ensure_space(y_pos, needed=18):
+            if y_pos < 60 + needed:
+                pdf.showPage()
+                return height - 40
+            return y_pos
+
+        def draw_line(label, value, y_pos, bold=False):
+            y_pos = ensure_space(y_pos)
+            pdf.setFont('Helvetica-Bold' if bold else 'Helvetica', 9)
+            pdf.drawString(50, y_pos, f"{label}: {value}")
+            return y_pos - 12
+
+        kpis = data.get('kpis', {})
+        venta_neta_total = Decimal(str(kpis.get('venta_neta_total', 0) or 0))
+        ganancia_establecimiento_total = Decimal(str(kpis.get('ganancia_establecimiento_total', 0) or 0))
+        pago_total_estilistas = Decimal(str(kpis.get('pago_total_estilistas', 0) or 0))
+        margen_establecimiento_pct = float((ganancia_establecimiento_total / venta_neta_total) * 100) if venta_neta_total > 0 else 0.0
+        participacion_estilistas_pct = float((pago_total_estilistas / venta_neta_total) * 100) if venta_neta_total > 0 else 0.0
+
         y = height - 40
-        pdf.setFont('Helvetica-Bold', 14)
-        pdf.drawString(40, y, 'Reporte Ejecutivo BI')
+        pdf.setFont('Helvetica-Bold', 16)
+        pdf.drawString(40, y, 'Informe Gerencial - Reporte BI')
         y -= 20
         pdf.setFont('Helvetica', 10)
         pdf.drawString(40, y, f"Rango: {data['fecha_inicio']} a {data['fecha_fin']}")
+        y -= 14
+        pdf.drawString(40, y, f"Generado: {timezone.localtime().strftime('%Y-%m-%d %H:%M:%S')}")
         y -= 25
 
-        pdf.setFont('Helvetica-Bold', 11)
-        pdf.drawString(40, y, 'KPIs')
-        y -= 15
-        pdf.setFont('Helvetica', 9)
-        for k, v in data['kpis'].items():
-            pdf.drawString(50, y, f"- {k}: {v}")
-            y -= 12
-            if y < 60:
-                pdf.showPage()
-                y = height - 40
-                pdf.setFont('Helvetica', 9)
+        pdf.setFont('Helvetica-Bold', 12)
+        pdf.drawString(40, y, 'Resumen Ejecutivo para Gerencia')
+        y -= 16
+        y = draw_line('Venta neta total', f"${float(venta_neta_total):,.2f}", y)
+        y = draw_line('Ganancia establecimiento total', f"${float(ganancia_establecimiento_total):,.2f}", y)
+        y = draw_line('Margen del establecimiento', f"{margen_establecimiento_pct:.2f}%", y)
+        y = draw_line('Pago total estilistas', f"${float(pago_total_estilistas):,.2f}", y)
+        y = draw_line('Participacion pago estilistas sobre venta neta', f"{participacion_estilistas_pct:.2f}%", y)
+        y = draw_line('Ingresos por servicios adicionales', f"${float(kpis.get('ingresos_servicios_adicionales', 0)):.2f}", y)
 
-        y -= 10
+        y -= 12
+        y = ensure_space(y, 24)
         pdf.setFont('Helvetica-Bold', 11)
-        pdf.drawString(40, y, 'Liquidacion por Estilista')
+        pdf.drawString(40, y, 'KPIs Detallados')
         y -= 15
         pdf.setFont('Helvetica', 9)
-        for est in data['estilistas']:
-            line = (
-                f"{est['estilista_nombre']} | Bruto: {est['ganancias_totales_brutas']} | "
-                f"Descuento: {est['descuento_espacio']} | Neto: {est['pago_neto_estilista']}"
-            )
-            pdf.drawString(50, y, line[:110])
+        for k, v in kpis.items():
+            y = draw_line(k, v, y)
+
+        y -= 12
+        y = ensure_space(y, 24)
+        pdf.setFont('Helvetica-Bold', 11)
+        pdf.drawString(40, y, 'Liquidacion por Estilista (Detalle)')
+        y -= 15
+        for est in data.get('estilistas', []):
+            y = ensure_space(y, 70)
+            pdf.setFont('Helvetica-Bold', 9)
+            pdf.drawString(50, y, f"Estilista: {est.get('estilista_nombre', '-')}")
             y -= 12
-            if y < 60:
-                pdf.showPage()
-                y = height - 40
-                pdf.setFont('Helvetica', 9)
+            pdf.setFont('Helvetica', 9)
+            y = draw_line('Facturacion servicios', f"${float(est.get('facturacion_servicios', 0)):.2f}", y)
+            y = draw_line('Servicios adicionales', f"${float(est.get('valor_servicios_adicionales', 0)):.2f}", y)
+            y = draw_line('Base para pagar', f"${float(est.get('ganancias_servicios', 0)):.2f}", y)
+            y = draw_line('Comision ventas producto', f"${float(est.get('comision_ventas_producto', 0)):.2f}", y)
+            y = draw_line('Cobro espacio', f"${float(est.get('descuento_espacio', 0)):.2f}", y)
+            y = draw_line('Neto a pagar', f"${float(est.get('pago_neto_estilista', 0)):.2f}", y, bold=True)
+            y -= 8
+
+        y = ensure_space(y, 24)
+        pdf.setFont('Helvetica-Bold', 11)
+        pdf.drawString(40, y, 'Top Productos')
+        y -= 15
+        for item in data.get('top_ventas_productos', [])[:10]:
+            y = draw_line(
+                f"{item.get('producto_nombre', '-')}",
+                f"Cant: {item.get('cantidad', 0)} | Total: ${float(item.get('total', 0)):.2f}",
+                y,
+            )
 
         pdf.save()
         buffer.seek(0)
