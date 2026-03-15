@@ -9,6 +9,7 @@ import { canManageCatalog } from '../utils/roles';
 const INITIAL_FORM = {
   codigo_barras: '',
   nombre: '',
+  descripcion: '',
   marca: '',
   presentacion: '',
   precio_compra: '',
@@ -112,6 +113,7 @@ const Productos = () => {
       const payload = {
         codigo_barras: form.codigo_barras.trim() || null,
         nombre: form.nombre.trim(),
+        descripcion: form.descripcion.trim() || null,
         marca: form.marca.trim() || null,
         presentacion: form.presentacion.trim() || null,
         precio_compra: form.precio_compra ? Number(form.precio_compra) : null,
@@ -152,6 +154,7 @@ const Productos = () => {
     setForm({
       codigo_barras: producto.codigo_barras || '',
       nombre: producto.nombre || '',
+      descripcion: producto.descripcion || '',
       marca: producto.marca || '',
       presentacion: producto.presentacion || '',
       precio_compra: producto.precio_compra ?? '',
@@ -479,6 +482,7 @@ const Productos = () => {
         <input className="input-field" placeholder="Nombre" value={form.nombre} onChange={(e) => setForm((p) => ({ ...p, nombre: e.target.value }))} />
         <input className="input-field" placeholder="Marca" value={form.marca} onChange={(e) => setForm((p) => ({ ...p, marca: e.target.value }))} />
         <input className="input-field" placeholder="Presentación" value={form.presentacion} onChange={(e) => setForm((p) => ({ ...p, presentacion: e.target.value }))} />
+        <textarea className="input-field md:col-span-3" rows={2} placeholder="Descripción (se usa para búsqueda y concatenación en listado)" value={form.descripcion} onChange={(e) => setForm((p) => ({ ...p, descripcion: e.target.value }))} />
         <input className="input-field" type="number" min="0" step="0.01" placeholder="Valor de compra" value={form.precio_compra} onChange={(e) => setForm((p) => ({ ...p, precio_compra: e.target.value }))} />
         <input className="input-field" type="number" min="0" step="0.01" placeholder="Valor de venta" value={form.precio_venta} onChange={(e) => setForm((p) => ({ ...p, precio_venta: e.target.value }))} />
         <input className="input-field" type="number" min="0" step="0.01" placeholder="Comisión estilista (%)" value={form.comision_estilista} onChange={(e) => setForm((p) => ({ ...p, comision_estilista: e.target.value }))} />
