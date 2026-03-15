@@ -2,6 +2,17 @@
 
 Este proyecto web usa un puente local para comunicarse con impresora termica y cajon monedero.
 
+## Configuracion facil (maquina SAT sin proyecto completo)
+
+Si la maquina SAT no tiene el proyecto web, usa este modo portable:
+
+1. Copia SOLO la carpeta `local_bridge` a la maquina SAT (por USB o red).
+2. Dentro de esa carpeta, ejecuta `instalar_bridge_sat.bat` (una sola vez).
+3. Luego ejecuta `iniciar_bridge_sat.bat` cada vez que abras caja/facturacion.
+4. Opcional: usa `verificar_bridge_sat.bat` para comprobar estado.
+
+Con esto no necesitas clonar ni instalar todo el proyecto en la maquina SAT.
+
 ## 1) Instalar bridge local (Windows)
 
 1. Abrir terminal en `peluqueria_web/local_bridge`.
