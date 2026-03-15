@@ -187,7 +187,9 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
         if tipo_cobro == 'porcentaje_neto':
             monto_establecimiento = (neto * valor_cobro) / 100
         elif tipo_cobro == 'costo_fijo_neto':
-            monto_establecimiento = valor_cobro
+            # El cobro fijo de espacio se liquida por día trabajado en Reportes BI,
+            # para evitar descontarlo múltiples veces por cada servicio del mismo día.
+            monto_establecimiento = 0
 
         if monto_establecimiento < 0:
             monto_establecimiento = 0
@@ -215,6 +217,9 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
                 f"{servicio.adicional_otro_producto.nombre} x{servicio.adicional_otro_cantidad} = ${float((servicio.adicional_otro_producto.precio_venta or 0) * servicio.adicional_otro_cantidad):.2f}"
             )
         adicionales_texto = ', '.join(adicionales) if adicionales else 'Sin adicionales'
+        nota_liquidacion = ''
+        if (servicio.estilista.tipo_cobro_espacio or 'sin_cobro') == 'costo_fijo_neto':
+            nota_liquidacion = '\nNota: El cobro fijo de espacio se aplica en liquidación diaria/semanal, no por cada servicio.'
 
         servicio.factura_texto = (
             f"Factura: {servicio.numero_factura}\n"
@@ -230,6 +235,7 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
             f"Medio de pago: {servicio.get_medio_pago_display() if servicio.medio_pago else '-'}\n"
             f"Establecimiento: ${float(servicio.monto_establecimiento):.2f}\n"
             f"Empleado: ${float(servicio.monto_estilista):.2f}"
+            f"{nota_liquidacion}"
         )
 
     def create(self, validated_data):

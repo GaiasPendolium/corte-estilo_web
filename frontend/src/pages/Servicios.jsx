@@ -351,10 +351,15 @@ const Servicios = () => {
         notas: finalizacion.notas || null,
       });
 
+      const estilistaFinalizado = estilistas.find((e) => e.id === Number(res?.estilista));
+      const usaCobroFijoEspacio = (estilistaFinalizado?.tipo_cobro_espacio || '') === 'costo_fijo_neto';
+
       toast.success(
-        `Factura guardada. Empleado: $${Number(res.monto_estilista || 0).toFixed(2)} | Establecimiento: $${Number(
-          res.monto_establecimiento || 0
-        ).toFixed(2)}`
+        usaCobroFijoEspacio
+          ? `Factura guardada. Base empleado: $${Number(res.monto_estilista || 0).toFixed(2)} | Cobro fijo de espacio se aplica en Reportes por día trabajado.`
+          : `Factura guardada. Empleado: $${Number(res.monto_estilista || 0).toFixed(2)} | Establecimiento: $${Number(
+              res.monto_establecimiento || 0
+            ).toFixed(2)}`
       );
 
       setServicioFinalizarId('');
