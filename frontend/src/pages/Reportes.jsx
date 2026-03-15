@@ -267,12 +267,12 @@ const Reportes = () => {
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
         <KpiCard title="Venta neta total" value={formatMoney(kpis.venta_neta_total)} hint={`${Number(kpis.cantidad_servicios || 0)} servicios y ${Number(kpis.cantidad_ventas_productos || 0)} ventas`} tone="slate" />
-        <KpiCard title="Ganancia del establecimiento" value={formatMoney(kpis.ganancia_establecimiento_total)} hint={`Utilidad productos + servicios + descuentos espacio`} tone="emerald" />
+        <KpiCard title="Ganancia del establecimiento" value={formatMoney(kpis.ganancia_establecimiento_total)} hint={`Utilidad productos + descuentos espacio + adicionales`} tone="emerald" />
         <KpiCard title="Pago neto estilistas" value={formatMoney(kpis.pago_total_estilistas)} hint={`Descuentos de espacio: ${formatMoney(kpis.descuentos_espacio_estilistas)}`} tone="sky" />
         <KpiCard title="Stock crítico" value={moneyFormatter.format(kpis.productos_bajo_stock || 0)} hint={`Promedio venta producto: ${formatMoney(ventaPromedioProducto)}`} tone="amber" />
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="card">
           <p className="text-sm text-gray-500">Ingresos productos</p>
           <p className="mt-2 text-2xl font-black text-gray-900">{formatMoney(kpis.ingresos_productos)}</p>
@@ -287,6 +287,11 @@ const Reportes = () => {
           <p className="text-sm text-gray-500">Comisiones producto estilistas</p>
           <p className="mt-2 text-2xl font-black text-gray-900">{formatMoney(kpis.comision_producto_estilistas)}</p>
           <p className="mt-1 text-sm text-gray-500">Participación del equipo en ventas cruzadas</p>
+        </div>
+        <div className="card">
+          <p className="text-sm text-gray-500">Servicios adicionales (establecimiento)</p>
+          <p className="mt-2 text-2xl font-black text-gray-900">{formatMoney(kpis.ingresos_servicios_adicionales)}</p>
+          <p className="mt-1 text-sm text-gray-500">Valor retenido por adicionales en servicios</p>
         </div>
       </div>
 
@@ -351,11 +356,11 @@ const Reportes = () => {
           </div>
           <div className="rounded-2xl bg-slate-50 p-4">
             <p className="text-sm text-slate-500">3. Deducciones</p>
-            <p className="mt-2 text-sm text-slate-700">Cobro por espacio. Si es fijo, se multiplica por días trabajados.</p>
+            <p className="mt-2 text-sm text-slate-700">Servicios adicionales + cobro por espacio. Si es fijo, se multiplica por días trabajados.</p>
           </div>
           <div className="rounded-2xl bg-slate-50 p-4">
             <p className="text-sm text-slate-500">4. Neto a pagar</p>
-            <p className="mt-2 text-sm text-slate-700">Base para pagar + comisiones por ventas - deducciones.</p>
+            <p className="mt-2 text-sm text-slate-700">Base para pagar (ya descuenta adicionales) + comisiones por ventas - cobro por espacio.</p>
           </div>
         </div>
         <div className="mt-4 overflow-x-auto">
@@ -364,12 +369,14 @@ const Reportes = () => {
               <tr>
                 <th className="px-6 py-3 text-left">Estilista</th>
                 <th className="px-6 py-3 text-left">Facturación servicio</th>
+                <th className="px-6 py-3 text-left">Servicios adicionales</th>
                 <th className="px-6 py-3 text-left">Base para pagar</th>
                 <th className="px-6 py-3 text-left">Comisión ventas</th>
                 <th className="px-6 py-3 text-left">Subtotal antes deducción</th>
                 <th className="px-6 py-3 text-left">Cobro por espacio</th>
                 <th className="px-6 py-3 text-left">Días trabajados</th>
-                <th className="px-6 py-3 text-left">Total deducciones</th>
+                <th className="px-6 py-3 text-left">Deducción adicionales</th>
+                <th className="px-6 py-3 text-left">Total deducciones (espacio)</th>
                 <th className="px-6 py-3 text-left">Neto a pagar</th>
               </tr>
             </thead>
@@ -381,9 +388,10 @@ const Reportes = () => {
                     <div className="font-medium text-slate-900">{formatMoney(s.facturacion_servicios)}</div>
                     <div className="text-xs text-slate-500">Cobrado al cliente</div>
                   </td>
+                  <td className="table-cell text-blue-700 font-medium">{formatMoney(s.valor_servicios_adicionales)}</td>
                   <td className="table-cell">
                     <div className="font-medium text-slate-900">{formatMoney(s.ganancias_servicios)}</div>
-                    <div className="text-xs text-slate-500">Servicio antes de descontar espacio</div>
+                    <div className="text-xs text-slate-500">Servicio después de descontar adicionales</div>
                   </td>
                   <td className="table-cell">{formatMoney(s.comision_ventas_producto)}</td>
                   <td className="table-cell font-medium">{formatMoney(s.ganancias_totales_brutas)}</td>
@@ -398,6 +406,7 @@ const Reportes = () => {
                     </div>
                   </td>
                   <td className="table-cell">{moneyFormatter.format(s.dias_cobrados_alquiler || 0)}</td>
+                  <td className="table-cell text-orange-700 font-medium">{formatMoney(s.deduccion_servicios_adicionales)}</td>
                   <td className="table-cell text-red-700 font-medium">{formatMoney(s.total_deducciones)}</td>
                   <td className="table-cell font-semibold text-emerald-700">{formatMoney(s.pago_neto_estilista)}</td>
                 </tr>

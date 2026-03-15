@@ -627,6 +627,7 @@ def _calcular_datos_bi(request):
     estilistas_data = []
     total_descuentos_espacio = Decimal(0)
     total_pago_neto_estilistas = Decimal(0)
+    total_servicios_adicionales_establecimiento = Decimal(0)
 
     for estilista in Estilista.objects.filter(activo=True):
         servicios_est = servicios_qs.filter(estilista=estilista)
@@ -634,6 +635,7 @@ def _calcular_datos_bi(request):
 
         ganancia_servicios_est = Decimal(servicios_est.aggregate(total=Sum('neto_servicio'))['total'] or 0)
         total_servicios_est = Decimal(servicios_est.aggregate(total=Sum('precio_cobrado'))['total'] or 0)
+        total_adicionales_est = Decimal(servicios_est.aggregate(total=Sum('valor_adicionales'))['total'] or 0)
         dias_trabajados = {
             *servicios_est.values_list('fecha_hora__date', flat=True).distinct(),
             *ventas_est.values_list('fecha_hora__date', flat=True).distinct(),
@@ -658,6 +660,7 @@ def _calcular_datos_bi(request):
 
         total_descuentos_espacio += descuento_espacio
         total_pago_neto_estilistas += pago_neto
+        total_servicios_adicionales_establecimiento += total_adicionales_est
 
         estilistas_data.append(
             {
@@ -668,6 +671,8 @@ def _calcular_datos_bi(request):
                 'base_cobro_espacio': float(ganancia_servicios_est),
                 'dias_cobrados_alquiler': int(len(dias_trabajados) if estilista.tipo_cobro_espacio == 'costo_fijo_neto' else 0),
                 'facturacion_servicios': float(total_servicios_est),
+                'valor_servicios_adicionales': float(total_adicionales_est),
+                'deduccion_servicios_adicionales': float(total_adicionales_est),
                 'ganancias_servicios': float(ganancia_servicios_est),
                 'comision_ventas_producto': float(comision_ventas_producto_est),
                 'ganancias_totales_brutas': float(subtotal_ingresos_est),
@@ -679,7 +684,11 @@ def _calcular_datos_bi(request):
 
     comision_servicios_establecimiento = total_descuentos_espacio
 
-    ganancia_establecimiento_total = ganancia_establecimiento_productos + total_descuentos_espacio
+    ganancia_establecimiento_total = (
+        ganancia_establecimiento_productos +
+        total_descuentos_espacio +
+        total_servicios_adicionales_establecimiento
+    )
 
     venta_neta_total = ingresos_productos + ingresos_servicios
 
@@ -713,6 +722,7 @@ def _calcular_datos_bi(request):
             'utilidad_productos': float(utilidad_productos),
             'comision_producto_estilistas': float(comision_producto_estilistas),
             'comision_servicios_establecimiento': float(comision_servicios_establecimiento),
+            'ingresos_servicios_adicionales': float(total_servicios_adicionales_establecimiento),
             'ganancia_establecimiento_productos': float(ganancia_establecimiento_productos),
             'ganancia_establecimiento_total': float(ganancia_establecimiento_total),
             'pago_total_estilistas': float(total_pago_neto_estilistas),
