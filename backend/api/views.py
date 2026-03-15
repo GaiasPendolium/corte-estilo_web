@@ -609,6 +609,7 @@ def _calcular_datos_bi(request):
             top_productos_mapa[key] = {
                 'producto_id': venta.producto_id,
                 'producto_nombre': venta.producto.nombre,
+                'producto_marca': venta.producto.marca,
                 'cantidad': 0,
                 'total': Decimal(0),
             }
@@ -632,7 +633,10 @@ def _calcular_datos_bi(request):
 
         ganancia_servicios_est = Decimal(servicios_est.aggregate(total=Sum('monto_estilista'))['total'] or 0)
         total_servicios_est = Decimal(servicios_est.aggregate(total=Sum('precio_cobrado'))['total'] or 0)
-        dias_con_servicios = servicios_est.values_list('fecha_hora__date', flat=True).distinct().count()
+        dias_trabajados = {
+            *servicios_est.values_list('fecha_hora__date', flat=True).distinct(),
+            *ventas_est.values_list('fecha_hora__date', flat=True).distinct(),
+        }
         comision_ventas_producto_est = Decimal(0)
         for v in ventas_est:
             pct = Decimal(estilista.comision_ventas_productos or 0)
@@ -644,7 +648,7 @@ def _calcular_datos_bi(request):
         if estilista.tipo_cobro_espacio == 'porcentaje_neto':
             descuento_espacio = (ganancias_brutas_est * Decimal(estilista.valor_cobro_espacio or 0)) / Decimal(100)
         elif estilista.tipo_cobro_espacio == 'costo_fijo_neto':
-            descuento_espacio = Decimal(estilista.valor_cobro_espacio or 0)
+            descuento_espacio = Decimal(estilista.valor_cobro_espacio or 0) * Decimal(len(dias_trabajados))
 
         if descuento_espacio > ganancias_brutas_est:
             descuento_espacio = ganancias_brutas_est
@@ -660,8 +664,8 @@ def _calcular_datos_bi(request):
                 'estilista_nombre': estilista.nombre,
                 'tipo_cobro_espacio': estilista.tipo_cobro_espacio,
                 'valor_cobro_espacio': float(estilista.valor_cobro_espacio or 0),
-                'base_cobro_espacio': float(total_servicios_est if estilista.tipo_cobro_espacio == 'comision' else ganancias_brutas_est),
-                'dias_cobrados_alquiler': int(dias_con_servicios if estilista.tipo_cobro_espacio == 'alquiler' else 0),
+                'base_cobro_espacio': float(ganancias_brutas_est),
+                'dias_cobrados_alquiler': int(len(dias_trabajados) if estilista.tipo_cobro_espacio == 'costo_fijo_neto' else 0),
                 'ganancias_servicios': float(ganancia_servicios_est),
                 'comision_ventas_producto': float(comision_ventas_producto_est),
                 'ganancias_totales_brutas': float(ganancias_brutas_est),
@@ -721,6 +725,8 @@ def _calcular_datos_bi(request):
             {
                 'id': p.id,
                 'nombre': p.nombre,
+                'marca': p.marca,
+                'precio_venta': float(p.precio_venta or 0),
                 'stock': p.stock,
                 'stock_minimo': p.stock_minimo,
             }

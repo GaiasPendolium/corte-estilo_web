@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { format } from 'date-fns';
 import { reportesService } from '../services/api';
 import { toast } from 'react-toastify';
@@ -6,6 +6,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  Cell,
   Legend,
   Line,
   LineChart,
@@ -17,11 +18,37 @@ import {
 
 const today = new Date();
 const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
+const moneyFormatter = new Intl.NumberFormat('es-CO', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+const decimalMoneyFormatter = new Intl.NumberFormat('es-CO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+const formatMoney = (value) => `$${moneyFormatter.format(Number(value || 0))}`;
+const formatMoneyDetailed = (value) => `$${decimalMoneyFormatter.format(Number(value || 0))}`;
+const formatLabel = (value) => String(value || '-');
+const stockRiskColor = (item) => (Number(item.stock || 0) <= 0 ? '#b91c1c' : '#ea580c');
+
+const KpiCard = ({ title, value, hint, tone = 'slate' }) => {
+  const tones = {
+    slate: 'from-slate-900 via-slate-800 to-slate-700 text-white',
+    emerald: 'from-emerald-600 via-emerald-500 to-teal-500 text-white',
+    amber: 'from-amber-500 via-orange-500 to-red-500 text-white',
+    sky: 'from-sky-600 via-blue-600 to-indigo-600 text-white',
+  };
+
+  return (
+    <div className={`rounded-3xl bg-gradient-to-br ${tones[tone]} p-5 shadow-lg`}>
+      <p className="text-sm opacity-80">{title}</p>
+      <p className="mt-3 text-3xl font-black tracking-tight">{value}</p>
+      <p className="mt-2 text-sm opacity-80">{hint}</p>
+    </div>
+  );
+};
 
 const Reportes = () => {
   const [periodo, setPeriodo] = useState('mes');
   const [fechaInicio, setFechaInicio] = useState(format(firstDay, 'yyyy-MM-dd'));
   const [fechaFin, setFechaFin] = useState(format(today, 'yyyy-MM-dd'));
+  const [marcaFiltro, setMarcaFiltro] = useState('todas');
+  const [estilistaFiltro, setEstilistaFiltro] = useState('todos');
   const [stats, setStats] = useState(null);
   const [resumenDiario, setResumenDiario] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -45,23 +72,15 @@ const Reportes = () => {
 
   useEffect(() => {
     loadData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const exportarCsv = async () => {
     try {
-      const blob = await reportesService.exportBICsv({
-        periodo,
-        fecha_inicio: fechaInicio,
-        fecha_fin: fechaFin,
-      });
-      
-      // Verificar si es un blob válido
+      const blob = await reportesService.exportBICsv({ periodo, fecha_inicio: fechaInicio, fecha_fin: fechaFin });
       if (!blob || blob.size === 0) {
         toast.error('El archivo descargado está vacío');
         return;
       }
-      
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -72,25 +91,17 @@ const Reportes = () => {
       window.URL.revokeObjectURL(url);
       toast.success('Reporte CSV descargado');
     } catch (error) {
-      console.error('Error descargando CSV:', error);
       toast.error(error.response?.data?.message || error.message || 'No se pudo descargar el reporte CSV');
     }
   };
 
   const exportarPdf = async () => {
     try {
-      const blob = await reportesService.exportBIPdf({
-        periodo,
-        fecha_inicio: fechaInicio,
-        fecha_fin: fechaFin,
-      });
-      
-      // Verificar si es un blob válido
+      const blob = await reportesService.exportBIPdf({ periodo, fecha_inicio: fechaInicio, fecha_fin: fechaFin });
       if (!blob || blob.size === 0) {
         toast.error('El archivo descargado está vacío');
         return;
       }
-      
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -127,127 +138,192 @@ const Reportes = () => {
     }
   };
 
+  const aplicarRangoRapido = (tipo) => {
+    const base = new Date();
+    if (tipo === 'hoy') {
+      const value = format(base, 'yyyy-MM-dd');
+      setFechaInicio(value);
+      setFechaFin(value);
+      setPeriodo('personalizado');
+      return;
+    }
+    if (tipo === '7dias') {
+      const inicio = new Date(base);
+      inicio.setDate(base.getDate() - 6);
+      setFechaInicio(format(inicio, 'yyyy-MM-dd'));
+      setFechaFin(format(base, 'yyyy-MM-dd'));
+      setPeriodo('personalizado');
+      return;
+    }
+    const inicioMes = new Date(base.getFullYear(), base.getMonth(), 1);
+    setFechaInicio(format(inicioMes, 'yyyy-MM-dd'));
+    setFechaFin(format(base, 'yyyy-MM-dd'));
+    setPeriodo('mes');
+  };
+
   const kpis = stats?.kpis || {};
+
+  const marcasDisponibles = useMemo(() => {
+    const marcas = new Set((stats?.productos_bajo_stock || []).map((item) => item.marca).filter(Boolean));
+    (stats?.top_ventas_productos || []).forEach((item) => {
+      if (item.producto_marca) marcas.add(item.producto_marca);
+    });
+    return ['todas', ...Array.from(marcas).sort((a, b) => a.localeCompare(b))];
+  }, [stats]);
+
+  const estilistasDisponibles = useMemo(
+    () => ['todos', ...((stats?.estilistas || []).map((item) => item.estilista_nombre).sort((a, b) => a.localeCompare(b)))],
+    [stats]
+  );
+
+  const productosBajoStockFiltrados = useMemo(() => {
+    const base = stats?.productos_bajo_stock || [];
+    if (marcaFiltro === 'todas') return base;
+    return base.filter((item) => item.marca === marcaFiltro);
+  }, [stats, marcaFiltro]);
+
+  const topProductosFiltrados = useMemo(() => {
+    const base = stats?.top_ventas_productos || [];
+    if (marcaFiltro === 'todas') return base;
+    return base.filter((item) => item.producto_marca === marcaFiltro);
+  }, [stats, marcaFiltro]);
+
+  const liquidacionFiltrada = useMemo(() => {
+    const base = stats?.estilistas || [];
+    if (estilistaFiltro === 'todos') return base;
+    return base.filter((item) => item.estilista_nombre === estilistaFiltro);
+  }, [stats, estilistaFiltro]);
+
+  const servicioPromedio = useMemo(() => {
+    if (!kpis.cantidad_servicios) return 0;
+    return Number(kpis.ingresos_servicios || 0) / Number(kpis.cantidad_servicios || 1);
+  }, [kpis]);
+
+  const ventaPromedioProducto = useMemo(() => {
+    if (!kpis.cantidad_ventas_productos) return 0;
+    return Number(kpis.ingresos_productos || 0) / Number(kpis.cantidad_ventas_productos || 1);
+  }, [kpis]);
 
   return (
     <div className="space-y-6 fade-in">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">BI de Reportes</h1>
-          <p className="text-gray-600 mt-1">Venta neta, utilidades, comisiones y liquidación por estilista</p>
+      <section className="rounded-[28px] bg-[radial-gradient(circle_at_top_left,_rgba(59,130,246,0.18),_transparent_34%),linear-gradient(135deg,#0f172a_0%,#111827_35%,#1f2937_100%)] p-6 text-white shadow-2xl">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <p className="text-xs uppercase tracking-[0.3em] text-slate-300">Centro de inteligencia</p>
+            <h1 className="mt-2 text-4xl font-black tracking-tight">Reportes Ejecutivos</h1>
+            <p className="mt-2 max-w-2xl text-slate-300">Vista gerencial con rentabilidad, liquidez, carga operativa y alertas accionables.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button className="btn-secondary !border-white/20 !bg-white/10 !text-white" onClick={exportarCsv}>Descargar CSV</button>
+            <button className="btn-secondary !border-white/20 !bg-white/10 !text-white" onClick={exportarPdf}>Descargar PDF</button>
+          </div>
         </div>
-        <div className="flex gap-2">
-          <button className="btn-secondary" onClick={exportarCsv}>Descargar CSV</button>
-          <button className="btn-secondary" onClick={exportarPdf}>Descargar PDF</button>
-        </div>
-      </div>
+      </section>
 
       <div className="card">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h2 className="card-header mb-1">Resumen Diario Automático</h2>
-            <p className="text-sm text-gray-600">Genera resumen de cierre para enviar a administración.</p>
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4 flex-1">
+            <div>
+              <label className="block text-sm text-gray-600 mb-1">Periodo</label>
+              <select className="input-field" value={periodo} onChange={(e) => setPeriodo(e.target.value)}>
+                <option value="semana">Semana</option>
+                <option value="mes">Mes</option>
+                <option value="personalizado">Personalizado</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm text-gray-600 mb-1">Fecha inicio</label>
+              <input type="date" className="input-field" value={fechaInicio} onChange={(e) => setFechaInicio(e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-600 mb-1">Fecha fin</label>
+              <input type="date" className="input-field" value={fechaFin} onChange={(e) => setFechaFin(e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-600 mb-1">Filtrar marca</label>
+              <select className="input-field" value={marcaFiltro} onChange={(e) => setMarcaFiltro(e.target.value)}>
+                {marcasDisponibles.map((marca) => (
+                  <option key={marca} value={marca}>{marca === 'todas' ? 'Todas las marcas' : marca}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm text-gray-600 mb-1">Liquidación estilista</label>
+              <select className="input-field" value={estilistaFiltro} onChange={(e) => setEstilistaFiltro(e.target.value)}>
+                {estilistasDisponibles.map((estilista) => (
+                  <option key={estilista} value={estilista}>{estilista === 'todos' ? 'Todos los estilistas' : estilista}</option>
+                ))}
+              </select>
+            </div>
           </div>
-          <div className="flex gap-2">
-            <button className="btn-secondary" onClick={cargarResumenDiario}>Generar hoy</button>
-            <button className="btn-primary" onClick={copiarResumenDiario}>Copiar resumen</button>
+          <div className="flex flex-wrap gap-2 lg:justify-end">
+            <button className="btn-secondary" onClick={() => aplicarRangoRapido('hoy')}>Hoy</button>
+            <button className="btn-secondary" onClick={() => aplicarRangoRapido('7dias')}>7 días</button>
+            <button className="btn-secondary" onClick={() => aplicarRangoRapido('mes')}>Mes</button>
+            <button className="btn-primary" onClick={loadData} disabled={loading}>{loading ? 'Consultando...' : 'Consultar'}</button>
           </div>
         </div>
-        {resumenDiario && (
-          <div className="mt-4 rounded-lg bg-gray-50 border border-gray-200 p-4">
-            <pre className="whitespace-pre-wrap text-sm text-gray-800">{resumenDiario.texto_resumen}</pre>
-          </div>
-        )}
       </div>
 
-      <div className="card grid grid-cols-1 md:grid-cols-5 gap-4">
-        <div>
-          <label className="block text-sm text-gray-600 mb-1">Periodo</label>
-          <select className="input-field" value={periodo} onChange={(e) => setPeriodo(e.target.value)}>
-            <option value="semana">Semana</option>
-            <option value="mes">Mes</option>
-            <option value="personalizado">Personalizado</option>
-          </select>
-        </div>
-        <div>
-          <label className="block text-sm text-gray-600 mb-1">Fecha inicio</label>
-          <input type="date" className="input-field" value={fechaInicio} onChange={(e) => setFechaInicio(e.target.value)} />
-        </div>
-        <div>
-          <label className="block text-sm text-gray-600 mb-1">Fecha fin</label>
-          <input type="date" className="input-field" value={fechaFin} onChange={(e) => setFechaFin(e.target.value)} />
-        </div>
-        <div className="md:col-span-2 flex items-end">
-          <button className="btn-primary w-full" onClick={loadData} disabled={loading}>Consultar</button>
-        </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
+        <KpiCard title="Venta neta total" value={formatMoney(kpis.venta_neta_total)} hint={`${Number(kpis.cantidad_servicios || 0)} servicios y ${Number(kpis.cantidad_ventas_productos || 0)} ventas`} tone="slate" />
+        <KpiCard title="Ganancia del establecimiento" value={formatMoney(kpis.ganancia_establecimiento_total)} hint={`Utilidad productos + servicios + descuentos espacio`} tone="emerald" />
+        <KpiCard title="Pago neto estilistas" value={formatMoney(kpis.pago_total_estilistas)} hint={`Descuentos de espacio: ${formatMoney(kpis.descuentos_espacio_estilistas)}`} tone="sky" />
+        <KpiCard title="Stock crítico" value={moneyFormatter.format(kpis.productos_bajo_stock || 0)} hint={`Promedio venta producto: ${formatMoney(ventaPromedioProducto)}`} tone="amber" />
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="card">
-          <p className="text-gray-500 text-sm">Venta neta total</p>
-          <h2 className="text-3xl font-bold mt-2">${Number(kpis.venta_neta_total || 0).toFixed(2)}</h2>
+          <p className="text-sm text-gray-500">Ingresos productos</p>
+          <p className="mt-2 text-2xl font-black text-gray-900">{formatMoney(kpis.ingresos_productos)}</p>
+          <p className="mt-1 text-sm text-gray-500">Utilidad neta: {formatMoney(kpis.utilidad_productos)}</p>
         </div>
         <div className="card">
-          <p className="text-gray-500 text-sm">Ganancia establecimiento total</p>
-          <h2 className="text-3xl font-bold mt-2">${Number(kpis.ganancia_establecimiento_total || 0).toFixed(2)}</h2>
+          <p className="text-sm text-gray-500">Ingresos servicios</p>
+          <p className="mt-2 text-2xl font-black text-gray-900">{formatMoney(kpis.ingresos_servicios)}</p>
+          <p className="mt-1 text-sm text-gray-500">Ticket promedio servicio: {formatMoney(servicioPromedio)}</p>
         </div>
         <div className="card">
-          <p className="text-gray-500 text-sm">Utilidad neta productos</p>
-          <h2 className="text-3xl font-bold mt-2">${Number(kpis.utilidad_productos || 0).toFixed(2)}</h2>
-        </div>
-        <div className="card">
-          <p className="text-gray-500 text-sm">Pago total estilistas</p>
-          <h2 className="text-3xl font-bold mt-2">${Number(kpis.pago_total_estilistas || 0).toFixed(2)}</h2>
-        </div>
-        <div className="card">
-          <p className="text-gray-500 text-sm">Ingresos productos</p>
-          <h2 className="text-2xl font-bold mt-2">${Number(kpis.ingresos_productos || 0).toFixed(2)}</h2>
-        </div>
-        <div className="card">
-          <p className="text-gray-500 text-sm">Comisión servicios (establecimiento)</p>
-          <h2 className="text-2xl font-bold mt-2">${Number(kpis.comision_servicios_establecimiento || 0).toFixed(2)}</h2>
-        </div>
-        <div className="card">
-          <p className="text-gray-500 text-sm">Comisión por ventas de productos (estilistas)</p>
-          <h2 className="text-2xl font-bold mt-2">${Number(kpis.comision_producto_estilistas || 0).toFixed(2)}</h2>
-        </div>
-        <div className="card">
-          <p className="text-gray-500 text-sm">Productos bajos de stock</p>
-          <h2 className="text-2xl font-bold mt-2">{Number(kpis.productos_bajo_stock || 0)}</h2>
+          <p className="text-sm text-gray-500">Comisiones producto estilistas</p>
+          <p className="mt-2 text-2xl font-black text-gray-900">{formatMoney(kpis.comision_producto_estilistas)}</p>
+          <p className="mt-1 text-sm text-gray-500">Participación del equipo en ventas cruzadas</p>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="card">
-          <h2 className="card-header">Serie diaria (línea)</h2>
+          <h2 className="card-header">Serie diaria</h2>
           <div style={{ width: '100%', height: 320 }}>
             <ResponsiveContainer>
               <LineChart data={stats?.serie_diaria || []}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="fecha" />
-                <YAxis />
-                <Tooltip />
+                <YAxis tickFormatter={moneyFormatter.format} />
+                <Tooltip formatter={(value) => formatMoneyDetailed(value)} />
                 <Legend />
-                <Line type="monotone" dataKey="ventas_productos" stroke="#111827" name="Productos" />
-                <Line type="monotone" dataKey="ventas_servicios" stroke="#16a34a" name="Servicios" />
-                <Line type="monotone" dataKey="total" stroke="#2563eb" name="Total" />
+                <Line type="monotone" dataKey="ventas_productos" stroke="#0f766e" strokeWidth={3} name="Productos" dot={false} />
+                <Line type="monotone" dataKey="ventas_servicios" stroke="#2563eb" strokeWidth={3} name="Servicios" dot={false} />
+                <Line type="monotone" dataKey="total" stroke="#111827" strokeWidth={3} name="Total" dot={false} />
               </LineChart>
             </ResponsiveContainer>
           </div>
         </div>
 
         <div className="card">
-          <h2 className="card-header">Top ventas de productos (barra)</h2>
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="card-header mb-0">Top ventas de productos</h2>
+            <span className="text-sm text-gray-500">Filtro marca: {marcaFiltro === 'todas' ? 'Todas' : marcaFiltro}</span>
+          </div>
           <div style={{ width: '100%', height: 320 }}>
             <ResponsiveContainer>
-              <BarChart data={stats?.top_ventas_productos || []}>
+              <BarChart data={topProductosFiltrados}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="producto_nombre" hide />
-                <YAxis />
-                <Tooltip />
+                <YAxis tickFormatter={moneyFormatter.format} />
+                <Tooltip formatter={(value, key) => key === 'cantidad' ? value : formatMoneyDetailed(value)} labelFormatter={formatLabel} />
                 <Legend />
-                <Bar dataKey="cantidad" fill="#0f766e" name="Cantidad" />
-                <Bar dataKey="total" fill="#7c3aed" name="Total" />
+                <Bar dataKey="cantidad" fill="#1d4ed8" name="Cantidad" radius={[6, 6, 0, 0]} />
+                <Bar dataKey="total" fill="#0f766e" name="Total" radius={[6, 6, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -255,8 +331,16 @@ const Reportes = () => {
       </div>
 
       <div className="card">
-        <h2 className="card-header">Liquidación por estilista</h2>
-        <div className="overflow-x-auto">
+        <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h2 className="card-header mb-0">Liquidación por estilista</h2>
+            <p className="text-sm text-gray-500">El alquiler fijo se cobra solo en días efectivamente trabajados dentro del rango.</p>
+          </div>
+          <div className="rounded-2xl bg-slate-100 px-4 py-2 text-sm text-slate-700">
+            {estilistaFiltro === 'todos' ? 'Mostrando todos los estilistas' : `Mostrando: ${estilistaFiltro}`}
+          </div>
+        </div>
+        <div className="mt-4 overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="table-header">
               <tr>
@@ -266,27 +350,25 @@ const Reportes = () => {
                 <th className="px-6 py-3 text-left">Ganancia servicios</th>
                 <th className="px-6 py-3 text-left">Comisión ventas productos</th>
                 <th className="px-6 py-3 text-left">Bruto</th>
-                <th className="px-6 py-3 text-left">Días alquiler</th>
+                <th className="px-6 py-3 text-left">Días trabajados</th>
                 <th className="px-6 py-3 text-left">Descuento espacio</th>
                 <th className="px-6 py-3 text-left">Pago neto</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {(stats?.estilistas || []).map((s) => (
+              {liquidacionFiltrada.map((s) => (
                 <tr key={s.estilista_id} className="hover:bg-gray-50">
                   <td className="table-cell font-medium">{s.estilista_nombre}</td>
-                  <td className="table-cell capitalize">{s.tipo_cobro_espacio || 'ninguno'}</td>
+                  <td className="table-cell capitalize">{s.tipo_cobro_espacio || 'sin_cobro'}</td>
                   <td className="table-cell">
-                    {s.tipo_cobro_espacio === 'comision'
-                      ? `${Number(s.valor_cobro_espacio || 0).toFixed(2)}%`
-                      : `$${Number(s.valor_cobro_espacio || 0).toFixed(2)}`}
+                    {s.tipo_cobro_espacio === 'porcentaje_neto' ? `${Number(s.valor_cobro_espacio || 0).toFixed(2)}%` : formatMoney(s.valor_cobro_espacio)}
                   </td>
-                  <td className="table-cell">${Number(s.ganancias_servicios || 0).toFixed(2)}</td>
-                  <td className="table-cell">${Number(s.comision_ventas_producto || 0).toFixed(2)}</td>
-                  <td className="table-cell">${Number(s.ganancias_totales_brutas || 0).toFixed(2)}</td>
-                  <td className="table-cell">{Number(s.dias_cobrados_alquiler || 0)}</td>
-                  <td className="table-cell">${Number(s.descuento_espacio || 0).toFixed(2)}</td>
-                  <td className="table-cell">${Number(s.pago_neto_estilista || 0).toFixed(2)}</td>
+                  <td className="table-cell">{formatMoney(s.ganancias_servicios)}</td>
+                  <td className="table-cell">{formatMoney(s.comision_ventas_producto)}</td>
+                  <td className="table-cell">{formatMoney(s.ganancias_totales_brutas)}</td>
+                  <td className="table-cell">{moneyFormatter.format(s.dias_cobrados_alquiler || 0)}</td>
+                  <td className="table-cell">{formatMoney(s.descuento_espacio)}</td>
+                  <td className="table-cell font-semibold text-emerald-700">{formatMoney(s.pago_neto_estilista)}</td>
                 </tr>
               ))}
             </tbody>
@@ -295,28 +377,62 @@ const Reportes = () => {
       </div>
 
       <div className="card">
-        <h2 className="card-header">Productos por agotarse</h2>
-        {(stats?.productos_bajo_stock || []).length === 0 && <p className="text-gray-600">No hay productos en riesgo de stock.</p>}
-        {(stats?.productos_bajo_stock || []).length > 0 && (
-          <div className="overflow-x-auto">
+        <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h2 className="card-header mb-0">Productos por agotarse</h2>
+            <p className="text-sm text-gray-500">Contenedor recortado con scroll interno para no alargar la página.</p>
+          </div>
+          <div className="rounded-2xl bg-amber-50 px-4 py-2 text-sm text-amber-700">
+            {marcaFiltro === 'todas' ? 'Todas las marcas' : marcaFiltro}
+          </div>
+        </div>
+        {productosBajoStockFiltrados.length === 0 && <p className="mt-4 text-gray-600">No hay productos en riesgo de stock para este filtro.</p>}
+        {productosBajoStockFiltrados.length > 0 && (
+          <div className="mt-4 overflow-auto rounded-2xl border border-gray-200" style={{ maxHeight: '24rem' }}>
             <table className="min-w-full divide-y divide-gray-200">
-              <thead className="table-header">
+              <thead className="table-header sticky top-0 bg-white">
                 <tr>
+                  <th className="px-6 py-3 text-left">Marca</th>
                   <th className="px-6 py-3 text-left">Producto</th>
                   <th className="px-6 py-3 text-left">Stock</th>
                   <th className="px-6 py-3 text-left">Mínimo</th>
+                  <th className="px-6 py-3 text-left">Precio venta</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {(stats?.productos_bajo_stock || []).map((p) => (
+                {productosBajoStockFiltrados.map((p) => (
                   <tr key={p.id} className="hover:bg-gray-50">
+                    <td className="table-cell">{p.marca || '-'}</td>
                     <td className="table-cell font-medium">{p.nombre}</td>
-                    <td className="table-cell">{p.stock}</td>
-                    <td className="table-cell">{p.stock_minimo}</td>
+                    <td className="table-cell">
+                      <span className="inline-flex rounded-full px-3 py-1 text-xs font-semibold text-white" style={{ backgroundColor: stockRiskColor(p) }}>
+                        {moneyFormatter.format(p.stock)}
+                      </span>
+                    </td>
+                    <td className="table-cell">{moneyFormatter.format(p.stock_minimo)}</td>
+                    <td className="table-cell">{formatMoney(p.precio_venta)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+      </div>
+
+      <div className="card">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="card-header mb-1">Resumen diario automático</h2>
+            <p className="text-sm text-gray-600">Genera un texto de cierre para administración.</p>
+          </div>
+          <div className="flex gap-2">
+            <button className="btn-secondary" onClick={cargarResumenDiario}>Generar hoy</button>
+            <button className="btn-primary" onClick={copiarResumenDiario}>Copiar resumen</button>
+          </div>
+        </div>
+        {resumenDiario && (
+          <div className="mt-4 rounded-2xl bg-gray-50 border border-gray-200 p-4">
+            <pre className="whitespace-pre-wrap text-sm text-gray-800">{resumenDiario.texto_resumen}</pre>
           </div>
         )}
       </div>
