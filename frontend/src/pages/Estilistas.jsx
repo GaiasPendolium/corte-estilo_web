@@ -7,9 +7,13 @@ import ModalForm from '../components/ModalForm';
 const INITIAL_FORM = {
   nombre: '',
   telefono: '',
+  email: '',
+  comision_porcentaje: '0',
   tipo_cobro_espacio: 'sin_cobro',
   valor_cobro_espacio: '0',
   comision_ventas_productos: '0',
+  fecha_ingreso: '',
+  activo: true,
 };
 
 const extractRows = (payload) => {
@@ -29,7 +33,7 @@ const Estilistas = () => {
   const cargarEstilistas = async () => {
     try {
       setLoading(true);
-      const payload = await estilistasService.getAll();
+      const payload = await estilistasService.getAll({ activo: true });
       setEstilistas(extractRows(payload));
     } catch (error) {
       toast.error('No se pudo cargar el listado de estilistas');
@@ -60,9 +64,12 @@ const Estilistas = () => {
       const payload = {
         nombre: form.nombre.trim(),
         telefono: form.telefono.trim() || null,
+        email: form.email.trim() || null,
+        comision_porcentaje: Number(form.comision_porcentaje || 0),
         tipo_cobro_espacio: form.tipo_cobro_espacio,
         valor_cobro_espacio: Number(form.valor_cobro_espacio || 0),
         comision_ventas_productos: Number(form.comision_ventas_productos || 0),
+        fecha_ingreso: form.fecha_ingreso || null,
       };
 
       if (editingId) {
@@ -92,20 +99,28 @@ const Estilistas = () => {
     setForm({
       nombre: item.nombre || '',
       telefono: item.telefono || '',
+      email: item.email || '',
+      comision_porcentaje: String(item.comision_porcentaje ?? 0),
       tipo_cobro_espacio: item.tipo_cobro_espacio || 'sin_cobro',
       valor_cobro_espacio: String(item.valor_cobro_espacio ?? 0),
       comision_ventas_productos: String(item.comision_ventas_productos ?? 0),
+      fecha_ingreso: item.fecha_ingreso || '',
+      activo: item.activo ?? true,
     });
     setShowForm(true);
   };
 
   const eliminarEstilista = async (item) => {
-    const ok = window.confirm(`¿Eliminar empleado "${item.nombre}"?`);
+    const ok = window.confirm(`¿Eliminar empleado "${item.nombre}"?\nSi tiene historial de servicios será desactivado en lugar de eliminado, preservando sus registros.`);
     if (!ok) return;
 
     try {
-      await estilistasService.delete(item.id);
-      toast.success('Empleado eliminado');
+      const response = await estilistasService.delete(item.id);
+      if (response?.desactivado) {
+        toast.info('Empleado desactivado (tiene historial de servicios preservado)');
+      } else {
+        toast.success('Empleado eliminado');
+      }
       await cargarEstilistas();
     } catch (error) {
       toast.error('No se pudo eliminar el empleado');
@@ -170,6 +185,53 @@ const Estilistas = () => {
         </div>
 
         <div>
+          <label className="block text-sm text-gray-600 mb-1">Email</label>
+          <input
+            className="input-field"
+            type="email"
+            value={form.email}
+            onChange={(e) => onInputChange('email', e.target.value)}
+            placeholder="correo@ejemplo.com"
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm text-gray-600 mb-1">Fecha de ingreso</label>
+          <input
+            className="input-field"
+            type="date"
+            value={form.fecha_ingreso}
+            onChange={(e) => onInputChange('fecha_ingreso', e.target.value)}
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm text-gray-600 mb-1">Comisión por servicio (%)</label>
+          <input
+            className="input-field"
+            type="number"
+            min="0"
+            step="0.01"
+            value={form.comision_porcentaje}
+            onChange={(e) => onInputChange('comision_porcentaje', e.target.value)}
+            placeholder="% que recibe el empleado por servicio"
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm text-gray-600 mb-1">Comisión por venta de productos (%)</label>
+          <input
+            className="input-field"
+            type="number"
+            min="0"
+            step="0.01"
+            value={form.comision_ventas_productos}
+            onChange={(e) => onInputChange('comision_ventas_productos', e.target.value)}
+            placeholder="Aplica solo para productos"
+          />
+        </div>
+
+        <div>
           <label className="block text-sm text-gray-600 mb-1">Cobro por espacio</label>
           <select
             className="input-field"
@@ -192,19 +254,6 @@ const Estilistas = () => {
             value={form.valor_cobro_espacio}
             onChange={(e) => onInputChange('valor_cobro_espacio', e.target.value)}
             placeholder={form.tipo_cobro_espacio === 'porcentaje_neto' ? 'Porcentaje %' : 'Monto'}
-          />
-        </div>
-
-        <div className="md:col-span-2">
-          <label className="block text-sm text-gray-600 mb-1">Comisión por venta de productos (%)</label>
-          <input
-            className="input-field"
-            type="number"
-            min="0"
-            step="0.01"
-            value={form.comision_ventas_productos}
-            onChange={(e) => onInputChange('comision_ventas_productos', e.target.value)}
-            placeholder="Aplica solo para productos"
           />
         </div>
 
@@ -244,7 +293,7 @@ const Estilistas = () => {
         )}
 
         {!loading && estilistas.length > 0 && (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-scroll">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="table-header">
                 <tr>

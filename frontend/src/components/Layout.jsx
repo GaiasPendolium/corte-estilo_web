@@ -6,7 +6,7 @@ import {
 } from 'react-icons/fi';
 import useAuthStore from '../store/authStore';
 import { toast } from 'react-toastify';
-import { roleLabel } from '../utils/roles';
+import { roleLabel, isManagerRole } from '../utils/roles';
 
 const logoSalon = '/corte_estilo_logo.png';
 
@@ -23,10 +23,14 @@ const Layout = () => {
     navigate('/login');
   };
 
+  const esAdmin = isManagerRole(user?.rol);
+
   const menuItems = [
     { path: '/dashboard', icon: FiHome, label: 'Dashboard' },
-    { path: '/usuarios', icon: FiUsers, label: 'Usuarios' },
-    { path: '/estilistas', icon: FiScissors, label: 'Empleados' },
+    ...(esAdmin ? [
+      { path: '/usuarios', icon: FiUsers, label: 'Usuarios' },
+      { path: '/estilistas', icon: FiScissors, label: 'Empleados' },
+    ] : []),
     { path: '/servicios', icon: FiPackage, label: 'Operación diaria' },
     { path: '/productos', icon: FiPackage, label: 'Inventario y Servicio' },
     { path: '/ventas', icon: FiDollarSign, label: 'Histórico de ventas' },

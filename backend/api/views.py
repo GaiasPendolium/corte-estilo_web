@@ -80,6 +80,21 @@ class EstilistaViewSet(viewsets.ModelViewSet):
     search_fields = ['nombre', 'telefono', 'email']
     ordering_fields = ['nombre', 'fecha_ingreso']
     ordering = ['nombre']
+
+    def destroy(self, request, *args, **kwargs):
+        """Elimina el empleado; si tiene historial lo desactiva en lugar de borrar."""
+        from django.db.models import ProtectedError
+        instance = self.get_object()
+        try:
+            instance.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        except ProtectedError:
+            instance.activo = False
+            instance.save()
+            return Response(
+                {'desactivado': True, 'mensaje': 'El empleado tiene historial de servicios y fue desactivado en lugar de eliminado, preservando sus registros.'},
+                status=status.HTTP_200_OK
+            )
     
     @action(detail=True, methods=['get'])
     def estadisticas(self, request, pk=None):
@@ -238,6 +253,18 @@ class ServicioRealizadoViewSet(viewsets.ModelViewSet):
     search_fields = ['notas', 'estilista__nombre', 'servicio__nombre', 'cliente__nombre']
     ordering_fields = ['fecha_hora', 'precio_cobrado']
     ordering = ['-fecha_hora']
+
+    def update(self, request, *args, **kwargs):
+        _validar_edicion_admin_gerente(request.user, 'servicios facturados')
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        _validar_edicion_admin_gerente(request.user, 'servicios facturados')
+        return super().partial_update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        _validar_edicion_admin_gerente(request.user, 'servicios facturados')
+        return super().destroy(request, *args, **kwargs)
     
     def get_queryset(self):
         """Filtrar por rango de fechas si se proporciona"""
@@ -337,7 +364,7 @@ class VentaProductoViewSet(viewsets.ModelViewSet):
     ordering = ['-fecha_hora']
 
     def create(self, request, *args, **kwargs):
-        _validar_edicion_admin_gerente(request.user, 'facturas de venta')
+        # Cualquier usuario autenticado puede registrar ventas de productos en caja
         return super().create(request, *args, **kwargs)
 
     def update(self, request, *args, **kwargs):

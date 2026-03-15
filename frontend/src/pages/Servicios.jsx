@@ -13,6 +13,9 @@ import ModalForm from '../components/ModalForm';
 import useAuthStore from '../store/authStore';
 import { canManageInvoices } from '../utils/roles';
 
+// Todos los perfiles autenticados pueden registrar ventas y servicios (operación diaria)
+// Solo admin/gerente pueden EDITAR o ELIMINAR del historial (controlado en Ventas.jsx y backend)
+
 const mediosPago = [
   { value: 'nequi', label: 'Nequi' },
   { value: 'daviplata', label: 'Daviplata' },
@@ -40,7 +43,7 @@ const INITIAL_INICIO = {
 
 const Servicios = () => {
   const { user } = useAuthStore();
-  const puedeFacturar = canManageInvoices(user);
+  const puedeFacturar = true; // Todos los roles pueden registrar ventas y servicios (recepcion incluida)
 
   const [modoVista, setModoVista] = useState('servicios');
   const [loading, setLoading] = useState(true);

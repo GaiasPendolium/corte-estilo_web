@@ -11,6 +11,14 @@ import Reportes from './pages/Reportes';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
 import useAuthStore from './store/authStore';
+import { isManagerRole } from './utils/roles';
+
+const AdminRoute = ({ children }) => {
+  const { user, isAuthenticated } = useAuthStore();
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
+  if (!isManagerRole(user?.rol)) return <Navigate to="/dashboard" replace />;
+  return children;
+};
 
 function App() {
   const { checkAuth } = useAuthStore();
@@ -34,8 +42,8 @@ function App() {
         >
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="dashboard" element={<Dashboard />} />
-          <Route path="usuarios" element={<Usuarios />} />
-          <Route path="estilistas" element={<Estilistas />} />
+          <Route path="usuarios" element={<AdminRoute><Usuarios /></AdminRoute>} />
+          <Route path="estilistas" element={<AdminRoute><Estilistas /></AdminRoute>} />
           <Route path="servicios" element={<Servicios />} />
           <Route path="productos" element={<Productos />} />
           <Route path="ventas" element={<Ventas />} />

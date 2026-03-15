@@ -6,7 +6,7 @@ export const ROLES = [
 
 const normalizeRole = (rol) => String(rol || '').trim().toLowerCase();
 
-const isManagerRole = (rol) => {
+export const isManagerRole = (rol) => {
   const normalized = normalizeRole(rol);
   return normalized === 'administrador' || normalized === 'gerente';
 };

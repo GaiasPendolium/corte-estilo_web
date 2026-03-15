@@ -245,6 +245,19 @@ const Productos = () => {
     [productos]
   );
 
+  // Filtra el listado principal cuando hay texto en el buscador
+  const productosFiltrados = useMemo(() => {
+    const q = codigoBusqueda.trim().toLowerCase();
+    if (!q) return productos;
+    return productos.filter(
+      (p) =>
+        (p.nombre || '').toLowerCase().includes(q) ||
+        String(p.codigo_barras || '').toLowerCase().includes(q) ||
+        (p.descripcion || '').toLowerCase().includes(q) ||
+        (p.marca || '').toLowerCase().includes(q)
+    );
+  }, [codigoBusqueda, productos]);
+
   const guardarServicioCatalogo = async (e) => {
     e.preventDefault();
     if (!puedeEditar) {
@@ -491,8 +504,12 @@ const Productos = () => {
           </div>
         )}
 
-        {!loading && productos.length > 0 && (
-          <div className="overflow-x-auto">
+        {!loading && productosFiltrados.length === 0 && productos.length > 0 && (
+          <p className="text-gray-500 text-sm">Ningún producto coincide con la búsqueda.</p>
+        )}
+
+        {!loading && productosFiltrados.length > 0 && (
+          <div className="overflow-x-scroll">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="table-header">
                 <tr>
@@ -509,10 +526,10 @@ const Productos = () => {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {productos.map((p) => (
+                {productosFiltrados.map((p) => (
                   <tr key={p.id} className="hover:bg-gray-50">
                     <td className="table-cell">{p.codigo_barras || '-'}</td>
-                    <td className="table-cell font-medium">{p.nombre}</td>
+                    <td className="table-cell font-medium">{p.nombre}{p.descripcion ? ` - ${p.descripcion}` : ''}</td>
                     <td className="table-cell">{p.marca || '-'}</td>
                     <td className="table-cell">{p.presentacion || '-'}</td>
                     <td className="table-cell">${Number(p.precio_compra || 0).toFixed(2)}</td>
@@ -616,7 +633,7 @@ const Productos = () => {
         {serviciosCatalogo.length === 0 && <p className="text-gray-600">No hay servicios registrados.</p>}
 
         {serviciosFiltrados.length > 0 && (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-scroll">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="table-header">
                 <tr>
