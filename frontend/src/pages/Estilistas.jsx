@@ -22,6 +22,19 @@ const extractRows = (payload) => {
   return [];
 };
 
+const getApiErrorMessage = (error, fallback) => {
+  const data = error?.response?.data;
+  if (typeof data === 'string' && data.trim()) return data;
+  if (data?.detail) return String(data.detail);
+  if (data?.mensaje) return String(data.mensaje);
+  if (typeof data === 'object' && data !== null) {
+    const firstError = Object.values(data)[0];
+    if (Array.isArray(firstError) && firstError[0]) return String(firstError[0]);
+    if (firstError) return String(firstError);
+  }
+  return fallback;
+};
+
 const Estilistas = () => {
   const [form, setForm] = useState(INITIAL_FORM);
   const [estilistas, setEstilistas] = useState([]);
@@ -54,6 +67,10 @@ const Estilistas = () => {
   const guardarEstilista = async (e) => {
     e.preventDefault();
 
+    if (saving) {
+      return;
+    }
+
     if (!form.nombre.trim()) {
       toast.warning('El nombre es obligatorio');
       return;
@@ -72,23 +89,36 @@ const Estilistas = () => {
         fecha_ingreso: form.fecha_ingreso || null,
       };
 
+      let estilistaGuardado = null;
+
       if (editingId) {
-        await estilistasService.update(editingId, payload);
+        estilistaGuardado = await estilistasService.update(editingId, payload);
         toast.success('Empleado actualizado');
       } else {
-        await estilistasService.create(payload);
+        estilistaGuardado = await estilistasService.create(payload);
         toast.success('Empleado creado correctamente');
       }
+
+      setEstilistas((prev) => {
+        if (!estilistaGuardado?.id) {
+          return prev;
+        }
+
+        const filtered = prev.filter((item) => item.id !== estilistaGuardado.id);
+        return [...filtered, estilistaGuardado].sort((a, b) => String(a.nombre || '').localeCompare(String(b.nombre || '')));
+      });
 
       setForm(INITIAL_FORM);
       setEditingId(null);
       setShowForm(false);
-      await cargarEstilistas();
+
+      try {
+        await cargarEstilistas();
+      } catch (refreshError) {
+        toast.warning('El empleado se guardó, pero no se pudo refrescar el listado en este momento');
+      }
     } catch (error) {
-      const data = error?.response?.data;
-      const firstError = typeof data === 'object' ? Object.values(data)[0] : null;
-      const message = Array.isArray(firstError) ? firstError[0] : firstError || 'No se pudo guardar el empleado';
-      toast.error(String(message));
+      toast.error(getApiErrorMessage(error, 'No se pudo guardar el empleado'));
     } finally {
       setSaving(false);
     }
