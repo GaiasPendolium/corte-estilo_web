@@ -3,8 +3,6 @@ import qz from 'qz-tray';
 const PRINTER_STORAGE_KEY = 'pos.selectedPrinter';
 const DRAWER_CONFIG_STORAGE_KEY = 'pos.drawerConfig';
 
-const DEFAULT_DRAWER_COMMAND = '\x1Bp\x00\x19\xFA'; // ESC p 0 25 250
-
 const DEFAULT_DRAWER_PIN = Number(import.meta.env.VITE_QZ_DRAWER_PIN || 0);
 const DEFAULT_DRAWER_ON_MS = Number(import.meta.env.VITE_QZ_DRAWER_ON_MS || 25);
 const DEFAULT_DRAWER_OFF_MS = Number(import.meta.env.VITE_QZ_DRAWER_OFF_MS || 250);
@@ -25,11 +23,15 @@ const toByte = (value, fallback = 0) => {
   return Math.max(0, Math.min(255, Math.trunc(n)));
 };
 
-const buildDrawerCommand = ({ pin, onMs, offMs }) => {
+// Construye bytes exactos ESC p pin t1 t2 y los codifica en base64
+// para evitar que el texto plano corrompa el byte \x00 del pin y otros binarios.
+const buildDrawerBase64 = ({ pin, onMs, offMs }) => {
   const p = toByte(pin, DEFAULT_DRAWER_PIN);
   const t1 = toByte(onMs, DEFAULT_DRAWER_ON_MS);
   const t2 = toByte(offMs, DEFAULT_DRAWER_OFF_MS);
-  return `\x1Bp${String.fromCharCode(p)}${String.fromCharCode(t1)}${String.fromCharCode(t2)}`;
+  // ESC(0x1B) p(0x70) pin t1 t2
+  const bytes = [0x1B, 0x70, p, t1, t2];
+  return btoa(bytes.map((b) => String.fromCharCode(b)).join(''));
 };
 
 const normalizeError = (error, fallbackMessage) => {
@@ -168,7 +170,10 @@ const resolvePrinterName = async (preferredName) => {
   return contains || null;
 };
 
-const printRaw = async (rawData, printerName) => {
+// Imprime texto ESC/POS (ticket). Permite adjuntar datos extra en formato base64
+// (ej: comando de cajón) en el mismo trabajo para evitar que la impresora
+// ignore el comando cuando llega en un trabajo separado.
+const printRaw = async (rawData, printerName, extraBase64Items = []) => {
   try {
     await connectIfNeeded();
     const resolvedPrinter = await resolvePrinterName(printerName);
@@ -182,7 +187,30 @@ const printRaw = async (rawData, printerName) => {
       encoding: 'CP437',
     });
 
-    await qz.print(config, [{ type: 'raw', format: 'plain', data: rawData }]);
+    const dataItems = [
+      { type: 'raw', format: 'plain', data: rawData },
+      ...extraBase64Items.map((b64) => ({ type: 'raw', format: 'base64', data: b64 })),
+    ];
+
+    await qz.print(config, dataItems);
+    return { printer: resolvedPrinter };
+  } catch (error) {
+    throw new Error(normalizeError(error));
+  }
+};
+
+// Abre cajón solo, usando base64 para preservar bytes binarios exactos.
+const openDrawerRaw = async (printerName, drawerBase64) => {
+  try {
+    await connectIfNeeded();
+    const resolvedPrinter = await resolvePrinterName(printerName);
+
+    if (!resolvedPrinter) {
+      throw new Error('No printer found');
+    }
+
+    const config = qz.configs.create(resolvedPrinter, { copies: 1 });
+    await qz.print(config, [{ type: 'raw', format: 'base64', data: drawerBase64 }]);
     return { printer: resolvedPrinter };
   } catch (error) {
     throw new Error(normalizeError(error));
@@ -190,8 +218,6 @@ const printRaw = async (rawData, printerName) => {
 };
 
 export const qzTrayService = {
-  drawerCommand: DEFAULT_DRAWER_COMMAND,
-
   isConnected: () => qz.websocket.isActive(),
 
   getSelectedPrinter: () => getStoredPrinter(),
@@ -204,7 +230,7 @@ export const qzTrayService = {
 
   setDrawerConfig: (drawerConfig) => setStoredDrawerConfig(drawerConfig),
 
-  getDrawerCommand: () => buildDrawerCommand(getStoredDrawerConfig()),
+  getDrawerCommand: () => buildDrawerBase64(getStoredDrawerConfig()),
 
   listPrinters: async () => {
     try {
@@ -220,15 +246,20 @@ export const qzTrayService = {
     return printRaw(ticketData, printerName);
   },
 
+  // Abre el cajón enviando el comando ESC/POS en base64 para preservar
+  // bytes binarios exactos (evita corrupción de \x00 con format:'plain').
   openDrawer: async (options = {}) => {
-    const { printerName, command } = options;
-    const activeCommand = command || buildDrawerCommand(getStoredDrawerConfig()) || DEFAULT_DRAWER_COMMAND;
-    return printRaw(activeCommand, printerName);
+    const { printerName } = options;
+    const b64 = buildDrawerBase64(getStoredDrawerConfig());
+    return openDrawerRaw(printerName, b64);
   },
 
+  // Envía ticket y comando de cajón en UN SOLO trabajo de impresión.
+  // Muchas impresoras ignoran el segundo trabajo si llega muy rápido;
+  // combinarlos evita ese problema y garantiza la apertura.
   printTicketAndOpenDrawer: async (ticketData, options = {}) => {
-    const printResult = await qzTrayService.printTicket(ticketData, options);
-    await qzTrayService.openDrawer(options);
-    return printResult;
+    const { printerName } = options;
+    const drawerB64 = buildDrawerBase64(getStoredDrawerConfig());
+    return printRaw(ticketData, printerName, [drawerB64]);
   },
 };
