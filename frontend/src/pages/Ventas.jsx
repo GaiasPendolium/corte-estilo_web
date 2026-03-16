@@ -7,6 +7,7 @@ import ModalForm from '../components/ModalForm';
 import useAuthStore from '../store/authStore';
 import { qzTrayService } from '../services/printing/qzTrayService';
 import { ticketPrintService } from '../services/printing/ticketPrintService';
+import { customerDisplayService } from '../services/customerDisplayService';
 import { canManageInvoices } from '../utils/roles';
 
 const MEDIOS_PAGO = [
@@ -195,6 +196,7 @@ const Ventas = () => {
         toast.success('Factura de producto actualizada');
       } else {
         const ventaCreada = await ventasService.create(payload);
+        customerDisplayService.publishProductSale(ventaCreada);
         toast.success('Factura de producto creada');
 
         try {

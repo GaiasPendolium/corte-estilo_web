@@ -332,6 +332,15 @@ class ServicioRealizadoViewSet(viewsets.ModelViewSet):
             'estado': 'finalizado',
             'precio_cobrado': request.data.get('precio_cobrado', servicio_realizado.precio_cobrado),
             'medio_pago': request.data.get('medio_pago'),
+            'tiene_adicionales': request.data.get('tiene_adicionales', servicio_realizado.tiene_adicionales),
+            'adicionales_servicio_ids': request.data.get('adicionales_servicio_ids', []),
+            'adicionales_servicio_items': request.data.get('adicionales_servicio_items', []),
+            'adicional_shampoo': request.data.get('adicional_shampoo', servicio_realizado.adicional_shampoo),
+            'adicional_guantes': request.data.get('adicional_guantes', servicio_realizado.adicional_guantes),
+            'adicional_otro_producto': request.data.get('adicional_otro_producto', servicio_realizado.adicional_otro_producto_id),
+            'adicional_otro_cantidad': request.data.get('adicional_otro_cantidad', servicio_realizado.adicional_otro_cantidad),
+            'adicional_otro_descuento_empleado': request.data.get('adicional_otro_descuento_empleado', False),
+            'adicional_otro_precio_unitario': request.data.get('adicional_otro_precio_unitario'),
             'tipo_reparto_establecimiento': request.data.get('tipo_reparto_establecimiento'),
             'valor_reparto_establecimiento': request.data.get('valor_reparto_establecimiento'),
             'notas': request.data.get('notas', servicio_realizado.notas),
@@ -584,6 +593,7 @@ def _resolver_rango_fechas(request):
 def _calcular_datos_bi(request):
     """Función helper que calcula todos los datos de BI y retorna un diccionario"""
     fecha_inicio, fecha_fin = _resolver_rango_fechas(request)
+    medio_pago = (request.query_params.get('medio_pago') or '').strip().lower()
 
     ventas_qs = VentaProducto.objects.select_related('producto', 'estilista').filter(
         fecha_hora__date__gte=fecha_inicio,
@@ -594,6 +604,10 @@ def _calcular_datos_bi(request):
         fecha_hora__date__gte=fecha_inicio,
         fecha_hora__date__lte=fecha_fin,
     )
+
+    if medio_pago and medio_pago != 'todos':
+        ventas_qs = ventas_qs.filter(medio_pago=medio_pago)
+        servicios_qs = servicios_qs.filter(medio_pago=medio_pago)
 
     ingresos_productos = Decimal(ventas_qs.aggregate(total=Sum('total'))['total'] or 0)
     costo_productos = Decimal(0)

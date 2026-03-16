@@ -25,6 +25,13 @@ const formatMoney = (value) => `$${moneyFormatter.format(Number(value || 0))}`;
 const formatMoneyDetailed = (value) => `$${decimalMoneyFormatter.format(Number(value || 0))}`;
 const formatLabel = (value) => String(value || '-');
 const stockRiskColor = (item) => (Number(item.stock || 0) <= 0 ? '#b91c1c' : '#ea580c');
+const MEDIOS_PAGO = [
+  { value: 'todos', label: 'Todos los medios' },
+  { value: 'efectivo', label: 'Efectivo' },
+  { value: 'nequi', label: 'Nequi' },
+  { value: 'daviplata', label: 'Daviplata' },
+  { value: 'otros', label: 'Otros' },
+];
 
 const KpiCard = ({ title, value, hint, tone = 'slate' }) => {
   const tones = {
@@ -47,6 +54,7 @@ const Reportes = () => {
   const [periodo, setPeriodo] = useState('mes');
   const [fechaInicio, setFechaInicio] = useState(format(firstDay, 'yyyy-MM-dd'));
   const [fechaFin, setFechaFin] = useState(format(today, 'yyyy-MM-dd'));
+  const [medioPagoFiltro, setMedioPagoFiltro] = useState('todos');
   const [marcaFiltro, setMarcaFiltro] = useState('todas');
   const [estilistaFiltro, setEstilistaFiltro] = useState('todos');
   const [stats, setStats] = useState(null);
@@ -60,6 +68,7 @@ const Reportes = () => {
         periodo,
         fecha_inicio: fechaInicio,
         fecha_fin: fechaFin,
+        ...(medioPagoFiltro !== 'todos' ? { medio_pago: medioPagoFiltro } : {}),
       });
       setStats(data);
     } catch (error) {
@@ -76,7 +85,12 @@ const Reportes = () => {
 
   const exportarCsv = async () => {
     try {
-      const blob = await reportesService.exportBICsv({ periodo, fecha_inicio: fechaInicio, fecha_fin: fechaFin });
+      const blob = await reportesService.exportBICsv({
+        periodo,
+        fecha_inicio: fechaInicio,
+        fecha_fin: fechaFin,
+        ...(medioPagoFiltro !== 'todos' ? { medio_pago: medioPagoFiltro } : {}),
+      });
       if (!blob || blob.size === 0) {
         toast.error('El archivo descargado está vacío');
         return;
@@ -97,7 +111,12 @@ const Reportes = () => {
 
   const exportarPdf = async () => {
     try {
-      const blob = await reportesService.exportBIPdf({ periodo, fecha_inicio: fechaInicio, fecha_fin: fechaFin });
+      const blob = await reportesService.exportBIPdf({
+        periodo,
+        fecha_inicio: fechaInicio,
+        fecha_fin: fechaFin,
+        ...(medioPagoFiltro !== 'todos' ? { medio_pago: medioPagoFiltro } : {}),
+      });
       if (!blob || blob.size === 0) {
         toast.error('El archivo descargado está vacío');
         return;
@@ -222,7 +241,7 @@ const Reportes = () => {
 
       <div className="card">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-4 flex-1">
+          <div className="grid grid-cols-1 md:grid-cols-6 gap-4 flex-1">
             <div>
               <label className="block text-sm text-gray-600 mb-1">Periodo</label>
               <select className="input-field" value={periodo} onChange={(e) => setPeriodo(e.target.value)}>
@@ -238,6 +257,14 @@ const Reportes = () => {
             <div>
               <label className="block text-sm text-gray-600 mb-1">Fecha fin</label>
               <input type="date" className="input-field" value={fechaFin} onChange={(e) => setFechaFin(e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-600 mb-1">Medio de pago</label>
+              <select className="input-field" value={medioPagoFiltro} onChange={(e) => setMedioPagoFiltro(e.target.value)}>
+                {MEDIOS_PAGO.map((m) => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+              </select>
             </div>
             <div>
               <label className="block text-sm text-gray-600 mb-1">Filtrar marca</label>

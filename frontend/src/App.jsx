@@ -8,6 +8,7 @@ import Servicios from './pages/Servicios';
 import Productos from './pages/Productos';
 import Ventas from './pages/Ventas';
 import Reportes from './pages/Reportes';
+import PantallaCliente from './pages/PantallaCliente';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
 import useAuthStore from './store/authStore';
@@ -31,6 +32,7 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/pantalla-cliente" element={<PantallaCliente />} />
         
         <Route
           path="/"

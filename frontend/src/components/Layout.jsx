@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   FiHome, FiUsers, FiScissors, FiPackage, FiDollarSign,
-  FiBarChart2, FiSettings, FiLogOut, FiMenu, FiX
+  FiBarChart2, FiLogOut, FiMenu, FiX, FiMonitor
 } from 'react-icons/fi';
 import useAuthStore from '../store/authStore';
 import { toast } from 'react-toastify';
@@ -23,6 +23,10 @@ const Layout = () => {
     navigate('/login');
   };
 
+  const abrirPantallaCliente = () => {
+    window.open('/pantalla-cliente', 'pantalla_cliente', 'noopener,noreferrer');
+  };
+
   const esAdmin = isManagerRole(user?.rol);
 
   const menuItems = [
@@ -38,7 +42,7 @@ const Layout = () => {
   ];
 
   return (
-    <div className="flex h-screen bg-gray-100">
+    <div className="flex h-screen bg-gray-100 touch-scroll">
       {/* Sidebar */}
       <aside
         className={`${
@@ -46,7 +50,7 @@ const Layout = () => {
         } bg-gradient-to-b from-gray-900 to-gray-800 text-white transition-all duration-300 ease-in-out flex flex-col`}
       >
         {/* Logo y toggle */}
-        <div className="flex items-center justify-between p-4 border-b border-gray-700">
+        <div className="flex items-center justify-between p-4 border-b border-gray-700 min-h-[72px]">
           {sidebarOpen && (
             <div className="flex items-center space-x-3">
               {!logoError ? (
@@ -67,7 +71,7 @@ const Layout = () => {
           )}
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="p-2 rounded-lg hover:bg-gray-700 transition-colors"
+            className="p-3 rounded-lg hover:bg-gray-700 transition-colors"
           >
             {sidebarOpen ? <FiX size={20} /> : <FiMenu size={20} />}
           </button>
@@ -84,7 +88,7 @@ const Layout = () => {
                 <li key={item.path}>
                   <Link
                     to={item.path}
-                    className={`flex items-center space-x-3 px-4 py-3 rounded-lg transition-all duration-200
+                    className={`flex items-center space-x-3 px-4 py-4 rounded-lg transition-all duration-200 text-base
                       ${isActive 
                         ? 'bg-white text-gray-900 font-semibold shadow-lg' 
                         : 'hover:bg-gray-700 text-gray-300'
@@ -101,6 +105,15 @@ const Layout = () => {
 
         {/* Usuario y logout */}
         <div className="border-t border-gray-700 p-4">
+          {sidebarOpen && (
+            <button
+              onClick={abrirPantallaCliente}
+              className="w-full flex items-center space-x-3 px-4 py-3 rounded-lg bg-cyan-600 hover:bg-cyan-700 transition-colors mb-3"
+            >
+              <FiMonitor size={20} />
+              <span>Pantalla cliente</span>
+            </button>
+          )}
           <div className={`flex items-center ${sidebarOpen ? 'space-x-3' : 'justify-center'} mb-3`}>
             <div className="w-10 h-10 bg-gradient-to-br from-blue-400 to-blue-600 rounded-full flex items-center justify-center font-bold">
               {user?.nombre_completo?.charAt(0) || 'U'}
@@ -114,7 +127,7 @@ const Layout = () => {
           </div>
           <button
             onClick={handleLogout}
-            className={`w-full flex items-center ${sidebarOpen ? 'space-x-3' : 'justify-center'} px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 transition-colors`}
+            className={`w-full flex items-center ${sidebarOpen ? 'space-x-3' : 'justify-center'} px-4 py-3 rounded-lg bg-red-600 hover:bg-red-700 transition-colors`}
           >
             <FiLogOut size={20} />
             {sidebarOpen && <span>Cerrar Sesión</span>}
@@ -124,7 +137,7 @@ const Layout = () => {
 
       {/* Contenido principal */}
       <main className="flex-1 overflow-y-auto">
-        <div className="container mx-auto px-6 py-8">
+        <div className="container mx-auto px-4 md:px-6 py-6 md:py-8">
           <Outlet />
         </div>
       </main>

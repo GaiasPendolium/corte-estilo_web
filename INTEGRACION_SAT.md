@@ -39,6 +39,42 @@ python sat_bridge_gui.py
 - `http://127.0.0.1:8787/status`
 - `http://127.0.0.1:8787/docs`
 
+## Configuracion con ejecutable (.exe) - la mas facil
+
+### A) Crear el .exe (solo una vez en tu equipo de desarrollo)
+
+1. Abre la carpeta `peluqueria_web/local_bridge`.
+2. Ejecuta `generar_exe_sat_bridge.bat`.
+3. Al finalizar, toma `dist/SATBridgeManager.exe`.
+
+### B) Usar el .exe en la maquina SAT
+
+1. Copia `SATBridgeManager.exe` a la maquina SAT.
+2. Haz doble clic para abrirlo.
+3. Selecciona impresora SAT (TP-1580) en la lista.
+4. Clic en `Guardar config`.
+5. Clic en `Iniciar bridge`.
+6. Deja la ventana abierta mientras facturas.
+
+### C) Verificar conexion
+
+1. Abre Chrome en la maquina SAT.
+2. Entra a `http://127.0.0.1:8787/status`.
+3. Debe devolver `ok: true`.
+
+### D) Configurar la web para usar el bridge
+
+1. En frontend define `VITE_POS_BRIDGE_URL=http://127.0.0.1:8787`.
+2. Reinicia frontend o haz redeploy.
+3. Prueba botones `Imprimir` y `Abrir caja` en Historico de ventas.
+
+### E) Si no imprime o no abre caja
+
+1. Verifica nombre exacto de impresora en Windows.
+2. Confirma que el bridge esta en estado activo.
+3. Revisa cable RJ11 del cajon SAT 119X hacia la impresora.
+4. Prueba otra cola/driver de impresora SAT.
+
 ## 1) Instalar bridge local (Windows)
 
 1. Abrir terminal en `peluqueria_web/local_bridge`.
