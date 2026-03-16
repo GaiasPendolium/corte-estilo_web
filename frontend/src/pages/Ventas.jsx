@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { FiCopy, FiEdit2, FiPlus, FiRefreshCw, FiSearch, FiTrash2 } from 'react-icons/fi';
+import { FiCopy, FiEdit2, FiPlus, FiRefreshCw, FiSearch, FiTrash2, FiEye, FiX } from 'react-icons/fi';
 import { toast } from 'react-toastify';
 import { estilistasService, productosService, serviciosRealizadosService, ventasService } from '../services/api';
 import ModalForm from '../components/ModalForm';
@@ -49,6 +49,9 @@ const Ventas = () => {
   const [editandoId, setEditandoId] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [showServicioForm, setShowServicioForm] = useState(false);
+  const [ventaVisualizar, setVentaVisualizar] = useState(null);
+  const [servicioVisualizar, setServicioVisualizar] = useState(null);
+  const [showVisualizarFactura, setShowVisualizarFactura] = useState(false);
 
   const [productos, setProductos] = useState([]);
   const [estilistas, setEstilistas] = useState([]);
@@ -289,6 +292,24 @@ const Ventas = () => {
     }
   };
 
+  const visualizarVenta = (venta) => {
+    setVentaVisualizar(venta);
+    setServicioVisualizar(null);
+    setShowVisualizarFactura(true);
+  };
+
+  const visualizarServicio = (servicio) => {
+    setServicioVisualizar(servicio);
+    setVentaVisualizar(null);
+    setShowVisualizarFactura(true);
+  };
+
+  const cerrarVisualizacion = () => {
+    setShowVisualizarFactura(false);
+    setVentaVisualizar(null);
+    setServicioVisualizar(null);
+  };
+
   const editarServicio = (servicio) => {
     setServicioEditando(servicio);
     setServicioForm({
@@ -442,6 +463,144 @@ const Ventas = () => {
         </div>
       </div>
 
+      {/* Modal visualizar factura */}
+      {showVisualizarFactura && (ventaVisualizar || servicioVisualizar) && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+              <h2 className="text-xl font-bold text-gray-900">
+                {ventaVisualizar ? 'Factura de Producto' : 'Factura de Servicio'}
+              </h2>
+              <button onClick={cerrarVisualizacion} className="text-gray-400 hover:text-gray-600">
+                <FiX size={24} />
+              </button>
+            </div>
+
+            <div className="px-6 py-4 space-y-6">
+              {ventaVisualizar && (
+                <>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-sm text-gray-600">Número de factura</p>
+                      <p className="font-bold text-gray-900">{ventaVisualizar.numero_factura || '-'}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-600">Fecha</p>
+                      <p className="font-bold text-gray-900">{String(ventaVisualizar.fecha_hora || '').slice(0, 19).replace('T', ' ')}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-600">Cliente</p>
+                      <p className="font-bold text-gray-900">{ventaVisualizar.cliente_nombre || '-'}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-600">Producto</p>
+                      <p className="font-bold text-gray-900">{ventaVisualizar.producto_nombre}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-600">Estilista</p>
+                      <p className="font-bold text-gray-900">{ventaVisualizar.estilista_nombre || '-'}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-600">Usuario que facturó</p>
+                      <p className="font-bold text-gray-900">{ventaVisualizar.usuario_nombre || '-'}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-600">Medio de pago</p>
+                      <p className="font-bold text-gray-900 capitalize">{ventaVisualizar.medio_pago || '-'}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-600">Cantidad</p>
+                      <p className="font-bold text-gray-900">{ventaVisualizar.cantidad}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-600">Valor unitario</p>
+                      <p className="font-bold text-gray-900">${Number(ventaVisualizar.precio_unitario || 0).toFixed(2)}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-600">Total</p>
+                      <p className="font-bold text-lg text-green-600">${Number(ventaVisualizar.total || 0).toFixed(2)}</p>
+                    </div>
+                  </div>
+
+                  {ventaVisualizar.factura_texto && (
+                    <div>
+                      <p className="text-sm text-gray-600 mb-2">Factura para compartir:</p>
+                      <div className="bg-gray-50 rounded border border-gray-200 p-3 text-sm whitespace-pre-wrap font-mono text-gray-700 max-h-64 overflow-y-auto">
+                        {ventaVisualizar.factura_texto}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {servicioVisualizar && (
+                <>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-sm text-gray-600">Número de factura</p>
+                      <p className="font-bold text-gray-900">{servicioVisualizar.numero_factura || '-'}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-600">Fecha</p>
+                      <p className="font-bold text-gray-900">{String(servicioVisualizar.fecha_hora || '').slice(0, 19).replace('T', ' ')}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-600">Cliente</p>
+                      <p className="font-bold text-gray-900">{servicioVisualizar.cliente_nombre || '-'}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-600">Servicio</p>
+                      <p className="font-bold text-gray-900">{servicioVisualizar.servicio_nombre}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-600">Empleado (servicio)</p>
+                      <p className="font-bold text-gray-900">{servicioVisualizar.estilista_nombre || '-'}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-600">Usuario que facturó</p>
+                      <p className="font-bold text-gray-900">{servicioVisualizar.usuario_nombre || '-'}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-600">Medio de pago</p>
+                      <p className="font-bold text-gray-900 capitalize">{servicioVisualizar.medio_pago || '-'}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-600">Total cobrado</p>
+                      <p className="font-bold text-lg text-green-600">${Number(servicioVisualizar.precio_cobrado || 0).toFixed(2)}</p>
+                    </div>
+                    {servicioVisualizar.notas && (
+                      <div className="col-span-2">
+                        <p className="text-sm text-gray-600">Notas</p>
+                        <p className="font-bold text-gray-900">{servicioVisualizar.notas}</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {servicioVisualizar.factura_texto && (
+                    <div>
+                      <p className="text-sm text-gray-600 mb-2">Factura para compartir:</p>
+                      <div className="bg-gray-50 rounded border border-gray-200 p-3 text-sm whitespace-pre-wrap font-mono text-gray-700 max-h-64 overflow-y-auto">
+                        {servicioVisualizar.factura_texto}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+
+              <div className="flex gap-2 justify-end border-t border-gray-200 pt-4">
+                <button className="btn-secondary" onClick={cerrarVisualizacion}>Cerrar</button>
+                <button 
+                  className="btn-secondary inline-flex items-center gap-2"
+                  onClick={() => copiarTexto(ventaVisualizar?.factura_texto || servicioVisualizar?.factura_texto)}
+                >
+                  <FiCopy size={16} /> Copiar factura
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="card">
           <p className="text-sm text-gray-500">Total ventas productos</p>
@@ -565,6 +724,9 @@ const Ventas = () => {
                     <td className="table-cell">${Number(v.total || 0).toFixed(2)}</td>
                     <td className="table-cell">
                       <div className="flex justify-end gap-2">
+                        <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => visualizarVenta(v)}>
+                          <FiEye size={14} /> Ver
+                        </button>
                         {puedeEditarFacturas && (
                           <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => editarVenta(v)}>
                             <FiEdit2 size={14} /> Editar
@@ -650,6 +812,9 @@ const Ventas = () => {
                     <td className="table-cell">${Number(s.precio_cobrado || 0).toFixed(2)}</td>
                     <td className="table-cell">
                       <div className="flex justify-end gap-2">
+                        <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => visualizarServicio(s)}>
+                          <FiEye size={14} /> Ver
+                        </button>
                         {puedeEditarFacturas && (
                           <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => editarServicio(s)}>
                             <FiEdit2 size={14} /> Editar
