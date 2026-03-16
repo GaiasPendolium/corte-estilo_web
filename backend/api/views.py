@@ -647,13 +647,22 @@ def _calcular_datos_bi(request):
         servicios_est = servicios_qs.filter(estilista=estilista)
         ventas_est = ventas_qs.filter(estilista=estilista)
 
-        ganancia_servicios_est = Decimal(servicios_est.aggregate(total=Sum('neto_servicio'))['total'] or 0)
-        total_servicios_est = Decimal(servicios_est.aggregate(total=Sum('precio_cobrado'))['total'] or 0)
+        # Calcular totales de servicios
+        total_servicios_precio_cobrado = Decimal(servicios_est.aggregate(total=Sum('precio_cobrado'))['total'] or 0)
         total_adicionales_est = Decimal(servicios_est.aggregate(total=Sum('valor_adicionales'))['total'] or 0)
+        
+        # Base para pagar al estilista = precio_cobrado del servicio (sin los adicionales, que son ganancia del establecimiento)
+        ganancia_servicios_est = total_servicios_precio_cobrado
+        
+        # Total facturado al cliente = precio_cobrado + valor_adicionales
+        total_facturado_cliente = total_servicios_precio_cobrado + total_adicionales_est
+        
+        # Días trabajados: contar cada día que tenga al menos un servicio o venta
         dias_trabajados = {
             *servicios_est.values_list('fecha_hora__date', flat=True).distinct(),
             *ventas_est.values_list('fecha_hora__date', flat=True).distinct(),
         }
+        
         comision_ventas_producto_est = Decimal(0)
         for v in ventas_est:
             pct = Decimal(estilista.comision_ventas_productos or 0)
@@ -683,8 +692,8 @@ def _calcular_datos_bi(request):
                 'tipo_cobro_espacio': estilista.tipo_cobro_espacio,
                 'valor_cobro_espacio': float(estilista.valor_cobro_espacio or 0),
                 'base_cobro_espacio': float(ganancia_servicios_est),
-                'dias_cobrados_alquiler': int(len(dias_trabajados) if estilista.tipo_cobro_espacio == 'costo_fijo_neto' else 0),
-                'facturacion_servicios': float(total_servicios_est),
+                'dias_cobrados_alquiler': int(len(dias_trabajados)) if estilista.tipo_cobro_espacio == 'costo_fijo_neto' else 0,
+                'facturacion_servicios': float(total_facturado_cliente),
                 'valor_servicios_adicionales': float(total_adicionales_est),
                 'deduccion_servicios_adicionales': float(total_adicionales_est),
                 'ganancias_servicios': float(ganancia_servicios_est),
