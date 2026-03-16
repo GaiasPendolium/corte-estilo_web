@@ -10,7 +10,6 @@ import {
   serviciosService,
 } from '../services/api';
 import ModalForm from '../components/ModalForm';
-import PrinterPanel from '../components/PrinterPanel';
 import { ticketPrintService } from '../services/printing/ticketPrintService';
 import { customerDisplayService } from '../services/customerDisplayService';
 import useAuthStore from '../store/authStore';
@@ -525,8 +524,6 @@ const Servicios = () => {
           </button>
         </div>
       </div>
-
-      <PrinterPanel />
 
       {modoVista === 'ventas' && (
         <div className="card space-y-4">

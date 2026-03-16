@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   FiHome, FiUsers, FiScissors, FiPackage, FiDollarSign,
-  FiBarChart2, FiLogOut, FiMenu, FiX, FiMonitor
+  FiBarChart2, FiLogOut, FiMenu, FiX, FiMonitor, FiPrinter
 } from 'react-icons/fi';
 import useAuthStore from '../store/authStore';
 import { toast } from 'react-toastify';
@@ -34,6 +34,7 @@ const Layout = () => {
     ...(esAdmin ? [
       { path: '/usuarios', icon: FiUsers, label: 'Usuarios' },
       { path: '/estilistas', icon: FiScissors, label: 'Empleados' },
+      { path: '/impresion-pos', icon: FiPrinter, label: 'Impresion POS' },
     ] : []),
     { path: '/servicios', icon: FiPackage, label: 'Operación diaria' },
     { path: '/productos', icon: FiPackage, label: 'Inventario y Servicio' },
@@ -46,32 +47,32 @@ const Layout = () => {
       {/* Sidebar */}
       <aside
         className={`${
-          sidebarOpen ? 'w-64' : 'w-20'
+          sidebarOpen ? 'w-56' : 'w-16'
         } bg-gradient-to-b from-gray-900 to-gray-800 text-white transition-all duration-300 ease-in-out flex flex-col`}
       >
         {/* Logo y toggle */}
-        <div className="flex items-center justify-between p-4 border-b border-gray-700 min-h-[72px]">
+        <div className="flex items-center justify-between p-3 border-b border-gray-700 min-h-[64px]">
           {sidebarOpen && (
             <div className="flex items-center space-x-3">
               {!logoError ? (
                 <img
                   src={logoSalon}
                   alt="Corte y Estilo"
-                  className="h-12 w-auto max-w-[120px] rounded-lg object-contain bg-white p-1.5"
+                  className="h-10 w-auto max-w-[108px] rounded-lg object-contain bg-white p-1"
                   onError={() => setLogoError(true)}
                 />
               ) : (
                 <span className="text-3xl">✂️</span>
               )}
               <div>
-                <span className="block font-bold text-lg leading-tight">Corte y Estilo</span>
+                <span className="block font-bold text-base leading-tight">Corte y Estilo</span>
                 <span className="block text-xs text-gray-300">Panel profesional</span>
               </div>
             </div>
           )}
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="p-3 rounded-lg hover:bg-gray-700 transition-colors"
+            className="p-2 rounded-lg hover:bg-gray-700 transition-colors"
           >
             {sidebarOpen ? <FiX size={20} /> : <FiMenu size={20} />}
           </button>
@@ -88,7 +89,7 @@ const Layout = () => {
                 <li key={item.path}>
                   <Link
                     to={item.path}
-                    className={`flex items-center space-x-3 px-4 py-4 rounded-lg transition-all duration-200 text-base
+                    className={`flex items-center space-x-3 px-3 py-2.5 rounded-lg transition-all duration-200 text-sm
                       ${isActive 
                         ? 'bg-white text-gray-900 font-semibold shadow-lg' 
                         : 'hover:bg-gray-700 text-gray-300'
@@ -137,7 +138,7 @@ const Layout = () => {
 
       {/* Contenido principal */}
       <main className="flex-1 overflow-y-auto">
-        <div className="container mx-auto px-4 md:px-6 py-6 md:py-8">
+        <div className="container mx-auto px-3 md:px-4 py-4 md:py-5">
           <Outlet />
         </div>
       </main>

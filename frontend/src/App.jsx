@@ -9,6 +9,7 @@ import Productos from './pages/Productos';
 import Ventas from './pages/Ventas';
 import Reportes from './pages/Reportes';
 import PantallaCliente from './pages/PantallaCliente';
+import ImpresionPOS from './pages/ImpresionPOS';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
 import useAuthStore from './store/authStore';
@@ -49,6 +50,7 @@ function App() {
           <Route path="servicios" element={<Servicios />} />
           <Route path="productos" element={<Productos />} />
           <Route path="ventas" element={<Ventas />} />
+          <Route path="impresion-pos" element={<AdminRoute><ImpresionPOS /></AdminRoute>} />
           <Route path="reportes" element={<Reportes />} />
         </Route>
 

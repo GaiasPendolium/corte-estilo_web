@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { FiCopy, FiEdit2, FiPlus, FiRefreshCw, FiSearch, FiTrash2 } from 'react-icons/fi';
 import { toast } from 'react-toastify';
 import { estilistasService, productosService, serviciosRealizadosService, ventasService } from '../services/api';
-import PrinterPanel from '../components/PrinterPanel';
 import ModalForm from '../components/ModalForm';
 import useAuthStore from '../store/authStore';
 import { qzTrayService } from '../services/printing/qzTrayService';
@@ -457,8 +456,6 @@ const Ventas = () => {
           <p className="text-2xl font-bold text-gray-900">${totalServicios.toFixed(2)}</p>
         </div>
       </div>
-
-      <PrinterPanel />
 
       {modoVista === 'ventas' && (
       <>

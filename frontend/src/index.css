@@ -99,7 +99,7 @@ code {
 
 @media (pointer: coarse) {
   html {
-    font-size: 18px;
+    font-size: 16px;
   }
 
   button,
@@ -108,17 +108,17 @@ code {
   input,
   select,
   textarea {
-    min-height: 48px;
+    min-height: 42px;
   }
 
   .btn-primary,
   .btn-secondary,
   .btn-danger {
-    @apply text-base font-semibold;
+    @apply text-sm font-medium;
   }
 
   .input-field {
-    @apply text-base;
+    @apply text-sm;
   }
 }
 
