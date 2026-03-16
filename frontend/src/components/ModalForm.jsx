@@ -8,8 +8,8 @@ const ModalForm = ({ isOpen, title, subtitle, onClose, children, size = 'lg' }) 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-      <div className={`relative w-full ${maxWidthClass} rounded-2xl bg-white shadow-2xl max-h-[90vh] overflow-hidden`}>
-        <div className="flex items-start justify-between border-b border-gray-200 px-6 py-4">
+      <div className={`relative w-full ${maxWidthClass} rounded-2xl bg-white shadow-2xl max-h-[90vh] flex flex-col`}>
+        <div className="flex items-start justify-between border-b border-gray-200 px-6 py-4 flex-shrink-0">
           <div>
             <h2 className="text-xl font-semibold text-gray-900">{title}</h2>
             {subtitle && <p className="mt-1 text-sm text-gray-600">{subtitle}</p>}
@@ -23,7 +23,7 @@ const ModalForm = ({ isOpen, title, subtitle, onClose, children, size = 'lg' }) 
             <FiX size={18} />
           </button>
         </div>
-        <div className="overflow-y-auto p-6">{children}</div>
+        <div className="overflow-y-auto p-6 flex-1">{children}</div>
       </div>
     </div>
   );
