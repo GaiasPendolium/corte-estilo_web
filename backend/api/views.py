@@ -676,10 +676,12 @@ def _calcular_datos_bi(request):
         elif estilista.tipo_cobro_espacio == 'costo_fijo_neto':
             descuento_espacio = Decimal(estilista.valor_cobro_espacio or 0) * Decimal(len(dias_trabajados))
 
-        if descuento_espacio > subtotal_ingresos_est:
-            descuento_espacio = subtotal_ingresos_est
+        # Limitar descuento solo por ganancias de servicios, no incluir comisiones de ventas
+        if descuento_espacio > ganancia_servicios_est:
+            descuento_espacio = ganancia_servicios_est
 
-        pago_neto = subtotal_ingresos_est - descuento_espacio
+        # Pago neto = (ganancias de servicios - descuento por espacio) + comisiones de ventas
+        pago_neto = (ganancia_servicios_est - descuento_espacio) + comision_ventas_producto_est
 
         total_descuentos_espacio += descuento_espacio
         total_pago_neto_estilistas += pago_neto
