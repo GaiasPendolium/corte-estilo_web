@@ -432,7 +432,7 @@ const Reportes = () => {
                           : 'Sin descuento'}
                     </div>
                   </td>
-                  <td className="table-cell">{moneyFormatter.format(s.dias_cobrados_alquiler || 0)}</td>
+                  <td className="table-cell font-medium text-slate-900">{moneyFormatter.format(s.total_dias_trabajados || 0)}</td>
                   <td className="table-cell text-orange-700 font-medium">{formatMoney(s.deduccion_servicios_adicionales)}</td>
                   <td className="table-cell text-red-700 font-medium">{formatMoney(s.total_deducciones)}</td>
                   <td className="table-cell font-semibold text-emerald-700">{formatMoney(s.pago_neto_estilista)}</td>
