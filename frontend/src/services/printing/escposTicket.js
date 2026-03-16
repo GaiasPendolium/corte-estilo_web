@@ -81,6 +81,7 @@ export const buildEscPosTicket = (payload, options = {}) => {
   output += `Fecha: ${formatDate(payload.fecha_hora)}\n`;
   output += `Factura: ${payload.numero_factura || '-'}\n`;
   output += `Cliente: ${payload.cliente_nombre || 'Consumidor final'}\n`;
+  output += `Empleado: ${payload.empleado_nombre || '-'}\n`;
   output += `Cajero: ${payload.usuario_nombre || '-'}\n`;
   output += `Pago: ${medioPagoLabel(payload.medio_pago)}\n`;
   output += divider(width);
@@ -122,6 +123,7 @@ export const buildProductSaleTicketPayload = (sale) => ({
   numero_factura: sale?.numero_factura || sale?.id || '-',
   fecha_hora: sale?.fecha_hora,
   cliente_nombre: sale?.cliente_nombre,
+  empleado_nombre: sale?.estilista_nombre,
   usuario_nombre: sale?.usuario_nombre,
   medio_pago: sale?.medio_pago,
   total: Number(sale?.total || 0),
@@ -142,6 +144,7 @@ export const buildServiceSaleTicketPayload = (service) => {
     numero_factura: service?.numero_factura || service?.id || '-',
     fecha_hora: service?.fecha_hora,
     cliente_nombre: service?.cliente_nombre,
+    empleado_nombre: service?.estilista_nombre,
     usuario_nombre: service?.usuario_nombre,
     medio_pago: service?.medio_pago,
     total,

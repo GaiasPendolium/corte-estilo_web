@@ -1,8 +1,13 @@
 import qz from 'qz-tray';
 
 const PRINTER_STORAGE_KEY = 'pos.selectedPrinter';
+const DRAWER_CONFIG_STORAGE_KEY = 'pos.drawerConfig';
 
 const DEFAULT_DRAWER_COMMAND = '\x1Bp\x00\x19\xFA'; // ESC p 0 25 250
+
+const DEFAULT_DRAWER_PIN = Number(import.meta.env.VITE_QZ_DRAWER_PIN || 0);
+const DEFAULT_DRAWER_ON_MS = Number(import.meta.env.VITE_QZ_DRAWER_ON_MS || 25);
+const DEFAULT_DRAWER_OFF_MS = Number(import.meta.env.VITE_QZ_DRAWER_OFF_MS || 250);
 
 const DEFAULT_WS_HOST = (import.meta.env.VITE_QZ_WS_HOST || 'localhost').trim();
 const DEFAULT_WS_PORT_SECURE = Number(import.meta.env.VITE_QZ_WS_PORT_SECURE || 8181);
@@ -13,6 +18,19 @@ const QZ_CERT_PEM = (import.meta.env.VITE_QZ_CERT_PEM || '').trim();
 const QZ_SIGN_ENDPOINT = (import.meta.env.VITE_QZ_SIGN_ENDPOINT || '').trim();
 
 let securityConfigured = false;
+
+const toByte = (value, fallback = 0) => {
+  const n = Number(value);
+  if (Number.isNaN(n)) return fallback;
+  return Math.max(0, Math.min(255, Math.trunc(n)));
+};
+
+const buildDrawerCommand = ({ pin, onMs, offMs }) => {
+  const p = toByte(pin, DEFAULT_DRAWER_PIN);
+  const t1 = toByte(onMs, DEFAULT_DRAWER_ON_MS);
+  const t2 = toByte(offMs, DEFAULT_DRAWER_OFF_MS);
+  return `\x1Bp${String.fromCharCode(p)}${String.fromCharCode(t1)}${String.fromCharCode(t2)}`;
+};
 
 const normalizeError = (error, fallbackMessage) => {
   const message = String(error?.message || error || '').toLowerCase();
@@ -100,6 +118,41 @@ const setStoredPrinter = (printerName) => {
   localStorage.setItem(PRINTER_STORAGE_KEY, printerName);
 };
 
+const getStoredDrawerConfig = () => {
+  try {
+    const raw = localStorage.getItem(DRAWER_CONFIG_STORAGE_KEY);
+    if (!raw) {
+      return {
+        pin: DEFAULT_DRAWER_PIN,
+        onMs: DEFAULT_DRAWER_ON_MS,
+        offMs: DEFAULT_DRAWER_OFF_MS,
+      };
+    }
+    const parsed = JSON.parse(raw);
+    return {
+      pin: toByte(parsed?.pin, DEFAULT_DRAWER_PIN),
+      onMs: toByte(parsed?.onMs, DEFAULT_DRAWER_ON_MS),
+      offMs: toByte(parsed?.offMs, DEFAULT_DRAWER_OFF_MS),
+    };
+  } catch (_error) {
+    return {
+      pin: DEFAULT_DRAWER_PIN,
+      onMs: DEFAULT_DRAWER_ON_MS,
+      offMs: DEFAULT_DRAWER_OFF_MS,
+    };
+  }
+};
+
+const setStoredDrawerConfig = (drawerConfig) => {
+  const normalized = {
+    pin: toByte(drawerConfig?.pin, DEFAULT_DRAWER_PIN),
+    onMs: toByte(drawerConfig?.onMs, DEFAULT_DRAWER_ON_MS),
+    offMs: toByte(drawerConfig?.offMs, DEFAULT_DRAWER_OFF_MS),
+  };
+  localStorage.setItem(DRAWER_CONFIG_STORAGE_KEY, JSON.stringify(normalized));
+  return normalized;
+};
+
 const resolvePrinterName = async (preferredName) => {
   const printers = await qz.printers.find();
   const requestedName = (preferredName || getStoredPrinter() || DEFAULT_PRINTER_NAME || '').trim();
@@ -147,6 +200,12 @@ export const qzTrayService = {
     setStoredPrinter((printerName || '').trim());
   },
 
+  getDrawerConfig: () => getStoredDrawerConfig(),
+
+  setDrawerConfig: (drawerConfig) => setStoredDrawerConfig(drawerConfig),
+
+  getDrawerCommand: () => buildDrawerCommand(getStoredDrawerConfig()),
+
   listPrinters: async () => {
     try {
       await connectIfNeeded();
@@ -162,8 +221,9 @@ export const qzTrayService = {
   },
 
   openDrawer: async (options = {}) => {
-    const { printerName, command = DEFAULT_DRAWER_COMMAND } = options;
-    return printRaw(command, printerName);
+    const { printerName, command } = options;
+    const activeCommand = command || buildDrawerCommand(getStoredDrawerConfig()) || DEFAULT_DRAWER_COMMAND;
+    return printRaw(activeCommand, printerName);
   },
 
   printTicketAndOpenDrawer: async (ticketData, options = {}) => {

@@ -28,6 +28,7 @@ const PrinterPanel = () => {
   const [loading, setLoading] = useState(false);
   const [printers, setPrinters] = useState([]);
   const [selectedPrinter, setSelectedPrinter] = useState(qzTrayService.getSelectedPrinter());
+  const [drawerConfig, setDrawerConfig] = useState(qzTrayService.getDrawerConfig());
 
   const cargarImpresoras = async () => {
     try {
@@ -51,6 +52,12 @@ const PrinterPanel = () => {
   const guardarImpresora = () => {
     qzTrayService.setSelectedPrinter(selectedPrinter);
     toast.success(selectedPrinter ? `Impresora guardada: ${selectedPrinter}` : 'Impresora predeterminada restablecida');
+  };
+
+  const guardarCajon = () => {
+    const saved = qzTrayService.setDrawerConfig(drawerConfig);
+    setDrawerConfig(saved);
+    toast.success(`Configuracion cajon guardada (pin ${saved.pin}, on ${saved.onMs}, off ${saved.offMs})`);
   };
 
   const imprimirPrueba = async () => {
@@ -93,6 +100,39 @@ const PrinterPanel = () => {
 
         <button className="btn-secondary" type="button" onClick={guardarImpresora}>Guardar impresora</button>
         <button className="btn-secondary" type="button" onClick={imprimirPrueba}>Imprimir prueba</button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <select
+          className="input-field"
+          value={String(drawerConfig.pin)}
+          onChange={(e) => setDrawerConfig((prev) => ({ ...prev, pin: Number(e.target.value) }))}
+        >
+          <option value="0">Pin apertura: 0 (recomendado)</option>
+          <option value="1">Pin apertura: 1</option>
+        </select>
+
+        <input
+          className="input-field"
+          type="number"
+          min="1"
+          max="255"
+          value={drawerConfig.onMs}
+          onChange={(e) => setDrawerConfig((prev) => ({ ...prev, onMs: Number(e.target.value || 0) }))}
+          placeholder="Pulso ON (1-255)"
+        />
+
+        <input
+          className="input-field"
+          type="number"
+          min="1"
+          max="255"
+          value={drawerConfig.offMs}
+          onChange={(e) => setDrawerConfig((prev) => ({ ...prev, offMs: Number(e.target.value || 0) }))}
+          placeholder="Pulso OFF (1-255)"
+        />
+
+        <button className="btn-secondary" type="button" onClick={guardarCajon}>Guardar cajon RJ11</button>
       </div>
 
       <div className="flex gap-2">
