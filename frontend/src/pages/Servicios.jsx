@@ -1,5 +1,5 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
-import { FiPlus, FiRefreshCw, FiSearch } from 'react-icons/fi';
+import { FiPlus, FiRefreshCw, FiSearch, FiTrash2 } from 'react-icons/fi';
 import { toast } from 'react-toastify';
 import {
   clientesService,
@@ -103,17 +103,21 @@ const Servicios = () => {
   const [ventaBusqueda, setVentaBusqueda] = useState('');
   const [ventaSugerencias, setVentaSugerencias] = useState([]);
   const [productoVentaSeleccionado, setProductoVentaSeleccionado] = useState(null);
+  const [carrito, setCarrito] = useState([]);
+  const [serviciosConAdicionalHoy, setServiciosConAdicionalHoy] = useState([]);
 
   const cargarTodo = async () => {
     try {
       setLoading(true);
-      const [estilistasRes, serviciosRes, clientesRes, serviciosRealizadosRes, estadoRes, productosRes] = await Promise.all([
+      const today = new Date().toISOString().slice(0, 10);
+      const [estilistasRes, serviciosRes, clientesRes, serviciosRealizadosRes, estadoRes, productosRes, finalizadosHoyRes] = await Promise.all([
         estilistasService.getAll({ activo: true }),
         serviciosService.getAll({ activo: true }),
         clientesService.getAll(),
         serviciosRealizadosService.getAll({ estado: 'en_proceso' }),
         serviciosRealizadosService.getEstadoEstilistas(),
         productosService.getAll({ activo: true }),
+        serviciosRealizadosService.getAll({ estado: 'finalizado', fecha_inicio: today, fecha_fin: today }),
       ]);
 
       const listaEstilistas = extractRows(estilistasRes);
@@ -121,6 +125,7 @@ const Servicios = () => {
       const listaClientes = extractRows(clientesRes);
       const listaRealizados = extractRows(serviciosRealizadosRes);
       const listaProductos = extractRows(productosRes);
+      const listaFinalizadosHoy = extractRows(finalizadosHoyRes);
 
       setEstilistas(listaEstilistas);
       setServicios(listaServicios);
@@ -128,6 +133,7 @@ const Servicios = () => {
       setProductos(listaProductos);
       setEstadoEstilistas(Array.isArray(estadoRes) ? estadoRes : []);
       setServiciosEnProceso(listaRealizados.filter((s) => s.estado === 'en_proceso'));
+      setServiciosConAdicionalHoy(listaFinalizadosHoy.filter((s) => s.adicional_otro_producto));
     } catch (error) {
       toast.error('No se pudo cargar el módulo operativo');
     } finally {
@@ -222,6 +228,11 @@ const Servicios = () => {
     const precio = Number(ventaForm.precio_unitario || 0);
     return cantidad * precio;
   }, [ventaForm]);
+
+  const totalCarrito = useMemo(
+    () => carrito.reduce((acc, item) => acc + item.cantidad * item.precio_unitario, 0),
+    [carrito]
+  );
 
   const abrirInicioDesdePanel = (estilistaId) => {
     setInicioServicio({ ...INITIAL_INICIO, estilista: String(estilistaId) });
@@ -444,50 +455,81 @@ const Servicios = () => {
     setVentaForm((prev) => ({ ...prev, precio_unitario: String(producto.precio_venta || '') }));
   };
 
-  const registrarVentaCaja = async (e) => {
-    e.preventDefault();
-    if (!puedeFacturar) {
-      toast.warning('Solo administrador o gerente pueden crear facturas');
-      return;
-    }
+  const agregarAlCarrito = () => {
     if (!productoVentaSeleccionado) {
       toast.warning('Selecciona un producto');
       return;
     }
-
     const cantidad = Number(ventaForm.cantidad || 0);
     const precioUnitario = Number(ventaForm.precio_unitario || 0);
     if (cantidad <= 0 || precioUnitario <= 0) {
       toast.warning('Cantidad y valor unitario deben ser mayores a cero');
       return;
     }
+    setCarrito((prev) => [
+      ...prev,
+      { _key: Date.now(), producto: productoVentaSeleccionado, cantidad, precio_unitario: precioUnitario },
+    ]);
+    setProductoVentaSeleccionado(null);
+    setVentaBusqueda('');
+    setVentaForm((prev) => ({ ...prev, cantidad: '1', precio_unitario: '' }));
+    setVentaSugerencias([]);
+  };
+
+  const registrarVentaCaja = async (e) => {
+    e.preventDefault();
+    if (!puedeFacturar) {
+      toast.warning('Solo administrador o gerente pueden crear facturas');
+      return;
+    }
+
+    // Build items: carrito items + current product selection if filled
+    const itemsParaRegistrar = [...carrito];
+    if (productoVentaSeleccionado) {
+      const cantidad = Number(ventaForm.cantidad || 0);
+      const precioUnitario = Number(ventaForm.precio_unitario || 0);
+      if (cantidad > 0 && precioUnitario > 0) {
+        itemsParaRegistrar.push({ _key: 'current', producto: productoVentaSeleccionado, cantidad, precio_unitario: precioUnitario });
+      }
+    }
+
+    if (itemsParaRegistrar.length === 0) {
+      toast.warning('Agrega al menos un producto al carrito');
+      return;
+    }
 
     try {
       setSaving(true);
-      const ventaCreada = await ventasService.create({
-        producto: productoVentaSeleccionado.id,
-        cantidad,
-        precio_unitario: precioUnitario,
-        cliente_nombre: ventaForm.cliente_nombre.trim() || null,
-        estilista: ventaForm.estilista ? Number(ventaForm.estilista) : null,
-        medio_pago: ventaForm.medio_pago,
-      });
+      let ultimaVenta = null;
+      for (const item of itemsParaRegistrar) {
+        const ventaCreada = await ventasService.create({
+          producto: item.producto.id,
+          cantidad: item.cantidad,
+          precio_unitario: item.precio_unitario,
+          cliente_nombre: ventaForm.cliente_nombre.trim() || null,
+          estilista: ventaForm.estilista ? Number(ventaForm.estilista) : null,
+          medio_pago: ventaForm.medio_pago,
+        });
+        customerDisplayService.publishProductSale(ventaCreada);
+        ultimaVenta = ventaCreada;
+      }
 
-      customerDisplayService.publishProductSale(ventaCreada);
-
-      toast.success('Venta registrada correctamente');
+      toast.success(`${itemsParaRegistrar.length} venta(s) registrada(s) correctamente`);
 
       try {
-        await ticketPrintService.printProductSaleAndOpenDrawer(ventaCreada);
-        toast.success('Ticket impreso y caja abierta');
+        if (ultimaVenta) {
+          await ticketPrintService.printProductSaleAndOpenDrawer(ultimaVenta);
+          toast.success('Ticket impreso y caja abierta');
+        }
       } catch (printError) {
-        toast.error(printError.message || 'La venta se guardo, pero no se pudo imprimir el ticket');
+        toast.error(printError.message || 'La(s) venta(s) se guardaron, pero no se pudo imprimir el ticket');
       }
 
       setVentaForm({ cliente_nombre: '', estilista: '', medio_pago: 'efectivo', cantidad: '1', precio_unitario: '' });
       setVentaBusqueda('');
       setProductoVentaSeleccionado(null);
       setVentaSugerencias([]);
+      setCarrito([]);
       await cargarTodo();
     } catch (error) {
       const msg = error?.response?.data?.cantidad?.[0] || error?.response?.data?.detail || 'No se pudo registrar la venta';
@@ -579,17 +621,84 @@ const Servicios = () => {
                 <p className="font-semibold text-blue-950">{productoVentaSeleccionado ? formatProductSearchLabel(productoVentaSeleccionado) : 'Ninguno'}</p>
               </div>
               <div className="text-right">
-                <p className="text-sm text-blue-800">Total a cobrar</p>
+                <p className="text-sm text-blue-800">Total unitario</p>
                 <p className="text-2xl font-bold text-blue-950">${totalVentaCaja.toFixed(2)}</p>
               </div>
             </div>
 
             <div className="md:col-span-4">
+              <button
+                className="btn-secondary w-full inline-flex items-center justify-center gap-2"
+                type="button"
+                onClick={agregarAlCarrito}
+                disabled={!productoVentaSeleccionado}
+              >
+                <FiPlus /> Agregar al carrito
+              </button>
+            </div>
+
+            {carrito.length > 0 && (
+              <div className="md:col-span-4 space-y-2">
+                <p className="text-sm font-medium text-gray-700">
+                  Carrito ({carrito.length} {carrito.length === 1 ? 'producto' : 'productos'})
+                </p>
+                {carrito.map((item) => (
+                  <div key={item._key} className="flex items-center justify-between rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                    <div>
+                      <p className="font-medium text-sm">{formatProductSearchLabel(item.producto)}</p>
+                      <p className="text-xs text-gray-500">x{item.cantidad} × ${item.precio_unitario.toFixed(2)}</p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <p className="font-bold text-gray-900">${(item.cantidad * item.precio_unitario).toFixed(2)}</p>
+                      <button
+                        type="button"
+                        className="text-red-500 hover:text-red-700"
+                        onClick={() => setCarrito((prev) => prev.filter((i) => i._key !== item._key))}
+                      >
+                        <FiTrash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                <div className="flex justify-between items-center px-3 py-2 bg-gray-100 rounded-lg">
+                  <p className="font-medium text-gray-700">Total carrito</p>
+                  <p className="font-bold text-lg text-gray-900">${totalCarrito.toFixed(2)}</p>
+                </div>
+              </div>
+            )}
+
+            <div className="md:col-span-4">
               <button className="btn-primary w-full" type="submit" disabled={saving || !puedeFacturar}>
-                {saving ? 'Guardando...' : 'Registrar venta'}
+                {saving
+                  ? 'Guardando...'
+                  : carrito.length > 0
+                  ? `Registrar ${carrito.length + (productoVentaSeleccionado ? 1 : 0)} venta(s)`
+                  : 'Registrar venta'}
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {modoVista === 'ventas' && serviciosConAdicionalHoy.length > 0 && (
+        <div className="card space-y-3">
+          <h2 className="card-header">Productos vendidos como adicionales en servicios de hoy</h2>
+          <div className="space-y-2">
+            {serviciosConAdicionalHoy.map((srv) => (
+              <div key={srv.id} className="rounded-lg border border-blue-200 bg-blue-50 p-4 flex items-center justify-between">
+                <div>
+                  <p className="font-semibold text-blue-950">{srv.adicional_otro_producto_nombre || 'Producto adicional'}</p>
+                  <p className="text-sm text-blue-700">
+                    x{srv.adicional_otro_cantidad} | {srv.servicio_nombre} — {srv.estilista_nombre}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm text-blue-800">Total cobrado</p>
+                  <p className="text-xl font-bold text-blue-950">${Number(srv.valor_adicionales || 0).toFixed(2)}</p>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
