@@ -65,6 +65,7 @@ const Servicios = () => {
   const [showNuevoClienteModal, setShowNuevoClienteModal] = useState(false);
   const [showIniciarModal, setShowIniciarModal] = useState(false);
   const [showFinalizarModal, setShowFinalizarModal] = useState(false);
+  const [showConfirmacionFinalizar, setShowConfirmacionFinalizar] = useState(false);
 
   const [estilistas, setEstilistas] = useState([]);
   const [servicios, setServicios] = useState([]);
@@ -234,6 +235,18 @@ const Servicios = () => {
     [carrito]
   );
 
+  const totalFinalizacion = useMemo(() => {
+    const precioBase = Number(finalizacion.precio_cobrado || 0);
+    const adicionalesServicios = (finalizacion.adicionales_servicio_ids || []).reduce(
+      (acc, id) => acc + Number(finalizacion.adicionales_servicio_valores?.[id] || 0),
+      0
+    );
+    const adicionalProducto = finalizacion.tiene_adicionales && finalizacion.adicional_otro_producto
+      ? Number(finalizacion.adicional_otro_cantidad || 1) * Number(finalizacion.adicional_otro_precio_unitario || Number(productoAdicionalSeleccionado?.precio_venta || 0))
+      : 0;
+    return precioBase + adicionalesServicios + adicionalProducto;
+  }, [finalizacion, productoAdicionalSeleccionado]);
+
   const abrirInicioDesdePanel = (estilistaId) => {
     setInicioServicio({ ...INITIAL_INICIO, estilista: String(estilistaId) });
     setShowIniciarModal(true);
@@ -340,7 +353,7 @@ const Servicios = () => {
     }
   };
 
-  const finalizarServicio = async (e) => {
+  const solicitarConfirmacionFinalizar = (e) => {
     e.preventDefault();
     if (!servicioFinalizarId) {
       toast.warning('Selecciona un servicio en proceso para finalizar');
@@ -373,6 +386,11 @@ const Servicios = () => {
       }
     }
 
+    setShowConfirmacionFinalizar(true);
+  };
+
+  const finalizarServicio = async () => {
+    setShowConfirmacionFinalizar(false);
     try {
       setSaving(true);
       const flagsLegacy = mapearFlagsLegacyAdicionales(finalizacion.adicionales_servicio_ids);
@@ -848,7 +866,7 @@ const Servicios = () => {
         subtitle="Confirma pago y adicionales"
         size="lg"
       >
-        <form className="grid grid-cols-1 md:grid-cols-3 gap-3" onSubmit={finalizarServicio}>
+        <form className="grid grid-cols-1 md:grid-cols-3 gap-3" onSubmit={solicitarConfirmacionFinalizar}>
           <select className="input-field" value={servicioFinalizarId} onChange={(e) => setServicioFinalizarId(e.target.value)}>
             <option value="">Servicio en proceso a finalizar</option>
             {serviciosEnProceso.map((srv) => (
@@ -1007,11 +1025,54 @@ const Servicios = () => {
           )}
 
           <div className="md:col-span-3 flex gap-2">
-            <button className="btn-primary" type="submit" disabled={saving}>Finalizar servicio</button>
+            <button className="btn-primary" type="submit" disabled={saving}>Revisar y finalizar</button>
             <button className="btn-secondary" type="button" onClick={() => setShowFinalizarModal(false)}>Cancelar</button>
           </div>
         </form>
       </ModalForm>
+
+      {showConfirmacionFinalizar && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 overflow-hidden">
+            <div className="bg-blue-600 px-6 py-4">
+              <h3 className="text-lg font-bold text-white">Confirmar finalización de servicio</h3>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="bg-blue-50 border-l-4 border-blue-600 p-4">
+                <p className="text-sm text-blue-700 mb-2">Monto a cobrar al cliente:</p>
+                <p className="text-4xl font-bold text-blue-950">${totalFinalizacion.toFixed(2)}</p>
+              </div>
+              <div className="text-sm text-gray-600 space-y-1">
+                <p><strong>Empleado:</strong> {servicioEnProcesoSeleccionado?.estilista_nombre || '-'}</p>
+                <p><strong>Servicio:</strong> {servicioEnProcesoSeleccionado?.servicio_nombre || '-'}</p>
+                <p><strong>Cliente:</strong> {servicioEnProcesoSeleccionado?.cliente_nombre || '-'}</p>
+                <p><strong>Medio de pago:</strong> {finalizacion.medio_pago}</p>
+              </div>
+              <div className="bg-yellow-50 border border-yellow-200 p-3 rounded text-sm text-yellow-800">
+                <p>¿Deseas proceder con la finalización y cobro del servicio?</p>
+              </div>
+            </div>
+            <div className="bg-gray-100 px-6 py-3 flex gap-2 justify-end">
+              <button
+                type="button"
+                className="btn-secondary px-4 py-2"
+                onClick={() => setShowConfirmacionFinalizar(false)}
+                disabled={saving}
+              >
+                Cancelar (editar)
+              </button>
+              <button
+                type="button"
+                className="btn-primary px-4 py-2"
+                onClick={finalizarServicio}
+                disabled={saving}
+              >
+                {saving ? 'Finalizando...' : 'Aceptar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

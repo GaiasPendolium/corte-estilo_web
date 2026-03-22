@@ -22,3 +22,19 @@ VITE_POS_BRIDGE_URL=http://127.0.0.1:8787
 
 NOTA
 Mantener la app SATBridgeManager abierta mientras se factura.
+
+MODO CAJON SERIAL (COM) - OPCIONAL
+Si el cajon no va conectado al RJ11 de la impresora y en cambio va al puerto COM del POS:
+
+1) En local_bridge ejecutar: iniciar_cajon_serial.bat
+2) Verificar estado en: http://127.0.0.1:5000/status
+3) Probar apertura con: http://127.0.0.1:5000/abrir-cajon
+
+Configuracion de puerto:
+- Crear/editar archivo drawer_config.json (puedes copiar drawer_config.example.json)
+- Campo principal: "com_port": "COM3"
+
+Variables frontend (Vite):
+- VITE_DRAWER_MODE=serial
+- VITE_LOCAL_DRAWER_URL=http://127.0.0.1:5000/abrir-cajon
+- VITE_LOCAL_DRAWER_TIMEOUT_MS=1500
