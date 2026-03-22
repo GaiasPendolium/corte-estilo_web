@@ -709,6 +709,7 @@ def _calcular_datos_bi(request):
         )
 
     comision_servicios_establecimiento = total_descuentos_espacio
+    ingresos_servicios_total_cliente = ingresos_servicios + total_servicios_adicionales_establecimiento
 
     ganancia_establecimiento_total = (
         ganancia_establecimiento_productos +
@@ -716,7 +717,11 @@ def _calcular_datos_bi(request):
         total_servicios_adicionales_establecimiento
     )
 
-    venta_neta_total = ingresos_productos + ingresos_servicios
+    # Total cobrado al cliente sin separar reparto empleado/establecimiento.
+    venta_neta_total = ingresos_productos + ingresos_servicios_total_cliente
+    # Ganancia total generada por el negocio (antes de gastos fijos):
+    # servicios cobrados al cliente + utilidad neta de productos.
+    total_ganancias_negocio = ingresos_servicios_total_cliente + utilidad_productos
 
     productos_bajo_stock_qs = Producto.objects.filter(activo=True, stock__lte=F('stock_minimo')).order_by('stock')
     top_productos = sorted(top_productos_mapa.values(), key=lambda x: x['cantidad'], reverse=True)[:10]
@@ -742,14 +747,20 @@ def _calcular_datos_bi(request):
         'fecha_fin': fecha_fin,
         'kpis': {
             'venta_neta_total': float(venta_neta_total),
+            'total_ganancias_negocio': float(total_ganancias_negocio),
             'ingresos_productos': float(ingresos_productos),
+            'ingresos_productos_totales': float(ingresos_productos),
             'ingresos_servicios': float(ingresos_servicios),
+            'ingresos_servicios_totales': float(ingresos_servicios_total_cliente),
             'costo_productos': float(costo_productos),
+            'reserva_reabastecimiento_productos': float(costo_productos),
             'utilidad_productos': float(utilidad_productos),
+            'utilidad_neta_productos': float(utilidad_productos),
             'comision_producto_estilistas': float(comision_producto_estilistas),
             'comision_servicios_establecimiento': float(comision_servicios_establecimiento),
             'ingresos_servicios_adicionales': float(total_servicios_adicionales_establecimiento),
             'ganancia_establecimiento_productos': float(ganancia_establecimiento_productos),
+            'disponible_productos_despues_reabastecer': float(ganancia_establecimiento_productos),
             'ganancia_establecimiento_total': float(ganancia_establecimiento_total),
             'pago_total_estilistas': float(total_pago_neto_estilistas),
             'descuentos_espacio_estilistas': float(total_descuentos_espacio),
