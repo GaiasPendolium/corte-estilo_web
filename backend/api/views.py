@@ -652,6 +652,8 @@ def _calcular_datos_bi(request):
     estilistas_data = []
     total_descuentos_espacio = Decimal(0)
     total_pago_neto_estilistas = Decimal(0)
+    total_pago_estilistas_positivo = Decimal(0)
+    total_deuda_estilistas = Decimal(0)
     total_servicios_adicionales_establecimiento = Decimal(0)
 
     for estilista in Estilista.objects.filter(activo=True):
@@ -698,6 +700,10 @@ def _calcular_datos_bi(request):
 
         total_descuentos_espacio += descuento_espacio
         total_pago_neto_estilistas += pago_neto
+        if pago_neto >= 0:
+            total_pago_estilistas_positivo += pago_neto
+        else:
+            total_deuda_estilistas += abs(pago_neto)
         total_servicios_adicionales_establecimiento += total_adicionales_est
 
         estilistas_data.append(
@@ -777,7 +783,9 @@ def _calcular_datos_bi(request):
             'ganancia_establecimiento_productos': float(ganancia_establecimiento_productos),
             'disponible_productos_despues_reabastecer': float(ganancia_establecimiento_productos),
             'ganancia_establecimiento_total': float(ganancia_establecimiento_total),
-            'pago_total_estilistas': float(total_pago_neto_estilistas),
+            'pago_total_estilistas': float(total_pago_estilistas_positivo),
+            'deudas_estilistas': float(total_deuda_estilistas),
+            'pago_total_estilistas_neto': float(total_pago_neto_estilistas),
             'descuentos_espacio_estilistas': float(total_descuentos_espacio),
             'cantidad_ventas_productos': ventas_qs.count(),
             'cantidad_servicios': servicios_qs.count(),
