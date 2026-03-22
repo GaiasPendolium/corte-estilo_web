@@ -304,7 +304,7 @@ const Reportes = () => {
         <div className="card">
           <p className="text-sm text-gray-500">Productos total vendido</p>
           <p className="mt-2 text-2xl font-black text-gray-900">{formatMoney(kpis.ingresos_productos_totales)}</p>
-          <p className="mt-1 text-sm text-gray-500">Lo que entra por ventas de producto</p>
+          <p className="mt-1 text-sm text-gray-500">Caja productos: {formatMoney(kpis.ingresos_productos_caja)} | En servicios adicionales: {formatMoney(kpis.ingresos_productos_en_servicios)}</p>
         </div>
         <div className="card">
           <p className="text-sm text-gray-500">Reserva reabastecimiento</p>

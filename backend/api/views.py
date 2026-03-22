@@ -610,6 +610,7 @@ def _calcular_datos_bi(request):
         servicios_qs = servicios_qs.filter(medio_pago=medio_pago)
 
     ingresos_productos = Decimal(ventas_qs.aggregate(total=Sum('total'))['total'] or 0)
+    ingresos_productos_en_servicios = Decimal(0)
     costo_productos = Decimal(0)
     comision_producto_estilistas = Decimal(0)
 
@@ -635,6 +636,16 @@ def _calcular_datos_bi(request):
         top_productos_mapa[key]['total'] += Decimal(venta.total)
 
     utilidad_productos = ingresos_productos - costo_productos
+
+    # Productos vendidos como adicional dentro de servicios finalizados.
+    # Se valorizan por precio de venta del producto * cantidad registrada.
+    for srv in servicios_qs.select_related('adicional_otro_producto'):
+        if srv.adicional_otro_producto_id:
+            cantidad_ad = Decimal(srv.adicional_otro_cantidad or 1)
+            precio_venta_ad = Decimal(srv.adicional_otro_producto.precio_venta or 0)
+            ingresos_productos_en_servicios += precio_venta_ad * cantidad_ad
+
+    ingresos_productos_totales = ingresos_productos + ingresos_productos_en_servicios
     ganancia_establecimiento_productos = utilidad_productos - comision_producto_estilistas
     ingresos_servicios = Decimal(servicios_qs.aggregate(total=Sum('precio_cobrado'))['total'] or 0)
 
@@ -751,7 +762,9 @@ def _calcular_datos_bi(request):
             'venta_neta_total': float(venta_neta_total),
             'total_ganancias_negocio': float(total_ganancias_negocio),
             'ingresos_productos': float(ingresos_productos),
-            'ingresos_productos_totales': float(ingresos_productos),
+            'ingresos_productos_totales': float(ingresos_productos_totales),
+            'ingresos_productos_caja': float(ingresos_productos),
+            'ingresos_productos_en_servicios': float(ingresos_productos_en_servicios),
             'ingresos_servicios': float(ingresos_servicios),
             'ingresos_servicios_totales': float(ingresos_servicios_total_cliente),
             'costo_productos': float(costo_productos),
