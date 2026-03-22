@@ -212,10 +212,10 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
                     raise serializers.ValidationError({'adicional_otro_precio_unitario': 'Debes ingresar el nuevo precio con descuento empleado.'})
 
                 precio_venta = float(adicional_otro_producto.precio_venta or 0)
-                minimo_permitido = precio_venta * 0.2
+                minimo_permitido = precio_venta * 0.8
                 if float(precio_manual) < minimo_permitido:
                     raise serializers.ValidationError(
-                        {'adicional_otro_precio_unitario': f'El precio no puede ser inferior al 20% del precio de venta (${minimo_permitido:.2f}).'}
+                        {'adicional_otro_precio_unitario': f'Descuento maximo 20%. Precio minimo unitario: ${minimo_permitido:.0f}.'}
                     )
 
         return attrs

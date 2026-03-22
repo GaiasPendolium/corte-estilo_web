@@ -70,10 +70,10 @@ const formatCOP = (value) => moneyFormatterCOP.format(toPesoInt(value));
 
 const sanitizePesoInput = (value) => String(value ?? '').replace(/[^\d]/g, '');
 
-const minimoVeintePorciento = (precioBase) => {
+const minimoConDescuentoEmpleado = (precioBase) => {
   const base = toPesoInt(precioBase);
   if (base <= 0) return 0;
-  return Math.ceil(base * 0.2);
+  return Math.ceil(base * 0.8);
 };
 
 const INITIAL_INICIO = {
@@ -277,9 +277,9 @@ const Servicios = () => {
 
   const validarPrecioMinimoProducto = (producto, precioUnitario) => {
     if (!producto) return true;
-    const minimoPermitido = minimoVeintePorciento(producto.precio_venta || 0);
+    const minimoPermitido = minimoConDescuentoEmpleado(producto.precio_venta || 0);
     if (minimoPermitido > 0 && toPesoInt(precioUnitario) < minimoPermitido) {
-      toast.warning(`El valor unitario no puede ser inferior al 20% (${formatCOP(minimoPermitido)})`);
+      toast.warning(`Descuento maximo 20%. Precio minimo unitario: ${formatCOP(minimoPermitido)}`);
       return false;
     }
     return true;
@@ -411,13 +411,13 @@ const Servicios = () => {
 
       if (finalizacion.adicional_otro_producto && finalizacion.adicional_otro_descuento_empleado) {
         const precioIngresado = toPesoInt(finalizacion.adicional_otro_precio_unitario || 0);
-        const minimoPermitido = minimoVeintePorciento(productoAdicionalSeleccionado?.precio_venta || 0);
+        const minimoPermitido = minimoConDescuentoEmpleado(productoAdicionalSeleccionado?.precio_venta || 0);
         if (precioIngresado <= 0) {
           toast.warning('Ingresa el nuevo precio del producto adicional');
           return;
         }
         if (precioIngresado < minimoPermitido) {
-          toast.warning(`El precio no puede ser inferior al 20% del valor de venta (${formatCOP(minimoPermitido)})`);
+          toast.warning(`Descuento maximo 20%. Precio minimo unitario: ${formatCOP(minimoPermitido)}`);
           return;
         }
       }
@@ -1039,6 +1039,12 @@ const Servicios = () => {
 
               {finalizacion.adicional_otro_producto && finalizacion.adicional_otro_descuento_empleado && (
                 <div className="md:col-span-3">
+                  {toPesoInt(finalizacion.adicional_otro_precio_unitario || 0) > 0 &&
+                    toPesoInt(finalizacion.adicional_otro_precio_unitario || 0) < minimoConDescuentoEmpleado(productoAdicionalSeleccionado?.precio_venta || 0) && (
+                    <p className="text-xs text-red-600 mb-1">
+                      El precio ingresado es menor al permitido. Minimo: {formatCOP(minimoConDescuentoEmpleado(productoAdicionalSeleccionado?.precio_venta || 0))} por unidad.
+                    </p>
+                  )}
                   <input
                     className="input-field"
                     type="number"
@@ -1047,9 +1053,17 @@ const Servicios = () => {
                     placeholder="Nuevo precio unitario"
                     value={finalizacion.adicional_otro_precio_unitario}
                     onChange={(e) => setFinalizacion((p) => ({ ...p, adicional_otro_precio_unitario: sanitizePesoInput(e.target.value) }))}
+                    onBlur={() => {
+                      const minimo = minimoConDescuentoEmpleado(productoAdicionalSeleccionado?.precio_venta || 0);
+                      const actual = toPesoInt(finalizacion.adicional_otro_precio_unitario || 0);
+                      if (actual > 0 && actual < minimo) {
+                        toast.warning(`Descuento maximo 20%. Precio minimo unitario: ${formatCOP(minimo)}`);
+                      }
+                    }}
                   />
                   <p className="text-xs text-gray-500 mt-1">
-                    Precio mínimo permitido: {formatCOP(minimoVeintePorciento(productoAdicionalSeleccionado?.precio_venta || 0))} (20% del precio de venta)
+                    Precio minimo unitario: {formatCOP(minimoConDescuentoEmpleado(productoAdicionalSeleccionado?.precio_venta || 0))} (descuento maximo 20%)
+                    {' | '}Total minimo para {toPositiveInt(finalizacion.adicional_otro_cantidad || 1)} und: {formatCOP(minimoConDescuentoEmpleado(productoAdicionalSeleccionado?.precio_venta || 0) * toPositiveInt(finalizacion.adicional_otro_cantidad || 1))}
                   </p>
                 </div>
               )}
