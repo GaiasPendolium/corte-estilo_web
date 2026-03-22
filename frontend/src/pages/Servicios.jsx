@@ -48,6 +48,34 @@ const formatServiceSearchLabel = (servicio) => {
   return [servicio.descripcion, servicio.nombre].filter(Boolean).join(' - ') || servicio.nombre || 'Servicio';
 };
 
+const moneyFormatterCOP = new Intl.NumberFormat('es-CO', {
+  style: 'currency',
+  currency: 'COP',
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 0,
+});
+
+const toPesoInt = (value) => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(n);
+};
+
+const toPositiveInt = (value) => {
+  const n = Math.trunc(Number(value));
+  return Number.isFinite(n) && n > 0 ? n : 0;
+};
+
+const formatCOP = (value) => moneyFormatterCOP.format(toPesoInt(value));
+
+const sanitizePesoInput = (value) => String(value ?? '').replace(/[^\d]/g, '');
+
+const minimoVeintePorciento = (precioBase) => {
+  const base = toPesoInt(precioBase);
+  if (base <= 0) return 0;
+  return Math.ceil(base * 0.2);
+};
+
 const INITIAL_INICIO = {
   estilista: '',
   servicio: '',
@@ -225,8 +253,8 @@ const Servicios = () => {
   };
 
   const totalVentaCaja = useMemo(() => {
-    const cantidad = Number(ventaForm.cantidad || 0);
-    const precio = Number(ventaForm.precio_unitario || 0);
+    const cantidad = toPositiveInt(ventaForm.cantidad || 0);
+    const precio = toPesoInt(ventaForm.precio_unitario || 0);
     return cantidad * precio;
   }, [ventaForm]);
 
@@ -236,16 +264,26 @@ const Servicios = () => {
   );
 
   const totalFinalizacion = useMemo(() => {
-    const precioBase = Number(finalizacion.precio_cobrado || 0);
+    const precioBase = toPesoInt(finalizacion.precio_cobrado || 0);
     const adicionalesServicios = (finalizacion.adicionales_servicio_ids || []).reduce(
-      (acc, id) => acc + Number(finalizacion.adicionales_servicio_valores?.[id] || 0),
+      (acc, id) => acc + toPesoInt(finalizacion.adicionales_servicio_valores?.[id] || 0),
       0
     );
     const adicionalProducto = finalizacion.tiene_adicionales && finalizacion.adicional_otro_producto
-      ? Number(finalizacion.adicional_otro_cantidad || 1) * Number(finalizacion.adicional_otro_precio_unitario || Number(productoAdicionalSeleccionado?.precio_venta || 0))
+      ? toPositiveInt(finalizacion.adicional_otro_cantidad || 1) * toPesoInt(finalizacion.adicional_otro_precio_unitario || toPesoInt(productoAdicionalSeleccionado?.precio_venta || 0))
       : 0;
     return precioBase + adicionalesServicios + adicionalProducto;
   }, [finalizacion, productoAdicionalSeleccionado]);
+
+  const validarPrecioMinimoProducto = (producto, precioUnitario) => {
+    if (!producto) return true;
+    const minimoPermitido = minimoVeintePorciento(producto.precio_venta || 0);
+    if (minimoPermitido > 0 && toPesoInt(precioUnitario) < minimoPermitido) {
+      toast.warning(`El valor unitario no puede ser inferior al 20% (${formatCOP(minimoPermitido)})`);
+      return false;
+    }
+    return true;
+  };
 
   const abrirInicioDesdePanel = (estilistaId) => {
     setInicioServicio({ ...INITIAL_INICIO, estilista: String(estilistaId) });
@@ -372,15 +410,14 @@ const Servicios = () => {
       }
 
       if (finalizacion.adicional_otro_producto && finalizacion.adicional_otro_descuento_empleado) {
-        const precioIngresado = Number(finalizacion.adicional_otro_precio_unitario || 0);
-        const precioVenta = Number(productoAdicionalSeleccionado?.precio_venta || 0);
-        const minimoPermitido = precioVenta * 0.2;
+        const precioIngresado = toPesoInt(finalizacion.adicional_otro_precio_unitario || 0);
+        const minimoPermitido = minimoVeintePorciento(productoAdicionalSeleccionado?.precio_venta || 0);
         if (precioIngresado <= 0) {
           toast.warning('Ingresa el nuevo precio del producto adicional');
           return;
         }
         if (precioIngresado < minimoPermitido) {
-          toast.warning(`El precio no puede ser inferior al 20% del valor de venta ($${minimoPermitido.toFixed(2)})`);
+          toast.warning(`El precio no puede ser inferior al 20% del valor de venta (${formatCOP(minimoPermitido)})`);
           return;
         }
       }
@@ -395,7 +432,7 @@ const Servicios = () => {
       setSaving(true);
       const flagsLegacy = mapearFlagsLegacyAdicionales(finalizacion.adicionales_servicio_ids);
       const res = await serviciosRealizadosService.finalizar(servicioFinalizarId, {
-        precio_cobrado: Number(finalizacion.precio_cobrado),
+        precio_cobrado: toPesoInt(finalizacion.precio_cobrado),
         medio_pago: finalizacion.medio_pago,
         tiene_adicionales: finalizacion.tiene_adicionales,
         adicionales_servicio_ids: finalizacion.tiene_adicionales
@@ -404,7 +441,7 @@ const Servicios = () => {
         adicionales_servicio_items: finalizacion.tiene_adicionales
           ? (finalizacion.adicionales_servicio_ids || []).map((id) => ({
               id: Number(id),
-              valor: Number(finalizacion.adicionales_servicio_valores?.[id] || 0),
+              valor: toPesoInt(finalizacion.adicionales_servicio_valores?.[id] || 0),
             }))
           : [],
         adicional_shampoo: finalizacion.tiene_adicionales ? flagsLegacy.adicional_shampoo : false,
@@ -413,11 +450,11 @@ const Servicios = () => {
           finalizacion.tiene_adicionales && finalizacion.adicional_otro_producto
             ? Number(finalizacion.adicional_otro_producto)
             : null,
-        adicional_otro_cantidad: Number(finalizacion.adicional_otro_cantidad || 1),
+        adicional_otro_cantidad: toPositiveInt(finalizacion.adicional_otro_cantidad || 1),
         adicional_otro_descuento_empleado: Boolean(finalizacion.adicional_otro_descuento_empleado),
         adicional_otro_precio_unitario:
           finalizacion.tiene_adicionales && finalizacion.adicional_otro_producto && finalizacion.adicional_otro_descuento_empleado
-            ? Number(finalizacion.adicional_otro_precio_unitario)
+            ? toPesoInt(finalizacion.adicional_otro_precio_unitario)
             : null,
         notas: finalizacion.notas || null,
       });
@@ -429,10 +466,10 @@ const Servicios = () => {
 
       toast.success(
         usaCobroFijoEspacio
-          ? `Factura guardada. Base empleado: $${Number(res.monto_estilista || 0).toFixed(2)} | Cobro fijo de espacio se aplica en Reportes por día trabajado.`
-          : `Factura guardada. Empleado: $${Number(res.monto_estilista || 0).toFixed(2)} | Establecimiento: $${Number(
+          ? `Factura guardada. Base empleado: ${formatCOP(res.monto_estilista || 0)} | Cobro fijo de espacio se aplica en Reportes por día trabajado.`
+          : `Factura guardada. Empleado: ${formatCOP(res.monto_estilista || 0)} | Establecimiento: ${formatCOP(
               res.monto_establecimiento || 0
-            ).toFixed(2)}`
+            )}`
       );
 
       try {
@@ -470,7 +507,7 @@ const Servicios = () => {
     setProductoVentaSeleccionado(producto);
     setVentaBusqueda(formatProductSearchLabel(producto));
     setVentaSugerencias([]);
-    setVentaForm((prev) => ({ ...prev, precio_unitario: String(producto.precio_venta || '') }));
+    setVentaForm((prev) => ({ ...prev, precio_unitario: String(toPesoInt(producto.precio_venta || 0)) }));
   };
 
   const agregarAlCarrito = () => {
@@ -478,12 +515,13 @@ const Servicios = () => {
       toast.warning('Selecciona un producto');
       return;
     }
-    const cantidad = Number(ventaForm.cantidad || 0);
-    const precioUnitario = Number(ventaForm.precio_unitario || 0);
+    const cantidad = toPositiveInt(ventaForm.cantidad || 0);
+    const precioUnitario = toPesoInt(ventaForm.precio_unitario || 0);
     if (cantidad <= 0 || precioUnitario <= 0) {
       toast.warning('Cantidad y valor unitario deben ser mayores a cero');
       return;
     }
+    if (!validarPrecioMinimoProducto(productoVentaSeleccionado, precioUnitario)) return;
     setCarrito((prev) => [
       ...prev,
       { _key: Date.now(), producto: productoVentaSeleccionado, cantidad, precio_unitario: precioUnitario },
@@ -504,9 +542,12 @@ const Servicios = () => {
     // Build items: carrito items + current product selection if filled
     const itemsParaRegistrar = [...carrito];
     if (productoVentaSeleccionado) {
-      const cantidad = Number(ventaForm.cantidad || 0);
-      const precioUnitario = Number(ventaForm.precio_unitario || 0);
+      const cantidad = toPositiveInt(ventaForm.cantidad || 0);
+      const precioUnitario = toPesoInt(ventaForm.precio_unitario || 0);
       if (cantidad > 0 && precioUnitario > 0) {
+        if (!validarPrecioMinimoProducto(productoVentaSeleccionado, precioUnitario)) {
+          return;
+        }
         itemsParaRegistrar.push({ _key: 'current', producto: productoVentaSeleccionado, cantidad, precio_unitario: precioUnitario });
       }
     }
@@ -608,7 +649,7 @@ const Servicios = () => {
                       className="w-full text-left px-3 py-2 hover:bg-gray-50"
                       onClick={() => seleccionarProductoCaja(p)}
                     >
-                      {formatProductSearchLabel(p)} - ${Number(p.precio_venta || 0).toFixed(2)} (stock {p.stock})
+                      {formatProductSearchLabel(p)} - {formatCOP(p.precio_venta || 0)} (stock {p.stock})
                     </button>
                   ))}
                 </div>
@@ -631,7 +672,7 @@ const Servicios = () => {
             </select>
 
             <input className="input-field" type="number" min="1" placeholder="Cantidad" value={ventaForm.cantidad} onChange={(e) => setVentaForm((p) => ({ ...p, cantidad: e.target.value }))} />
-            <input className="input-field" type="number" min="0" step="0.01" placeholder="Valor unitario" value={ventaForm.precio_unitario} onChange={(e) => setVentaForm((p) => ({ ...p, precio_unitario: e.target.value }))} />
+            <input className="input-field" type="number" min="0" step="1" placeholder="Valor unitario" value={ventaForm.precio_unitario} onChange={(e) => setVentaForm((p) => ({ ...p, precio_unitario: sanitizePesoInput(e.target.value) }))} />
 
             <div className="md:col-span-4 rounded-lg border border-blue-200 bg-blue-50 p-4 flex items-center justify-between">
               <div>
@@ -640,7 +681,7 @@ const Servicios = () => {
               </div>
               <div className="text-right">
                 <p className="text-sm text-blue-800">Total unitario</p>
-                <p className="text-2xl font-bold text-blue-950">${totalVentaCaja.toFixed(2)}</p>
+                <p className="text-2xl font-bold text-blue-950">{formatCOP(totalVentaCaja)}</p>
               </div>
             </div>
 
@@ -664,10 +705,10 @@ const Servicios = () => {
                   <div key={item._key} className="flex items-center justify-between rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
                     <div>
                       <p className="font-medium text-sm">{formatProductSearchLabel(item.producto)}</p>
-                      <p className="text-xs text-gray-500">x{item.cantidad} × ${item.precio_unitario.toFixed(2)}</p>
+                      <p className="text-xs text-gray-500">x{item.cantidad} × {formatCOP(item.precio_unitario)}</p>
                     </div>
                     <div className="flex items-center gap-3">
-                      <p className="font-bold text-gray-900">${(item.cantidad * item.precio_unitario).toFixed(2)}</p>
+                      <p className="font-bold text-gray-900">{formatCOP(item.cantidad * item.precio_unitario)}</p>
                       <button
                         type="button"
                         className="text-red-500 hover:text-red-700"
@@ -680,7 +721,7 @@ const Servicios = () => {
                 ))}
                 <div className="flex justify-between items-center px-3 py-2 bg-gray-100 rounded-lg">
                   <p className="font-medium text-gray-700">Total carrito</p>
-                  <p className="font-bold text-lg text-gray-900">${totalCarrito.toFixed(2)}</p>
+                  <p className="font-bold text-lg text-gray-900">{formatCOP(totalCarrito)}</p>
                 </div>
               </div>
             )}
@@ -712,7 +753,7 @@ const Servicios = () => {
                 </div>
                 <div className="text-right">
                   <p className="text-sm text-blue-800">Total cobrado</p>
-                  <p className="text-xl font-bold text-blue-950">${Number(srv.valor_adicionales || 0).toFixed(2)}</p>
+                  <p className="text-xl font-bold text-blue-950">{formatCOP(srv.valor_adicionales || 0)}</p>
                 </div>
               </div>
             ))}
@@ -773,7 +814,7 @@ const Servicios = () => {
                     <td className="table-cell">{srv.estilista_nombre}</td>
                     <td className="table-cell">{srv.servicio_nombre}</td>
                     <td className="table-cell">{srv.cliente_nombre || '-'}</td>
-                    <td className="table-cell">${Number(srv.precio_cobrado || 0).toFixed(2)}</td>
+                    <td className="table-cell">{formatCOP(srv.precio_cobrado || 0)}</td>
                     <td className="table-cell text-right">
                       <button className="btn-primary !px-3 !py-2" onClick={() => prepararFinalizacion(srv)}>
                         Finalizar
@@ -879,7 +920,7 @@ const Servicios = () => {
             <p><strong>Cliente:</strong> {servicioEnProcesoSeleccionado?.cliente_nombre || 'No registrado'}</p>
           </div>
 
-          <input className="input-field" type="number" min="0" step="0.01" placeholder="Total servicio" value={finalizacion.precio_cobrado} onChange={(e) => setFinalizacion((p) => ({ ...p, precio_cobrado: e.target.value }))} />
+          <input className="input-field" type="number" min="0" step="1" placeholder="Total servicio" value={finalizacion.precio_cobrado} onChange={(e) => setFinalizacion((p) => ({ ...p, precio_cobrado: sanitizePesoInput(e.target.value) }))} />
 
           <select className="input-field" value={finalizacion.medio_pago} onChange={(e) => setFinalizacion((p) => ({ ...p, medio_pago: e.target.value }))}>
             {mediosPago.map((m) => (
@@ -932,7 +973,7 @@ const Servicios = () => {
                           className="input-field mt-2"
                           type="number"
                           min="0"
-                          step="0.01"
+                          step="1"
                           placeholder="Valor adicional"
                           value={finalizacion.adicionales_servicio_valores?.[srvAd.id] || ''}
                           onChange={(e) =>
@@ -940,7 +981,7 @@ const Servicios = () => {
                               ...p,
                               adicionales_servicio_valores: {
                                 ...(p.adicionales_servicio_valores || {}),
-                                [srvAd.id]: e.target.value,
+                                [srvAd.id]: sanitizePesoInput(e.target.value),
                               },
                             }))
                           }
@@ -970,7 +1011,7 @@ const Servicios = () => {
                         className="w-full text-left px-3 py-2 hover:bg-gray-50"
                         onClick={() => setFinalizacion((f) => ({ ...f, adicional_otro_producto: String(p.id), busqueda_adicional: formatProductSearchLabel(p), adicional_otro_precio_unitario: String(p.precio_venta || '') }))}
                       >
-                        {formatProductSearchLabel(p)} - ${Number(p.precio_venta || 0).toFixed(2)} (stock {p.stock})
+                        {formatProductSearchLabel(p)} - {formatCOP(p.precio_venta || 0)} (stock {p.stock})
                       </button>
                     ))}
                   </div>
@@ -1002,13 +1043,13 @@ const Servicios = () => {
                     className="input-field"
                     type="number"
                     min="0"
-                    step="0.01"
+                    step="1"
                     placeholder="Nuevo precio unitario"
                     value={finalizacion.adicional_otro_precio_unitario}
-                    onChange={(e) => setFinalizacion((p) => ({ ...p, adicional_otro_precio_unitario: e.target.value }))}
+                    onChange={(e) => setFinalizacion((p) => ({ ...p, adicional_otro_precio_unitario: sanitizePesoInput(e.target.value) }))}
                   />
                   <p className="text-xs text-gray-500 mt-1">
-                    Precio mínimo permitido: ${Number((productoAdicionalSeleccionado?.precio_venta || 0) * 0.2).toFixed(2)} (20% del precio de venta)
+                    Precio mínimo permitido: {formatCOP(minimoVeintePorciento(productoAdicionalSeleccionado?.precio_venta || 0))} (20% del precio de venta)
                   </p>
                 </div>
               )}
@@ -1040,7 +1081,7 @@ const Servicios = () => {
             <div className="p-6 space-y-4">
               <div className="bg-blue-50 border-l-4 border-blue-600 p-4">
                 <p className="text-sm text-blue-700 mb-2">Monto a cobrar al cliente:</p>
-                <p className="text-4xl font-bold text-blue-950">${totalFinalizacion.toFixed(2)}</p>
+                <p className="text-4xl font-bold text-blue-950">{formatCOP(totalFinalizacion)}</p>
               </div>
               <div className="text-sm text-gray-600 space-y-1">
                 <p><strong>Empleado:</strong> {servicioEnProcesoSeleccionado?.estilista_nombre || '-'}</p>
