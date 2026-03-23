@@ -593,6 +593,16 @@ def _resolver_rango_fechas(request):
 
 
 def _calcular_datos_bi(request):
+    """
+    Función interna que calcula todos los datos de BI.
+    
+    Query params opcionales:
+    - periodo: 'hoy', 'semana', 'mes', 'personalizado'
+    - fecha_inicio: YYYY-MM-DD
+    - fecha_fin: YYYY-MM-DD
+    - medio_pago: 'efectivo', 'transferencia', 'tarjeta', 'todos'
+    - debug: 1 para devolver desglose detallado por estilista/día
+    """
     """Función helper que calcula todos los datos de BI y retorna un diccionario"""
     fecha_inicio, fecha_fin = _resolver_rango_fechas(request)
     medio_pago = (request.query_params.get('medio_pago') or '').strip().lower()
