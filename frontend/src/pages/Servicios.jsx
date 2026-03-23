@@ -46,14 +46,29 @@ const fetchAllRows = async (getAllFn, params = {}) => {
   return all;
 };
 
+const normalizeSearchText = (value) =>
+  String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+
 const productMatchesSearch = (producto, query) => {
-  const q = query.trim().toLowerCase();
-  return (
-    (producto.descripcion || '').toLowerCase().includes(q) ||
-    (producto.nombre || '').toLowerCase().includes(q) ||
-    (producto.marca || '').toLowerCase().includes(q) ||
-    String(producto.codigo_barras || '').toLowerCase().includes(q)
-  );
+  const q = normalizeSearchText(query);
+  if (!q) return true;
+
+  const index = normalizeSearchText([
+    producto.codigo_barras,
+    producto.marca,
+    producto.descripcion,
+    producto.nombre,
+    producto.presentacion,
+  ].filter(Boolean).join(' '));
+
+  if (index.includes(q)) return true;
+  const terms = q.split(' ').filter(Boolean);
+  return terms.every((term) => index.includes(term));
 };
 
 const formatProductSearchLabel = (producto) => {
