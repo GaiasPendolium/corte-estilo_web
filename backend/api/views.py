@@ -617,13 +617,13 @@ def _calcular_datos_bi(request):
         fecha_fin = hoy.strftime('%Y-%m-%d')
 
     ventas_qs = VentaProducto.objects.select_related('producto', 'estilista').filter(
-        fecha_hora__date__gte=fecha_inicio,
-        fecha_hora__date__lte=fecha_fin,
+        fecha_hora__date__gte=fecha_inicio_dt,
+        fecha_hora__date__lte=fecha_fin_dt,
     )
     servicios_qs = ServicioRealizado.objects.select_related('estilista').filter(
         estado='finalizado',
-        fecha_hora__date__gte=fecha_inicio,
-        fecha_hora__date__lte=fecha_fin,
+        fecha_hora__date__gte=fecha_inicio_dt,
+        fecha_hora__date__lte=fecha_fin_dt,
     )
 
     if medio_pago and medio_pago != 'todos':
