@@ -532,11 +532,17 @@ const Servicios = () => {
 
     if (finalizacion.tiene_adicionales) {
       const items = finalizacion.adicionales_servicio_items || [];
+      const itemsConContenido = items.filter((item) => {
+        const id = String(item?.id || '').trim();
+        const estilista = String(item?.estilista_id || '').trim();
+        const valor = toPesoInt(item?.valor || 0);
+        return Boolean(id || estilista || valor > 0);
+      });
 
       const productoAdicional = finalizacion.adicional_otro_producto
         ? productos.find((p) => Number(p.id) === Number(finalizacion.adicional_otro_producto))
         : null;
-      const tieneServicioAdicional = items.length > 0;
+      const tieneServicioAdicional = itemsConContenido.length > 0;
       const tieneProductoAdicional = Boolean(productoAdicional);
 
       if (!tieneServicioAdicional && !tieneProductoAdicional) {
@@ -545,7 +551,7 @@ const Servicios = () => {
       }
 
       if (tieneServicioAdicional) {
-        const itemInvalido = items.find(
+        const itemInvalido = itemsConContenido.find(
           (item) => !item.id || !item.estilista_id || toPesoInt(item.valor || 0) <= 0
         );
         if (itemInvalido) {
@@ -553,7 +559,7 @@ const Servicios = () => {
           return;
         }
 
-        const porcentajeInvalido = items.find((item) => {
+        const porcentajeInvalido = itemsConContenido.find((item) => {
           if (!item.aplica_porcentaje_establecimiento) return false;
           const pct = Number(item.porcentaje_establecimiento || 0);
           return !Number.isFinite(pct) || pct <= 0 || pct > 100;
