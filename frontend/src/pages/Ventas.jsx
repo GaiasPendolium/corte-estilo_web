@@ -622,6 +622,9 @@ const Ventas = () => {
                     <div>
                       <p className="text-sm text-gray-600 mb-2">Factura para compartir:</p>
                       <div className="bg-gray-50 rounded border border-gray-200 p-3 text-sm whitespace-pre-wrap font-mono text-gray-700 max-h-64 overflow-y-auto">
+                        <div className="flex justify-center mb-3 pb-3 border-b border-gray-300">
+                          <img src="/corte_estilo_logo.png" alt="Logo" className="h-12 object-contain" />
+                        </div>
                         {ventaVisualizar.factura_texto}
                       </div>
                     </div>
@@ -688,6 +691,9 @@ const Ventas = () => {
                     <div>
                       <p className="text-sm text-gray-600 mb-2">Factura para compartir:</p>
                       <div className="bg-gray-50 rounded border border-gray-200 p-3 text-sm whitespace-pre-wrap font-mono text-gray-700 max-h-64 overflow-y-auto">
+                        <div className="flex justify-center mb-3 pb-3 border-b border-gray-300">
+                          <img src="/corte_estilo_logo.png" alt="Logo" className="h-12 object-contain" />
+                        </div>
                         {servicioVisualizar.factura_texto}
                       </div>
                     </div>
