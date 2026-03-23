@@ -5,6 +5,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.exceptions import PermissionDenied
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Sum, Count, Q, F
+from django.db.utils import OperationalError, ProgrammingError
 from django.utils import timezone
 from django.http import HttpResponse
 from datetime import datetime, timedelta
@@ -674,10 +675,14 @@ def _calcular_datos_bi(request):
     total_deuda_estilistas = Decimal(0)
     total_servicios_adicionales_establecimiento = Decimal(0)
 
-    estados_pago_map = {
-        ep.estilista_id: ep.estado
-        for ep in EstadoPagoEstilistaDia.objects.filter(fecha=fecha_estado_pago)
-    }
+    try:
+        estados_pago_map = {
+            ep.estilista_id: ep.estado
+            for ep in EstadoPagoEstilistaDia.objects.filter(fecha=fecha_estado_pago)
+        }
+    except (OperationalError, ProgrammingError):
+        # Permite mantener operativo BI mientras se aplica la migración en producción.
+        estados_pago_map = {}
 
     for estilista in Estilista.objects.filter(activo=True):
         servicios_est = servicios_qs.filter(estilista=estilista)
@@ -880,15 +885,21 @@ def estado_pago_estilista_dia(request):
         except Exception:
             return Response({'error': 'Formato de fecha inválido. Usa YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        items = [
-            {
-                'estilista_id': x.estilista_id,
-                'fecha': fecha.strftime('%Y-%m-%d'),
-                'estado': x.estado,
-                'notas': x.notas,
-            }
-            for x in EstadoPagoEstilistaDia.objects.filter(fecha=fecha)
-        ]
+        try:
+            items = [
+                {
+                    'estilista_id': x.estilista_id,
+                    'fecha': fecha.strftime('%Y-%m-%d'),
+                    'estado': x.estado,
+                    'notas': x.notas,
+                }
+                for x in EstadoPagoEstilistaDia.objects.filter(fecha=fecha)
+            ]
+        except (OperationalError, ProgrammingError):
+            return Response(
+                {'error': 'Debes aplicar migraciones del backend para habilitar estado por día.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         return Response({'fecha': fecha.strftime('%Y-%m-%d'), 'items': items})
 
     estilista_id = request.data.get('estilista_id')
@@ -912,11 +923,17 @@ def estado_pago_estilista_dia(request):
     except Exception:
         return Response({'error': 'Estilista no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
 
-    obj, _ = EstadoPagoEstilistaDia.objects.update_or_create(
-        estilista=estilista,
-        fecha=fecha,
-        defaults={'estado': estado, 'notas': notas},
-    )
+    try:
+        obj, _ = EstadoPagoEstilistaDia.objects.update_or_create(
+            estilista=estilista,
+            fecha=fecha,
+            defaults={'estado': estado, 'notas': notas},
+        )
+    except (OperationalError, ProgrammingError):
+        return Response(
+            {'error': 'Debes aplicar migraciones del backend para habilitar estado por día.'},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
 
     return Response(
         {
