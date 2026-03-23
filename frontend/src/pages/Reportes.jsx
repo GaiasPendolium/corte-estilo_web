@@ -223,6 +223,10 @@ const Reportes = () => {
     return Number(kpis.ingresos_productos || 0) / Number(kpis.cantidad_ventas_productos || 1);
   }, [kpis]);
 
+  const recibeHoy = Number(kpis.venta_neta_total || 0);
+  const pagaHoy = Number(kpis.pago_total_estilistas || 0);
+  const leQuedaHoy = recibeHoy - pagaHoy;
+
   return (
     <div className="space-y-6 fade-in">
       <section className="rounded-[28px] bg-[radial-gradient(circle_at_top_left,_rgba(59,130,246,0.18),_transparent_34%),linear-gradient(135deg,#0f172a_0%,#111827_35%,#1f2937_100%)] p-6 text-white shadow-2xl">
@@ -299,6 +303,24 @@ const Reportes = () => {
         <KpiCard title="Deudas estilistas" value={formatMoney(kpis.deudas_estilistas)} hint={`Suma de saldos negativos pendientes por cobro de espacio`} tone="amber" />
         <KpiCard title="Total ganancias" value={formatMoney(kpis.total_ganancias_negocio)} hint={`Arriendo espacios + utilidad neta productos + otros servicios no producto`} tone="amber" />
         <KpiCard title="Stock crítico" value={moneyFormatter.format(kpis.productos_bajo_stock || 0)} hint={`Promedio venta producto: ${formatMoney(ventaPromedioProducto)}`} tone="amber" />
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="card border border-slate-200 bg-slate-50">
+          <p className="text-sm text-slate-600">1. Lo que recibe hoy</p>
+          <p className="mt-2 text-3xl font-black text-slate-900">{formatMoney(recibeHoy)}</p>
+          <p className="mt-1 text-sm text-slate-600">Total que entró por clientes.</p>
+        </div>
+        <div className="card border border-blue-200 bg-blue-50">
+          <p className="text-sm text-blue-700">2. Lo que paga hoy</p>
+          <p className="mt-2 text-3xl font-black text-blue-900">{formatMoney(pagaHoy)}</p>
+          <p className="mt-1 text-sm text-blue-700">Solo pagos positivos a estilistas.</p>
+        </div>
+        <div className="card border border-emerald-200 bg-emerald-50">
+          <p className="text-sm text-emerald-700">3. Lo que le queda hoy</p>
+          <p className="mt-2 text-3xl font-black text-emerald-900">{formatMoney(leQuedaHoy)}</p>
+          <p className="mt-1 text-sm text-emerald-700">Entrada del día menos pagos del día.</p>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -394,20 +416,20 @@ const Reportes = () => {
         </div>
         <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-3">
           <div className="rounded-2xl bg-slate-50 p-4">
-            <p className="text-sm text-slate-500">1. Facturación servicio</p>
-            <p className="mt-2 text-sm text-slate-700">Valor total cobrado al cliente por servicios en el rango.</p>
+            <p className="text-sm text-slate-500">1. Base estilista</p>
+            <p className="mt-2 text-sm text-slate-700">Valor de servicio sin adicionales de establecimiento.</p>
           </div>
           <div className="rounded-2xl bg-slate-50 p-4">
-            <p className="text-sm text-slate-500">2. Base para pagar</p>
-            <p className="mt-2 text-sm text-slate-700">Valor del servicio antes de descontar cobro por espacio.</p>
+            <p className="text-sm text-slate-500">2. Comisión productos</p>
+            <p className="mt-2 text-sm text-slate-700">Comisión por ventas de productos asociadas al estilista.</p>
           </div>
           <div className="rounded-2xl bg-slate-50 p-4">
-            <p className="text-sm text-slate-500">3. Deducciones</p>
-            <p className="mt-2 text-sm text-slate-700">Servicios adicionales + cobro por espacio. Si es fijo, se multiplica por días trabajados.</p>
+            <p className="text-sm text-slate-500">3. Cobro espacio</p>
+            <p className="mt-2 text-sm text-slate-700">Valor que el estilista paga por uso de espacio.</p>
           </div>
           <div className="rounded-2xl bg-slate-50 p-4">
-            <p className="text-sm text-slate-500">4. Neto a pagar</p>
-            <p className="mt-2 text-sm text-slate-700">Base para pagar (ya descuenta adicionales) + comisiones por ventas - cobro por espacio.</p>
+            <p className="text-sm text-slate-500">4. Resultado final</p>
+            <p className="mt-2 text-sm text-slate-700">Positivo: se paga. Negativo: queda debiendo.</p>
           </div>
         </div>
         <div className="mt-4 overflow-x-auto">
@@ -415,16 +437,12 @@ const Reportes = () => {
             <thead className="table-header">
               <tr>
                 <th className="px-6 py-3 text-left">Estilista</th>
-                <th className="px-6 py-3 text-left">Facturación servicio</th>
-                <th className="px-6 py-3 text-left">Servicios adicionales</th>
                 <th className="px-6 py-3 text-left">Base para pagar</th>
                 <th className="px-6 py-3 text-left">Comisión ventas</th>
-                <th className="px-6 py-3 text-left">Subtotal antes deducción</th>
                 <th className="px-6 py-3 text-left">Cobro por espacio</th>
                 <th className="px-6 py-3 text-left">Días trabajados</th>
-                <th className="px-6 py-3 text-left">Deducción adicionales</th>
-                <th className="px-6 py-3 text-left">Total deducciones (espacio)</th>
-                <th className="px-6 py-3 text-left">Neto a pagar</th>
+                <th className="px-6 py-3 text-left">Neto</th>
+                <th className="px-6 py-3 text-left">Estado</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
@@ -432,16 +450,10 @@ const Reportes = () => {
                 <tr key={s.estilista_id} className="hover:bg-gray-50">
                   <td className="table-cell font-medium">{s.estilista_nombre}</td>
                   <td className="table-cell">
-                    <div className="font-medium text-slate-900">{formatMoney(s.facturacion_servicios)}</div>
-                    <div className="text-xs text-slate-500">Cobrado al cliente</div>
-                  </td>
-                  <td className="table-cell text-blue-700 font-medium">{formatMoney(s.valor_servicios_adicionales)}</td>
-                  <td className="table-cell">
                     <div className="font-medium text-slate-900">{formatMoney(s.ganancias_servicios)}</div>
-                    <div className="text-xs text-slate-500">Servicio después de descontar adicionales</div>
+                    <div className="text-xs text-slate-500">Base del servicio para liquidar</div>
                   </td>
                   <td className="table-cell">{formatMoney(s.comision_ventas_producto)}</td>
-                  <td className="table-cell font-medium">{formatMoney(s.ganancias_totales_brutas)}</td>
                   <td className="table-cell">
                     <div className="font-medium text-slate-900 capitalize">{s.tipo_cobro_espacio || 'sin_cobro'}</div>
                     <div className="text-xs text-slate-500">
@@ -453,9 +465,16 @@ const Reportes = () => {
                     </div>
                   </td>
                   <td className="table-cell font-medium text-slate-900">{moneyFormatter.format(s.total_dias_trabajados || 0)}</td>
-                  <td className="table-cell text-orange-700 font-medium">{formatMoney(s.deduccion_servicios_adicionales)}</td>
-                  <td className="table-cell text-red-700 font-medium">{formatMoney(s.total_deducciones)}</td>
-                  <td className="table-cell font-semibold text-emerald-700">{formatMoney(s.pago_neto_estilista)}</td>
+                  <td className="table-cell">
+                    <div className={`font-semibold ${Number(s.pago_neto_estilista || 0) >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                      {formatMoney(s.pago_neto_estilista)}
+                    </div>
+                  </td>
+                  <td className="table-cell">
+                    {Number(s.pago_neto_estilista || 0) > 0 && <span className="text-emerald-700 font-medium">A pagar</span>}
+                    {Number(s.pago_neto_estilista || 0) < 0 && <span className="text-red-700 font-medium">Debe al establecimiento</span>}
+                    {Number(s.pago_neto_estilista || 0) === 0 && <span className="text-slate-600 font-medium">En cero</span>}
+                  </td>
                 </tr>
               ))}
             </tbody>
