@@ -72,6 +72,7 @@ const Ventas = () => {
   const [editandoId, setEditandoId] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [showServicioForm, setShowServicioForm] = useState(false);
+  const [showConsumoEditForm, setShowConsumoEditForm] = useState(false);
   const [ventaVisualizar, setVentaVisualizar] = useState(null);
   const [servicioVisualizar, setServicioVisualizar] = useState(null);
   const [showVisualizarFactura, setShowVisualizarFactura] = useState(false);
@@ -98,6 +99,12 @@ const Ventas = () => {
     precio_cobrado: '',
     medio_pago: 'efectivo',
     notas: '',
+  });
+  const [consumoEditForm, setConsumoEditForm] = useState({
+    numero_factura: '',
+    cliente_nombre: '',
+    estilista: '',
+    items: [],
   });
 
   const cargarDatos = async () => {
@@ -259,8 +266,22 @@ const Ventas = () => {
   };
 
   const editarVenta = (venta) => {
+    if ((venta.items || []).length > 1 && (venta.items || []).some((x) => (x.tipo_operacion || 'venta') === 'consumo_empleado')) {
+      setConsumoEditForm({
+        numero_factura: venta.numero_factura || '',
+        cliente_nombre: venta.cliente_nombre || '',
+        estilista: venta.items?.[0]?.estilista ? String(venta.items[0].estilista) : (venta.estilista ? String(venta.estilista) : ''),
+        items: (venta.items || []).map((x) => ({
+          producto: x.producto,
+          cantidad: String(x.cantidad || 1),
+          precio_unitario: String(x.precio_unitario || ''),
+        })),
+      });
+      setShowConsumoEditForm(true);
+      return;
+    }
     if ((venta.items || []).length > 1) {
-      toast.info('Edita los productos de esta transacción desde Operación diaria.');
+      toast.info('Esta factura tiene varios productos. Puedes editarla en Consumo Empleado.');
       return;
     }
     const ventaBase = (venta.items && venta.items[0]) ? venta.items[0] : venta;
@@ -307,6 +328,71 @@ const Ventas = () => {
       await cargarDatos();
     } catch (error) {
       toast.error('No se pudo eliminar la factura');
+    }
+  };
+
+  const actualizarItemConsumo = (idx, campo, valor) => {
+    setConsumoEditForm((prev) => {
+      const items = [...(prev.items || [])];
+      items[idx] = { ...items[idx], [campo]: valor };
+      return { ...prev, items };
+    });
+  };
+
+  const agregarItemConsumo = () => {
+    setConsumoEditForm((prev) => ({
+      ...prev,
+      items: [...(prev.items || []), { producto: '', cantidad: '1', precio_unitario: '' }],
+    }));
+  };
+
+  const quitarItemConsumo = (idx) => {
+    setConsumoEditForm((prev) => ({
+      ...prev,
+      items: (prev.items || []).filter((_, i) => i !== idx),
+    }));
+  };
+
+  const guardarEdicionConsumo = async (e) => {
+    e.preventDefault();
+    if (!puedeEditarFacturas) {
+      toast.warning('Solo administrador o gerente pueden editar facturas');
+      return;
+    }
+    if (!consumoEditForm.numero_factura) {
+      toast.warning('Factura inválida');
+      return;
+    }
+    const items = (consumoEditForm.items || []).map((it) => ({
+      producto: Number(it.producto),
+      cantidad: Number(it.cantidad),
+      precio_unitario: Number(it.precio_unitario),
+    }));
+    if (items.length === 0) {
+      toast.warning('Agrega al menos un producto');
+      return;
+    }
+    if (items.some((it) => !it.producto || it.cantidad <= 0 || it.precio_unitario <= 0)) {
+      toast.warning('Verifica producto, cantidad y valor unitario en todos los items');
+      return;
+    }
+
+    try {
+      setSaving(true);
+      await ventasService.updateInvoiceTransaction({
+        numero_factura: consumoEditForm.numero_factura,
+        cliente_nombre: consumoEditForm.cliente_nombre || null,
+        estilista: consumoEditForm.estilista ? Number(consumoEditForm.estilista) : null,
+        medio_pago: 'efectivo',
+        items,
+      });
+      toast.success('Factura de consumo actualizada');
+      setShowConsumoEditForm(false);
+      await cargarDatos();
+    } catch (error) {
+      toast.error(error?.response?.data?.error || 'No se pudo actualizar la factura de consumo');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -1066,6 +1152,77 @@ const Ventas = () => {
 
       {modoVista === 'consumo_empleado' && (
       <>
+      <ModalForm
+        isOpen={showConsumoEditForm}
+        onClose={() => setShowConsumoEditForm(false)}
+        title="Editar factura consumo empleado"
+        subtitle="Cambia productos, cantidades y valores"
+        size="xl"
+      >
+        <form className="space-y-3" onSubmit={guardarEdicionConsumo}>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <input className="input-field" value={consumoEditForm.numero_factura || ''} readOnly />
+            <input
+              className="input-field"
+              placeholder="Detalle opcional"
+              value={consumoEditForm.cliente_nombre || ''}
+              onChange={(e) => setConsumoEditForm((p) => ({ ...p, cliente_nombre: e.target.value }))}
+            />
+            <select
+              className="input-field"
+              value={consumoEditForm.estilista || ''}
+              onChange={(e) => setConsumoEditForm((p) => ({ ...p, estilista: e.target.value }))}
+            >
+              <option value="">Empleado</option>
+              {estilistas.map((est) => (
+                <option key={est.id} value={est.id}>{est.nombre}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="space-y-2">
+            {(consumoEditForm.items || []).map((it, idx) => (
+              <div key={`consumo-item-${idx}`} className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                <select
+                  className="input-field"
+                  value={it.producto}
+                  onChange={(e) => actualizarItemConsumo(idx, 'producto', e.target.value)}
+                >
+                  <option value="">Producto</option>
+                  {productos.map((p) => (
+                    <option key={p.id} value={p.id}>{formatProductSearchLabel(p)} (stock {p.stock})</option>
+                  ))}
+                </select>
+                <input
+                  className="input-field"
+                  type="number"
+                  min="1"
+                  value={it.cantidad}
+                  onChange={(e) => actualizarItemConsumo(idx, 'cantidad', e.target.value)}
+                />
+                <input
+                  className="input-field"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={it.precio_unitario}
+                  onChange={(e) => actualizarItemConsumo(idx, 'precio_unitario', e.target.value)}
+                />
+                <button type="button" className="btn-danger" onClick={() => quitarItemConsumo(idx)}>
+                  Quitar
+                </button>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex gap-2">
+            <button type="button" className="btn-secondary" onClick={agregarItemConsumo}>Agregar producto</button>
+            <button type="submit" className="btn-primary" disabled={saving}>{saving ? 'Guardando...' : 'Guardar cambios'}</button>
+            <button type="button" className="btn-secondary" onClick={() => setShowConsumoEditForm(false)}>Cancelar</button>
+          </div>
+        </form>
+      </ModalForm>
+
       <div className="card">
         <h2 className="card-header">Facturas de consumo de empleado</h2>
         {consumosEmpleadoAgrupados.length === 0 && <p className="text-gray-600">No hay consumos de empleado con los filtros actuales.</p>}

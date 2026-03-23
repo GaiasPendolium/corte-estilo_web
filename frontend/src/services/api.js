@@ -300,6 +300,11 @@ export const ventasService = {
     return response.data;
   },
 
+  updateInvoiceTransaction: async (data) => {
+    const response = await api.post('/ventas/editar-factura/', data);
+    return response.data;
+  },
+
   getFactura: async (id) => {
     const response = await api.get(`/ventas/${id}/factura/`);
     return response.data;

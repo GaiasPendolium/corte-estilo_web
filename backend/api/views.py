@@ -597,10 +597,17 @@ class VentaProductoViewSet(viewsets.ModelViewSet):
 
         total_items = len(ventas)
         total_unidades = sum(int(v.cantidad or 0) for v in ventas)
+        tipo_operacion = ventas[0].tipo_operacion if ventas else 'venta'
+        deuda_obj = ventas[0].deuda_consumo if ventas else None
 
         with transaction.atomic():
             for venta in ventas:
                 self.perform_destroy(venta)
+
+            if tipo_operacion == 'consumo_empleado' and deuda_obj:
+                deuda_obj.total_cargo = Decimal(0)
+                _recalcular_estado_deuda(deuda_obj)
+                deuda_obj.save(update_fields=['total_cargo', 'saldo_pendiente', 'estado'])
 
         return Response(
             {
@@ -608,6 +615,154 @@ class VentaProductoViewSet(viewsets.ModelViewSet):
                 'numero_factura': numero_factura,
                 'items_eliminados': total_items,
                 'unidades_restauradas': total_unidades,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=False, methods=['post'], url_path='editar-factura')
+    def editar_factura(self, request):
+        """Edita una factura completa (items/precios/productos) preservando el número de factura."""
+        _validar_edicion_admin_gerente(request.user, 'facturas de venta')
+
+        numero_factura = (request.data.get('numero_factura') or '').strip()
+        items = request.data.get('items') or []
+        if not numero_factura:
+            return Response({'error': 'Debes enviar numero_factura.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not isinstance(items, list) or len(items) == 0:
+            return Response({'error': 'Debes enviar al menos un item.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        ventas_actuales = list(self.get_queryset().filter(numero_factura=numero_factura).order_by('id'))
+        if not ventas_actuales:
+            return Response({'error': f'No se encontraron ventas para la factura {numero_factura}.'}, status=status.HTTP_404_NOT_FOUND)
+
+        tipo_operacion = ventas_actuales[0].tipo_operacion or 'venta'
+        deuda_obj = ventas_actuales[0].deuda_consumo
+        cliente_nombre = request.data.get('cliente_nombre')
+        estilista_id = request.data.get('estilista')
+        medio_pago = (request.data.get('medio_pago') or ventas_actuales[0].medio_pago or 'efectivo').strip().lower()
+
+        if medio_pago not in {'nequi', 'daviplata', 'efectivo', 'otros'}:
+            return Response({'error': 'Medio de pago inválido.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if tipo_operacion == 'consumo_empleado' and not estilista_id:
+            estilista_id = ventas_actuales[0].estilista_id
+
+        for it in items:
+            try:
+                if int(it.get('cantidad') or 0) <= 0:
+                    return Response({'error': 'Cada item debe tener cantidad mayor a 0.'}, status=status.HTTP_400_BAD_REQUEST)
+                if Decimal(str(it.get('precio_unitario') or 0)) <= 0:
+                    return Response({'error': 'Cada item debe tener precio_unitario mayor a 0.'}, status=status.HTTP_400_BAD_REQUEST)
+            except Exception:
+                return Response({'error': 'Formato inválido en items.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        nuevas_ventas = []
+        total_transaccion = Decimal(0)
+
+        with transaction.atomic():
+            # Revertir inventario de items actuales
+            for venta in ventas_actuales:
+                producto = venta.producto
+                producto.stock += int(venta.cantidad or 0)
+                producto.save(update_fields=['stock'])
+                MovimientoInventario.objects.create(
+                    producto=producto,
+                    tipo_movimiento='entrada',
+                    cantidad=int(venta.cantidad or 0),
+                    descripcion=f'Reverso por edición factura {numero_factura}',
+                    usuario=request.user,
+                )
+
+            VentaProducto.objects.filter(id__in=[v.id for v in ventas_actuales]).delete()
+
+            # Validar stock de nuevos items
+            for it in items:
+                prod = Producto.objects.filter(id=int(it.get('producto'))).first()
+                if not prod:
+                    return Response({'error': f"Producto no encontrado: {it.get('producto')}"}, status=status.HTTP_400_BAD_REQUEST)
+                qty = int(it.get('cantidad'))
+                if prod.stock < qty:
+                    return Response({'error': f'Stock insuficiente para {prod.nombre}. Disponible: {prod.stock}'}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Crear nuevos items de factura
+            for it in items:
+                prod = Producto.objects.get(id=int(it.get('producto')))
+                qty = int(it.get('cantidad'))
+                precio = Decimal(str(it.get('precio_unitario')))
+                total_item = (precio * qty)
+
+                nueva = VentaProducto.objects.create(
+                    producto=prod,
+                    cantidad=qty,
+                    precio_unitario=precio,
+                    total=total_item,
+                    cliente_nombre=cliente_nombre,
+                    medio_pago=medio_pago,
+                    tipo_operacion=tipo_operacion,
+                    estilista_id=int(estilista_id) if estilista_id else None,
+                    numero_factura=numero_factura,
+                    usuario=request.user,
+                    deuda_consumo=deuda_obj,
+                )
+                nuevas_ventas.append(nueva)
+                total_transaccion += total_item
+
+                prod.stock -= qty
+                prod.save(update_fields=['stock'])
+                MovimientoInventario.objects.create(
+                    producto=prod,
+                    tipo_movimiento='salida',
+                    cantidad=qty,
+                    descripcion=f'Edición factura {numero_factura}',
+                    usuario=request.user,
+                )
+
+            # Regenerar texto de factura homogéneo para todos los items
+            ahora = timezone.localtime()
+            if tipo_operacion == 'consumo_empleado':
+                empleado_nombre = nuevas_ventas[0].estilista.nombre if nuevas_ventas and nuevas_ventas[0].estilista else 'Empleado no registrado'
+                cliente_txt = empleado_nombre
+                linea_medio_pago = ''
+            else:
+                cliente_txt = cliente_nombre or 'Cliente no registrado'
+                linea_medio_pago = f"Medio de pago: {nuevas_ventas[0].get_medio_pago_display()}\\n"
+
+            lineas = [
+                f"- {v.producto.nombre} x{v.cantidad} @ ${float(v.precio_unitario):.2f} = ${float(v.total):.2f}"
+                for v in nuevas_ventas
+            ]
+            texto_cuenta = ''
+            if tipo_operacion == 'consumo_empleado' and deuda_obj:
+                texto_cuenta = f"\nCuenta por cobrar: {numero_factura}"
+
+            factura_texto = (
+                f"Factura: {numero_factura}\n"
+                f"Tipo: {'Consumo Empleado' if tipo_operacion == 'consumo_empleado' else 'Producto'}\n"
+                f"Fecha: {ahora.strftime('%Y-%m-%d %H:%M')}\n"
+                f"Cliente: {cliente_txt}\n"
+                f"{linea_medio_pago}"
+                f"Items:\n" + "\n".join(lineas) + "\n"
+                f"Total transacción: ${float(total_transaccion):.2f}"
+                f"{texto_cuenta}"
+            )
+
+            for v in nuevas_ventas:
+                v.factura_texto = factura_texto
+                v.save(update_fields=['factura_texto'])
+
+            if tipo_operacion == 'consumo_empleado' and deuda_obj:
+                deuda_obj.total_cargo = total_transaccion
+                _recalcular_estado_deuda(deuda_obj)
+                deuda_obj.save(update_fields=['total_cargo', 'saldo_pendiente', 'estado'])
+
+        output_serializer = self.get_serializer(nuevas_ventas, many=True)
+        return Response(
+            {
+                'ok': True,
+                'numero_factura': numero_factura,
+                'tipo_operacion': tipo_operacion,
+                'total_transaccion': float(total_transaccion),
+                'items': output_serializer.data,
             },
             status=status.HTTP_200_OK,
         )
@@ -820,6 +975,7 @@ def _calcular_datos_bi(request):
         fecha_hora__date__gte=fecha_inicio_dt,
         fecha_hora__date__lte=fecha_fin_dt,
     )
+    ventas_pagadas_qs = ventas_qs.exclude(tipo_operacion='consumo_empleado')
     servicios_qs = ServicioRealizado.objects.select_related('estilista').filter(
         estado='finalizado',
         fecha_hora__date__gte=fecha_inicio_dt,
@@ -828,9 +984,23 @@ def _calcular_datos_bi(request):
 
     if medio_pago and medio_pago != 'todos':
         ventas_qs = ventas_qs.filter(medio_pago=medio_pago)
+        ventas_pagadas_qs = ventas_pagadas_qs.filter(medio_pago=medio_pago)
         servicios_qs = servicios_qs.filter(medio_pago=medio_pago)
 
-    ingresos_productos = Decimal(ventas_qs.aggregate(total=Sum('total'))['total'] or 0)
+    abonos_consumo_qs = AbonoDeudaEmpleado.objects.filter(
+        fecha_hora__date__gte=fecha_inicio_dt,
+        fecha_hora__date__lte=fecha_fin_dt,
+    )
+    if medio_pago and medio_pago != 'todos':
+        abonos_consumo_qs = abonos_consumo_qs.filter(medio_pago=medio_pago)
+
+    ingresos_abonos_consumo = Decimal(abonos_consumo_qs.aggregate(total=Sum('monto'))['total'] or 0)
+    deuda_consumo_empleado_total = Decimal(
+        DeudaConsumoEmpleado.objects.filter(saldo_pendiente__gt=0).aggregate(total=Sum('saldo_pendiente'))['total'] or 0
+    )
+
+    ingresos_productos_caja = Decimal(ventas_pagadas_qs.aggregate(total=Sum('total'))['total'] or 0)
+    ingresos_productos = ingresos_productos_caja + ingresos_abonos_consumo
     ingresos_productos_en_servicios = Decimal(0)
     costo_productos = Decimal(0)
     costo_productos_en_servicios = Decimal(0)
@@ -838,7 +1008,7 @@ def _calcular_datos_bi(request):
     comision_producto_estilistas_en_servicios = Decimal(0)
 
     top_productos_mapa = {}
-    for venta in ventas_qs:
+    for venta in ventas_pagadas_qs:
         costo_unitario = Decimal(venta.producto.precio_compra or 0)
         costo_productos += costo_unitario * Decimal(venta.cantidad)
 
@@ -859,7 +1029,7 @@ def _calcular_datos_bi(request):
         top_productos_mapa[key]['cantidad'] += int(venta.cantidad)
         top_productos_mapa[key]['total'] += Decimal(venta.total)
 
-    utilidad_productos = ingresos_productos - costo_productos
+    utilidad_productos = ingresos_productos_caja - costo_productos
 
     # Productos vendidos como adicional dentro de servicios finalizados.
     # Se valorizan para ingresos/costos de inventario, pero no generan comisión de venta.
@@ -898,7 +1068,7 @@ def _calcular_datos_bi(request):
 
     for estilista in Estilista.objects.filter(activo=True):
         servicios_est = servicios_qs.filter(estilista=estilista)
-        ventas_est = ventas_qs.filter(estilista=estilista)
+        ventas_est = ventas_pagadas_qs.filter(estilista=estilista)
 
         # Calcular totales de servicios
         total_servicios_precio_cobrado = Decimal(servicios_est.aggregate(total=Sum('precio_cobrado'))['total'] or 0)
@@ -1072,7 +1242,8 @@ def _calcular_datos_bi(request):
             'total_ganancias_negocio': float(total_ganancias_negocio),
             'ingresos_productos': float(ingresos_productos),
             'ingresos_productos_totales': float(ingresos_productos_totales),
-            'ingresos_productos_caja': float(ingresos_productos),
+            'ingresos_productos_caja': float(ingresos_productos_caja),
+            'ingresos_abonos_consumo_empleado': float(ingresos_abonos_consumo),
             'ingresos_productos_en_servicios': float(ingresos_productos_en_servicios),
             'ingresos_servicios': float(ingresos_servicios),
             'ingresos_servicios_totales': float(ingresos_servicios_total_cliente),
@@ -1094,10 +1265,12 @@ def _calcular_datos_bi(request):
             'ganancia_establecimiento_bruta': float(ganancia_establecimiento_bruta),
             'pago_total_estilistas': float(total_pago_estilistas_positivo),
             'deudas_estilistas': float(total_deuda_estilistas),
+            'deuda_consumo_empleado_total': float(deuda_consumo_empleado_total),
             'pago_total_estilistas_neto': float(total_pago_neto_estilistas),
             'pago_total_estilistas_neto_periodo': float(total_pago_neto_estilistas_periodo),
             'descuentos_espacio_estilistas': float(total_descuentos_espacio),
-            'cantidad_ventas_productos': ventas_qs.count(),
+            'cantidad_ventas_productos': ventas_pagadas_qs.count(),
+            'cantidad_abonos_consumo_empleado': abonos_consumo_qs.count(),
             'cantidad_servicios': servicios_qs.count(),
             'productos_bajo_stock': productos_bajo_stock_qs.count(),
         },

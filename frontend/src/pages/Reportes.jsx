@@ -444,6 +444,15 @@ const Reportes = () => {
         <KpiCard title="Productos con stock crítico" value={moneyFormatter.format(kpis.productos_bajo_stock || 0)} hint="Cantidad de productos en alerta" tone="amber" />
       </div>
 
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
+        <KpiCard
+          title="Deuda consumo empleado"
+          value={formatMoney(kpis.deuda_consumo_empleado_total)}
+          hint="Saldo total pendiente por consumos a crédito"
+          tone="amber"
+        />
+      </div>
+
       <div className="card border border-slate-200 bg-slate-50">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
