@@ -1,10 +1,11 @@
-from rest_framework import viewsets, status, filters
+from rest_framework import viewsets, status, filters, serializers
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.exceptions import PermissionDenied
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Sum, Count, Q, F
+from django.db import transaction
 from django.db.utils import OperationalError, ProgrammingError
 from django.utils import timezone
 from django.http import HttpResponse
@@ -12,6 +13,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 import csv
 import io
+import uuid
 
 from .models import (
     Usuario, Estilista, Servicio, Cliente, Producto,
@@ -420,6 +422,76 @@ class VentaProductoViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         """Asignar usuario actual a la venta"""
         serializer.save(usuario=self.request.user)
+
+    @action(detail=False, methods=['post'], url_path='transaccion')
+    def transaccion(self, request):
+        """Registra una transacción de productos con una única factura."""
+        items = request.data.get('items') or []
+        if not isinstance(items, list) or len(items) == 0:
+            return Response({'error': 'Debes enviar al menos un producto en items.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        cliente_nombre = request.data.get('cliente_nombre')
+        estilista = request.data.get('estilista')
+        medio_pago = request.data.get('medio_pago') or 'efectivo'
+
+        ahora = timezone.localtime()
+        prefijo = f"FP-{ahora.strftime('%Y%m%d')}-{uuid.uuid4().hex[:8].upper()}"
+        ventas_creadas = []
+
+        try:
+            with transaction.atomic():
+                for item in items:
+                    payload = {
+                        'producto': item.get('producto'),
+                        'cantidad': item.get('cantidad'),
+                        'precio_unitario': item.get('precio_unitario'),
+                        'cliente_nombre': cliente_nombre,
+                        'estilista': estilista,
+                        'medio_pago': medio_pago,
+                    }
+                    serializer = self.get_serializer(data=payload)
+                    serializer.is_valid(raise_exception=True)
+                    venta = serializer.save(usuario=request.user)
+                    ventas_creadas.append(venta)
+
+                total_transaccion = sum((Decimal(v.total or 0) for v in ventas_creadas), Decimal(0))
+                cliente_txt = cliente_nombre or 'Cliente no registrado'
+                lineas = []
+                for v in ventas_creadas:
+                    lineas.append(
+                        f"- {v.producto.nombre} x{v.cantidad} @ ${float(v.precio_unitario):.2f} = ${float(v.total):.2f}"
+                    )
+
+                factura_texto = (
+                    f"Factura: {prefijo}\n"
+                    f"Tipo: Producto\n"
+                    f"Fecha: {ahora.strftime('%Y-%m-%d %H:%M')}\n"
+                    f"Cliente: {cliente_txt}\n"
+                    f"Medio de pago: {ventas_creadas[0].get_medio_pago_display()}\n"
+                    f"Items:\n" + "\n".join(lineas) + "\n"
+                    f"Total transacción: ${float(total_transaccion):.2f}"
+                )
+
+                for v in ventas_creadas:
+                    v.numero_factura = prefijo
+                    v.factura_texto = factura_texto
+                    v.save(update_fields=['numero_factura', 'factura_texto'])
+
+        except serializers.ValidationError as exc:
+            return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
+
+        output_serializer = self.get_serializer(ventas_creadas, many=True)
+        return Response(
+            {
+                'numero_factura': prefijo,
+                'total_transaccion': float(total_transaccion),
+                'cantidad_items': len(ventas_creadas),
+                'factura_texto': factura_texto,
+                'items': output_serializer.data,
+                'venta_principal': output_serializer.data[0] if output_serializer.data else None,
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
     def perform_destroy(self, instance):
         """Al eliminar una venta, devuelve stock al inventario"""

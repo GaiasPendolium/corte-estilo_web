@@ -235,32 +235,42 @@ const Ventas = () => {
   };
 
   const editarVenta = (venta) => {
+    if ((venta.items || []).length > 1) {
+      toast.info('Edita los productos de esta transacción desde Operación diaria.');
+      return;
+    }
+    const ventaBase = (venta.items && venta.items[0]) ? venta.items[0] : venta;
     setEditandoId(venta.id);
     setShowForm(true);
-    const producto = productos.find((p) => p.id === venta.producto) || null;
+    const producto = productos.find((p) => p.id === ventaBase.producto) || null;
     setProductoSeleccionado(producto);
     setBusquedaProducto(producto ? formatProductSearchLabel(producto) : '');
     setForm({
-      cliente_nombre: venta.cliente_nombre || '',
-      estilista: venta.estilista ? String(venta.estilista) : '',
-      medio_pago: venta.medio_pago || 'efectivo',
-      cantidad: String(venta.cantidad || 1),
-      precio_unitario: String(venta.precio_unitario || ''),
+      cliente_nombre: ventaBase.cliente_nombre || '',
+      estilista: ventaBase.estilista ? String(ventaBase.estilista) : '',
+      medio_pago: ventaBase.medio_pago || 'efectivo',
+      cantidad: String(ventaBase.cantidad || 1),
+      precio_unitario: String(ventaBase.precio_unitario || ''),
     });
   };
 
   const eliminarVenta = async (venta) => {
+    if ((venta.items || []).length > 1) {
+      toast.info('Por ahora elimina cada ítem de la factura desde el detalle o usa Operación diaria.');
+      return;
+    }
+    const ventaBase = (venta.items && venta.items[0]) ? venta.items[0] : venta;
     if (!puedeEditarFacturas) {
       toast.warning('Solo administrador o gerente pueden eliminar facturas');
       return;
     }
-    const ok = window.confirm(`¿Eliminar la factura ${venta.numero_factura || venta.id}?`);
+    const ok = window.confirm(`¿Eliminar la factura ${ventaBase.numero_factura || ventaBase.id}?`);
     if (!ok) return;
 
     try {
-      await ventasService.delete(venta.id);
+      await ventasService.delete(ventaBase.id);
       toast.success('Factura eliminada');
-      if (editandoId === venta.id) limpiarFormulario();
+      if (editandoId === ventaBase.id) limpiarFormulario();
       await cargarDatos();
     } catch (error) {
       toast.error('No se pudo eliminar la factura');
@@ -281,8 +291,9 @@ const Ventas = () => {
   };
 
   const reimprimirVenta = async (venta) => {
+    const ventaBase = (venta.items && venta.items[0]) ? venta.items[0] : venta;
     try {
-      await ticketPrintService.reprintProductSale(venta);
+      await ticketPrintService.reprintProductSale(ventaBase);
       toast.success('Ticket reenviado a impresora');
     } catch (error) {
       toast.error(error.message || 'No se pudo reimprimir el ticket');
@@ -391,6 +402,48 @@ const Ventas = () => {
     });
   }, [ventas, filtroUsuario, filtroEmpleado]);
 
+  const ventasAgrupadas = useMemo(() => {
+    const grupos = new Map();
+    for (const v of ventasFiltradas) {
+      const key = v.numero_factura || `SIN-${v.id}`;
+      const existente = grupos.get(key);
+      if (!existente) {
+        grupos.set(key, {
+          id: v.id,
+          numero_factura: v.numero_factura,
+          fecha_hora: v.fecha_hora,
+          cliente_nombre: v.cliente_nombre,
+          estilista_nombre: v.estilista_nombre,
+          usuario_nombre: v.usuario_nombre,
+          medio_pago: v.medio_pago,
+          factura_texto: v.factura_texto,
+          total: Number(v.total || 0),
+          cantidad_total: Number(v.cantidad || 0),
+          items: [v],
+        });
+        continue;
+      }
+
+      existente.total += Number(v.total || 0);
+      existente.cantidad_total += Number(v.cantidad || 0);
+      existente.items.push(v);
+      if (String(v.fecha_hora || '') > String(existente.fecha_hora || '')) {
+        existente.fecha_hora = v.fecha_hora;
+      }
+      if (!existente.factura_texto && v.factura_texto) {
+        existente.factura_texto = v.factura_texto;
+      }
+      if (!existente.medio_pago && v.medio_pago) {
+        existente.medio_pago = v.medio_pago;
+      }
+      if (existente.medio_pago && v.medio_pago && existente.medio_pago !== v.medio_pago) {
+        existente.medio_pago = 'mixto';
+      }
+    }
+
+    return Array.from(grupos.values()).sort((a, b) => String(b.fecha_hora || '').localeCompare(String(a.fecha_hora || '')));
+  }, [ventasFiltradas]);
+
   const serviciosFiltrados = useMemo(() => {
     const qUsuario = filtroUsuario.trim().toLowerCase();
     const qEmpleado = filtroEmpleado.trim().toLowerCase();
@@ -404,7 +457,7 @@ const Ventas = () => {
   }, [serviciosFinalizados, filtroUsuario, filtroEmpleado]);
 
   const totalVentas = useMemo(() => ventasFiltradas.reduce((acc, v) => acc + Number(v.total || 0), 0), [ventasFiltradas]);
-  const ticketPromedio = useMemo(() => (ventasFiltradas.length ? totalVentas / ventasFiltradas.length : 0), [totalVentas, ventasFiltradas.length]);
+  const ticketPromedio = useMemo(() => (ventasAgrupadas.length ? totalVentas / ventasAgrupadas.length : 0), [totalVentas, ventasAgrupadas.length]);
   const totalServicios = useMemo(
     () => serviciosFiltrados.reduce((acc, s) => acc + (Number(s.precio_cobrado || 0) + Number(s.valor_adicionales || 0)), 0),
     [serviciosFiltrados]
@@ -473,7 +526,7 @@ const Ventas = () => {
             Limpiar filtros
           </button>
           <div className="text-sm text-gray-600 flex items-center">
-            Total resultados: {modoVista === 'ventas' ? ventasFiltradas.length : serviciosFiltrados.length}
+            Total resultados: {modoVista === 'ventas' ? ventasAgrupadas.length : serviciosFiltrados.length}
           </div>
         </div>
       </div>
@@ -508,8 +561,8 @@ const Ventas = () => {
                       <p className="font-bold text-gray-900">{ventaVisualizar.cliente_nombre || '-'}</p>
                     </div>
                     <div>
-                      <p className="text-sm text-gray-600">Producto</p>
-                      <p className="font-bold text-gray-900">{ventaVisualizar.producto_nombre}</p>
+                      <p className="text-sm text-gray-600">Productos</p>
+                      <p className="font-bold text-gray-900">{(ventaVisualizar.items || []).length || 1}</p>
                     </div>
                     <div>
                       <p className="text-sm text-gray-600">Estilista</p>
@@ -524,18 +577,46 @@ const Ventas = () => {
                       <p className="font-bold text-gray-900 capitalize">{ventaVisualizar.medio_pago || '-'}</p>
                     </div>
                     <div>
-                      <p className="text-sm text-gray-600">Cantidad</p>
-                      <p className="font-bold text-gray-900">{ventaVisualizar.cantidad}</p>
+                      <p className="text-sm text-gray-600">Cantidad total</p>
+                      <p className="font-bold text-gray-900">{ventaVisualizar.cantidad_total || ventaVisualizar.cantidad}</p>
                     </div>
                     <div>
-                      <p className="text-sm text-gray-600">Valor unitario</p>
-                      <p className="font-bold text-gray-900">${Number(ventaVisualizar.precio_unitario || 0).toFixed(2)}</p>
+                      <p className="text-sm text-gray-600">Ítems</p>
+                      <p className="font-bold text-gray-900">{(ventaVisualizar.items || []).map((x) => x.producto_nombre).join(', ') || ventaVisualizar.producto_nombre}</p>
                     </div>
                     <div>
                       <p className="text-sm text-gray-600">Total</p>
                       <p className="font-bold text-lg text-green-600">${Number(ventaVisualizar.total || 0).toFixed(2)}</p>
                     </div>
                   </div>
+
+                  {(ventaVisualizar.items || []).length > 1 && (
+                    <div>
+                      <p className="text-sm text-gray-600 mb-2">Detalle de productos</p>
+                      <div className="rounded border border-gray-200 overflow-hidden">
+                        <table className="min-w-full text-sm">
+                          <thead className="bg-gray-50">
+                            <tr>
+                              <th className="px-3 py-2 text-left">Producto</th>
+                              <th className="px-3 py-2 text-left">Cantidad</th>
+                              <th className="px-3 py-2 text-left">Unitario</th>
+                              <th className="px-3 py-2 text-left">Total</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {ventaVisualizar.items.map((item) => (
+                              <tr key={item.id} className="border-t border-gray-200">
+                                <td className="px-3 py-2">{item.producto_nombre}</td>
+                                <td className="px-3 py-2">{item.cantidad}</td>
+                                <td className="px-3 py-2">${Number(item.precio_unitario || 0).toFixed(2)}</td>
+                                <td className="px-3 py-2">${Number(item.total || 0).toFixed(2)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
 
                   {ventaVisualizar.factura_texto && (
                     <div>
@@ -714,16 +795,16 @@ const Ventas = () => {
           <span className="text-sm text-gray-600">Total: ${totalVentas.toFixed(2)}</span>
         </div>
 
-        {!loading && ventasFiltradas.length === 0 && <p className="text-gray-600">No hay facturas de productos con los filtros actuales.</p>}
+        {!loading && ventasAgrupadas.length === 0 && <p className="text-gray-600">No hay facturas de productos con los filtros actuales.</p>}
 
-        {!loading && ventasFiltradas.length > 0 && (
+        {!loading && ventasAgrupadas.length > 0 && (
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="table-header">
                 <tr>
                   <th className="px-6 py-3 text-left">Factura</th>
                   <th className="px-6 py-3 text-left">Fecha</th>
-                  <th className="px-6 py-3 text-left">Producto</th>
+                  <th className="px-6 py-3 text-left">Detalle</th>
                   <th className="px-6 py-3 text-left">Cliente</th>
                   <th className="px-6 py-3 text-left">Estilista</th>
                   <th className="px-6 py-3 text-left">Usuario facturó</th>
@@ -734,16 +815,16 @@ const Ventas = () => {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {ventasFiltradas.map((v) => (
+                {ventasAgrupadas.map((v) => (
                   <tr key={v.id} className="hover:bg-gray-50">
                     <td className="table-cell">{v.numero_factura || '-'}</td>
                     <td className="table-cell">{String(v.fecha_hora || '').slice(0, 10)}</td>
-                    <td className="table-cell">{v.producto_nombre}</td>
+                    <td className="table-cell">{(v.items || []).length > 1 ? `${v.items.length} productos` : (v.items?.[0]?.producto_nombre || v.producto_nombre || '-')}</td>
                     <td className="table-cell">{v.cliente_nombre || '-'}</td>
                     <td className="table-cell">{v.estilista_nombre || '-'}</td>
                     <td className="table-cell">{v.usuario_nombre || '-'}</td>
                     <td className="table-cell capitalize">{v.medio_pago || '-'}</td>
-                    <td className="table-cell">{v.cantidad}</td>
+                    <td className="table-cell">{v.cantidad_total || v.cantidad}</td>
                     <td className="table-cell">${Number(v.total || 0).toFixed(2)}</td>
                     <td className="table-cell">
                       <div className="flex justify-end gap-2">

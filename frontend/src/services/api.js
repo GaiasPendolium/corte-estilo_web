@@ -278,6 +278,11 @@ export const ventasService = {
     return response.data;
   },
 
+  createTransaction: async (data) => {
+    const response = await api.post('/ventas/transaccion/', data);
+    return response.data;
+  },
+
   update: async (id, data) => {
     const response = await api.put(`/ventas/${id}/`, data);
     return response.data;

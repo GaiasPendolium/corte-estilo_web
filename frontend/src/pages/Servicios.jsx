@@ -581,25 +581,27 @@ const Servicios = () => {
 
     try {
       setSaving(true);
-      let ultimaVenta = null;
-      for (const item of itemsParaRegistrar) {
-        const ventaCreada = await ventasService.create({
+      const transaccion = await ventasService.createTransaction({
+        cliente_nombre: ventaForm.cliente_nombre.trim() || null,
+        estilista: ventaForm.estilista ? Number(ventaForm.estilista) : null,
+        medio_pago: ventaForm.medio_pago,
+        items: itemsParaRegistrar.map((item) => ({
           producto: item.producto.id,
           cantidad: item.cantidad,
           precio_unitario: item.precio_unitario,
-          cliente_nombre: ventaForm.cliente_nombre.trim() || null,
-          estilista: ventaForm.estilista ? Number(ventaForm.estilista) : null,
-          medio_pago: ventaForm.medio_pago,
-        });
-        customerDisplayService.publishProductSale(ventaCreada);
-        ultimaVenta = ventaCreada;
+        })),
+      });
+
+      const ventaPrincipal = transaccion?.venta_principal || null;
+      if (ventaPrincipal) {
+        customerDisplayService.publishProductSale(ventaPrincipal);
       }
 
-      toast.success(`${itemsParaRegistrar.length} venta(s) registrada(s) correctamente`);
+      toast.success(`Factura ${transaccion?.numero_factura || ''} registrada con ${itemsParaRegistrar.length} producto(s)`);
 
       try {
-        if (ultimaVenta) {
-          await ticketPrintService.printProductSaleAndOpenDrawer(ultimaVenta);
+        if (ventaPrincipal) {
+          await ticketPrintService.printProductSaleAndOpenDrawer(ventaPrincipal);
           toast.success('Ticket impreso y caja abierta');
         }
       } catch (printError) {
