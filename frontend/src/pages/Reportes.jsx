@@ -284,6 +284,14 @@ const Reportes = () => {
     }
   };
 
+  const deshacerLiquidacionRango = async (estilistaId) => {
+    const confirmar = window.confirm(
+      `Se revertirá a PENDIENTE todo el rango ${fechaInicio} a ${fechaFin} para este estilista. ¿Deseas continuar?`
+    );
+    if (!confirmar) return;
+    await cambiarEstadoPagoDia(estilistaId, 'pendiente');
+  };
+
   return (
     <div className="space-y-6 fade-in">
       <section className="rounded-[28px] bg-[radial-gradient(circle_at_top_left,_rgba(59,130,246,0.18),_transparent_34%),linear-gradient(135deg,#0f172a_0%,#111827_35%,#1f2937_100%)] p-6 text-white shadow-2xl">
@@ -572,6 +580,15 @@ const Reportes = () => {
                         ? 'Guardando...'
                         : `${s.dias_cancelados_rango || 0} días cancelados / ${s.total_dias_trabajados || 0} trabajados`}
                     </div>
+                    {Number(s.dias_cancelados_rango || 0) > 0 && (
+                      <button
+                        className="mt-2 btn-secondary !px-3 !py-1 text-xs"
+                        onClick={() => deshacerLiquidacionRango(s.estilista_id)}
+                        disabled={!!savingEstadoByEstilista[s.estilista_id]}
+                      >
+                        Deshacer liquidación
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
