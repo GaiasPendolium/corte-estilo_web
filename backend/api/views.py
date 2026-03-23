@@ -1604,31 +1604,6 @@ def bi_export_pdf(request):
         )
 
     try:
-        from reportlab.lib.pagesizes import letter
-        from reportlab.pdfgen import canvas
-    except Exception:
-        return Response(
-            {'error': 'La exportación PDF requiere instalar reportlab.'},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
-
-    try:
-        buffer = io.BytesIO()
-        pdf = canvas.Canvas(buffer, pagesize=letter)
-        width, height = letter
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def bi_export_pdf(request):
-    try:
-        data = _calcular_datos_bi(request)
-    except Exception as e:
-        return Response(
-            {'error': f'Error obteniendo datos para PDF: {str(e)}'},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
-
-    try:
         from reportlab.lib.pagesizes import letter, A4
         from reportlab.lib import colors
         from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
