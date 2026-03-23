@@ -33,6 +33,13 @@ const MEDIOS_PAGO = [
   { value: 'otros', label: 'Otros' },
 ];
 
+const MEDIOS_PAGO_ABONO = [
+  { value: 'efectivo', label: 'Efectivo' },
+  { value: 'nequi', label: 'Nequi' },
+  { value: 'daviplata', label: 'Daviplata' },
+  { value: 'otros', label: 'Otros' },
+];
+
 const KpiCard = ({ title, value, hint, tone = 'slate' }) => {
   const tones = {
     slate: 'from-slate-900 via-slate-800 to-slate-700 text-white',
@@ -266,9 +273,22 @@ const Reportes = () => {
   }, [consumoEmpleado, estilistaFiltro]);
 
   const registrarAbonoConsumo = async (fila) => {
-    const monto = Number(abonoPorEstilista[fila.estilista_id] || 0);
+    const configAbono = abonoPorEstilista[fila.estilista_id] || {};
+    const monto = Number(configAbono.monto || 0);
+    const medioPago = configAbono.medio_pago || 'efectivo';
     if (!Number.isFinite(monto) || monto <= 0) {
       toast.warning('Ingresa un valor de abono válido');
+      return;
+    }
+
+    const saldoActual = Number(fila.saldo_pendiente || 0);
+    const confirmar = window.confirm(
+      `Vas a registrar un abono de ${formatMoney(monto)} para ${fila.estilista_nombre}.\n` +
+      `Saldo pendiente actual: ${formatMoney(saldoActual)}.\n` +
+      `Medio de pago: ${medioPago}.\n\n` +
+      '¿Deseas continuar?'
+    );
+    if (!confirmar) {
       return;
     }
 
@@ -277,8 +297,9 @@ const Reportes = () => {
       const resp = await reportesService.abonarConsumoEmpleado({
         estilista_id: fila.estilista_id,
         monto,
+        medio_pago: medioPago,
       });
-      setAbonoPorEstilista((prev) => ({ ...prev, [fila.estilista_id]: '' }));
+      setAbonoPorEstilista((prev) => ({ ...prev, [fila.estilista_id]: { monto: '', medio_pago: 'efectivo' } }));
       await loadData();
       toast.success(`Abono aplicado: ${formatMoney(resp?.monto_aplicado || 0)}`);
     } catch (error) {
@@ -673,13 +694,14 @@ const Reportes = () => {
                 <th className="px-6 py-3 text-left">Saldo</th>
                 <th className="px-6 py-3 text-left">Estado</th>
                 <th className="px-6 py-3 text-left">Abonar</th>
+                <th className="px-6 py-3 text-left">Medio pago</th>
                 <th className="px-6 py-3 text-right">Acción</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {consumoResumenFiltrado.length === 0 && (
                 <tr>
-                  <td className="table-cell text-slate-500" colSpan={8}>No hay consumos de empleado en el rango seleccionado.</td>
+                  <td className="table-cell text-slate-500" colSpan={9}>No hay consumos de empleado en el rango seleccionado.</td>
                 </tr>
               )}
               {consumoResumenFiltrado.map((fila) => (
@@ -697,14 +719,36 @@ const Reportes = () => {
                       min="0"
                       step="1"
                       placeholder="0"
-                      value={abonoPorEstilista[fila.estilista_id] ?? ''}
+                      value={abonoPorEstilista[fila.estilista_id]?.monto ?? ''}
                       onChange={(e) =>
                         setAbonoPorEstilista((prev) => ({
                           ...prev,
-                          [fila.estilista_id]: e.target.value,
+                          [fila.estilista_id]: {
+                            monto: e.target.value,
+                            medio_pago: prev[fila.estilista_id]?.medio_pago || 'efectivo',
+                          },
                         }))
                       }
                     />
+                  </td>
+                  <td className="table-cell">
+                    <select
+                      className="input-field !py-2 !min-h-0"
+                      value={abonoPorEstilista[fila.estilista_id]?.medio_pago || 'efectivo'}
+                      onChange={(e) =>
+                        setAbonoPorEstilista((prev) => ({
+                          ...prev,
+                          [fila.estilista_id]: {
+                            monto: prev[fila.estilista_id]?.monto || '',
+                            medio_pago: e.target.value,
+                          },
+                        }))
+                      }
+                    >
+                      {MEDIOS_PAGO_ABONO.map((m) => (
+                        <option key={m.value} value={m.value}>{m.label}</option>
+                      ))}
+                    </select>
                   </td>
                   <td className="table-cell text-right">
                     <button

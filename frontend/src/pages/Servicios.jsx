@@ -639,7 +639,7 @@ const Servicios = () => {
       const transaccion = await ventasService.createTransaction({
         cliente_nombre: ventaForm.cliente_nombre.trim() || null,
         estilista: ventaForm.estilista ? Number(ventaForm.estilista) : null,
-        medio_pago: ventaForm.medio_pago,
+        medio_pago: esConsumoEmpleado ? 'efectivo' : ventaForm.medio_pago,
         tipo_operacion: esConsumoEmpleado ? 'consumo_empleado' : 'venta',
         items: itemsParaRegistrar.map((item) => ({
           producto: item.producto.id,
@@ -776,11 +776,13 @@ const Servicios = () => {
               ))}
             </select>
 
-            <select className="input-field" value={ventaForm.medio_pago} onChange={(e) => setVentaForm((p) => ({ ...p, medio_pago: e.target.value }))}>
-              {mediosPago.map((m) => (
-                <option key={m.value} value={m.value}>{m.label}</option>
-              ))}
-            </select>
+            {!esConsumoEmpleado && (
+              <select className="input-field" value={ventaForm.medio_pago} onChange={(e) => setVentaForm((p) => ({ ...p, medio_pago: e.target.value }))}>
+                {mediosPago.map((m) => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+              </select>
+            )}
 
             <input className="input-field" type="number" min="1" placeholder="Cantidad" value={ventaForm.cantidad} onChange={(e) => setVentaForm((p) => ({ ...p, cantidad: e.target.value }))} />
             <input className="input-field" type="number" min="0" step="1" placeholder="Valor unitario" value={ventaForm.precio_unitario} onChange={(e) => setVentaForm((p) => ({ ...p, precio_unitario: sanitizePesoInput(e.target.value) }))} />

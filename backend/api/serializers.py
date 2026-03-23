@@ -577,13 +577,18 @@ class VentaProductoSerializer(serializers.ModelSerializer):
         if not venta.numero_factura:
             prefijo = 'FC' if venta.tipo_operacion == 'consumo_empleado' else 'FP'
             venta.numero_factura = f"{prefijo}-{timezone.now().strftime('%Y%m%d')}-{venta.id:06d}"
-        cliente = venta.cliente_nombre or 'Cliente no registrado'
+        if venta.tipo_operacion == 'consumo_empleado':
+            cliente = venta.estilista.nombre if venta.estilista else 'Empleado no registrado'
+        else:
+            cliente = venta.cliente_nombre or 'Cliente no registrado'
         if venta.tipo_operacion == 'consumo_empleado':
             comision_pct = 0
         else:
             comision_pct = float(venta.estilista.comision_ventas_productos) if venta.estilista else 0
         comision_valor = float(venta.total or 0) * comision_pct / 100
         etiqueta_operacion = 'Consumo empleado' if venta.tipo_operacion == 'consumo_empleado' else 'Producto'
+        linea_comision = '' if venta.tipo_operacion == 'consumo_empleado' else f"Comisión empleado por venta: {comision_pct:.2f}% (${comision_valor:.2f})\\n"
+        linea_medio_pago = '' if venta.tipo_operacion == 'consumo_empleado' else f"Medio de pago: {venta.get_medio_pago_display()}"
         detalle_deuda = ''
         if venta.tipo_operacion == 'consumo_empleado' and venta.deuda_consumo:
             detalle_deuda = (
@@ -599,8 +604,8 @@ class VentaProductoSerializer(serializers.ModelSerializer):
             f"Cantidad: {venta.cantidad}\n"
             f"Valor unitario: ${float(venta.precio_unitario):.2f}\n"
             f"Total: ${float(venta.total):.2f}\n"
-            f"Comisión empleado por venta: {comision_pct:.2f}% (${comision_valor:.2f})\n"
-            f"Medio de pago: {venta.get_medio_pago_display()}"
+            f"{linea_comision}"
+            f"{linea_medio_pago}"
             f"{detalle_deuda}"
         )
     

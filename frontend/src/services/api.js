@@ -404,10 +404,11 @@ export const reportesService = {
     return response.data;
   },
 
-  abonarConsumoEmpleado: async ({ estilista_id, monto, notas }) => {
+  abonarConsumoEmpleado: async ({ estilista_id, monto, medio_pago, notas }) => {
     const response = await api.post('/reportes/consumo-empleado/abonar/', {
       estilista_id,
       monto,
+      medio_pago,
       notas,
     });
     return response.data;

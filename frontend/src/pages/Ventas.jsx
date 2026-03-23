@@ -1101,12 +1101,22 @@ const Ventas = () => {
                         <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => visualizarVenta(v)}>
                           <FiEye size={14} /> Ver
                         </button>
+                        {puedeEditarFacturas && (
+                          <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => editarVenta(v)}>
+                            <FiEdit2 size={14} /> Editar
+                          </button>
+                        )}
                         <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => copiarTexto(v.factura_texto)}>
                           <FiCopy size={14} /> Copiar
                         </button>
                         <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => reimprimirVenta(v)}>
                           Imprimir
                         </button>
+                        {puedeEditarFacturas && (
+                          <button className="btn-danger !px-3 !py-2 inline-flex items-center gap-1" onClick={() => eliminarVenta(v)}>
+                            <FiTrash2 size={14} /> Eliminar
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

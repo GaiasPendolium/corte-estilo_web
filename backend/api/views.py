@@ -524,7 +524,10 @@ class VentaProductoViewSet(viewsets.ModelViewSet):
                         notas='Generada automaticamente desde consumo de empleado',
                     )
 
-                cliente_txt = cliente_nombre or 'Cliente no registrado'
+                if tipo_operacion == 'consumo_empleado':
+                    cliente_txt = ventas_creadas[0].estilista.nombre if ventas_creadas and ventas_creadas[0].estilista else 'Empleado no registrado'
+                else:
+                    cliente_txt = cliente_nombre or 'Cliente no registrado'
                 lineas = []
                 for v in ventas_creadas:
                     lineas.append(
@@ -538,12 +541,14 @@ class VentaProductoViewSet(viewsets.ModelViewSet):
                         f"Saldo pendiente: ${float(deuda_obj.saldo_pendiente):.2f}"
                     )
 
+                linea_medio_pago = '' if tipo_operacion == 'consumo_empleado' else f"Medio de pago: {ventas_creadas[0].get_medio_pago_display()}\\n"
+
                 factura_texto = (
                     f"Factura: {prefijo}\n"
                     f"Tipo: {'Consumo Empleado' if tipo_operacion == 'consumo_empleado' else 'Producto'}\n"
                     f"Fecha: {ahora.strftime('%Y-%m-%d %H:%M')}\n"
                     f"Cliente: {cliente_txt}\n"
-                    f"Medio de pago: {ventas_creadas[0].get_medio_pago_display()}\n"
+                    f"{linea_medio_pago}"
                     f"Items:\n" + "\n".join(lineas) + "\n"
                     f"Total transacción: ${float(total_transaccion):.2f}"
                     f"{texto_cuenta}"
@@ -1219,7 +1224,11 @@ def abonar_consumo_empleado(request):
     """Registra un abono y lo distribuye en las deudas pendientes más antiguas."""
     estilista_id = request.data.get('estilista_id')
     monto = request.data.get('monto')
+    medio_pago = (request.data.get('medio_pago') or 'efectivo').strip().lower()
     notas = request.data.get('notas')
+
+    if medio_pago not in {'nequi', 'daviplata', 'efectivo', 'otros'}:
+        return Response({'error': 'Medio de pago inválido.'}, status=status.HTTP_400_BAD_REQUEST)
 
     try:
         estilista = Estilista.objects.get(id=int(estilista_id))
@@ -1260,6 +1269,7 @@ def abonar_consumo_empleado(request):
             AbonoDeudaEmpleado.objects.create(
                 deuda=deuda,
                 monto=aplicado,
+                medio_pago=medio_pago,
                 usuario=request.user,
                 notas=notas,
             )
@@ -1288,6 +1298,7 @@ def abonar_consumo_empleado(request):
             'monto_recibido': float(monto_decimal),
             'monto_aplicado': float(monto_decimal - restante),
             'monto_sobrante': float(restante),
+            'medio_pago': medio_pago,
             'aplicaciones': aplicaciones,
         }
     )

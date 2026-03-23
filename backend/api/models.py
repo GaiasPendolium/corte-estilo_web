@@ -464,6 +464,13 @@ class DeudaConsumoEmpleado(models.Model):
 class AbonoDeudaEmpleado(models.Model):
     """Registro de abonos aplicados a deudas de consumo de empleados."""
 
+    MEDIOS_PAGO = [
+        ('nequi', 'Nequi'),
+        ('daviplata', 'Daviplata'),
+        ('efectivo', 'Efectivo'),
+        ('otros', 'Otros'),
+    ]
+
     deuda = models.ForeignKey(
         DeudaConsumoEmpleado,
         on_delete=models.CASCADE,
@@ -471,6 +478,7 @@ class AbonoDeudaEmpleado(models.Model):
         verbose_name='Deuda'
     )
     monto = models.DecimalField(max_digits=12, decimal_places=2, verbose_name='Monto Abono')
+    medio_pago = models.CharField(max_length=20, choices=MEDIOS_PAGO, default='efectivo', verbose_name='Medio de Pago')
     fecha_hora = models.DateTimeField(default=timezone.now, verbose_name='Fecha y Hora')
     usuario = models.ForeignKey(
         Usuario,
