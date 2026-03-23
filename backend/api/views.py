@@ -493,6 +493,36 @@ class VentaProductoViewSet(viewsets.ModelViewSet):
             status=status.HTTP_201_CREATED,
         )
 
+    @action(detail=False, methods=['post'], url_path='cancelar-factura')
+    def cancelar_factura(self, request):
+        """Cancela una factura completa de productos y restablece inventario."""
+        _validar_edicion_admin_gerente(request.user, 'facturas de venta')
+
+        numero_factura = (request.data.get('numero_factura') or '').strip()
+        if not numero_factura:
+            return Response({'error': 'Debes enviar numero_factura.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        ventas = list(self.get_queryset().filter(numero_factura=numero_factura).order_by('id'))
+        if not ventas:
+            return Response({'error': f'No se encontraron ventas para la factura {numero_factura}.'}, status=status.HTTP_404_NOT_FOUND)
+
+        total_items = len(ventas)
+        total_unidades = sum(int(v.cantidad or 0) for v in ventas)
+
+        with transaction.atomic():
+            for venta in ventas:
+                self.perform_destroy(venta)
+
+        return Response(
+            {
+                'ok': True,
+                'numero_factura': numero_factura,
+                'items_eliminados': total_items,
+                'unidades_restauradas': total_unidades,
+            },
+            status=status.HTTP_200_OK,
+        )
+
     def perform_destroy(self, instance):
         """Al eliminar una venta, devuelve stock al inventario"""
         producto = instance.producto

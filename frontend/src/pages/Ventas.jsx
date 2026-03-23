@@ -51,6 +51,14 @@ const formatProductSearchLabel = (producto) => {
   return [producto.marca, producto.descripcion, producto.nombre].filter(Boolean).join(' - ') || producto.nombre || 'Producto';
 };
 
+const getStockEstado = (producto) => {
+  const stock = Number(producto?.stock || 0);
+  const stockMinimo = Number(producto?.stock_minimo || 0);
+  if (stock <= 0) return { key: 'agotado', label: 'Agotado', badgeClass: 'bg-red-100 text-red-700 border-red-200' };
+  if (stock <= stockMinimo) return { key: 'por_agotar', label: 'Por agotarse', badgeClass: 'bg-amber-100 text-amber-700 border-amber-200' };
+  return { key: 'ok', label: 'Disponible', badgeClass: 'bg-emerald-100 text-emerald-700 border-emerald-200' };
+};
+
 const Ventas = () => {
   const { user } = useAuthStore();
   const puedeEditarFacturas = canManageInvoices(user);
@@ -147,6 +155,10 @@ const Ventas = () => {
       setProductoSeleccionado(producto);
       if (!producto) {
         toast.info('No se encontró producto');
+      } else if (Number(producto.stock || 0) <= 0) {
+        toast.warning('Este producto está agotado y no se puede facturar');
+        setProductoSeleccionado(null);
+        return;
       } else if (!editandoId) {
         setForm((prev) => ({ ...prev, precio_unitario: String(producto.precio_venta || '') }));
       }
@@ -156,6 +168,10 @@ const Ventas = () => {
   };
 
   const seleccionarProductoSugerido = (producto) => {
+    if (Number(producto?.stock || 0) <= 0) {
+      toast.warning('Este producto está agotado y no se puede seleccionar');
+      return;
+    }
     setProductoSeleccionado(producto);
     setBusquedaProducto(formatProductSearchLabel(producto));
     setSugerenciasProducto([]);
@@ -190,6 +206,14 @@ const Ventas = () => {
 
     if (cantidad <= 0) {
       toast.warning('La cantidad debe ser mayor a cero');
+      return;
+    }
+    if (Number(productoSeleccionado.stock || 0) <= 0) {
+      toast.warning('El producto está agotado');
+      return;
+    }
+    if (!editandoId && cantidad > Number(productoSeleccionado.stock || 0)) {
+      toast.warning(`Stock insuficiente. Disponible: ${Number(productoSeleccionado.stock || 0)}`);
       return;
     }
     if (precioUnitario <= 0) {
@@ -255,21 +279,30 @@ const Ventas = () => {
   };
 
   const eliminarVenta = async (venta) => {
-    if ((venta.items || []).length > 1) {
-      toast.info('Por ahora elimina cada ítem de la factura desde el detalle o usa Operación diaria.');
-      return;
-    }
-    const ventaBase = (venta.items && venta.items[0]) ? venta.items[0] : venta;
     if (!puedeEditarFacturas) {
       toast.warning('Solo administrador o gerente pueden eliminar facturas');
       return;
     }
-    const ok = window.confirm(`¿Eliminar la factura ${ventaBase.numero_factura || ventaBase.id}?`);
+
+    const esTransaccion = (venta.items || []).length > 1;
+    const ventaBase = (venta.items && venta.items[0]) ? venta.items[0] : venta;
+    const numeroFactura = venta.numero_factura || ventaBase.numero_factura;
+
+    const ok = window.confirm(
+      esTransaccion
+        ? `¿Eliminar la factura ${numeroFactura || ventaBase.id} completa? Se restaurará inventario de todos sus productos.`
+        : `¿Eliminar la factura ${ventaBase.numero_factura || ventaBase.id}?`
+    );
     if (!ok) return;
 
     try {
-      await ventasService.delete(ventaBase.id);
-      toast.success('Factura eliminada');
+      if (esTransaccion && numeroFactura) {
+        const resp = await ventasService.cancelByInvoice(numeroFactura);
+        toast.success(`Factura cancelada (${resp?.items_eliminados || 0} ítems). Inventario restablecido.`);
+      } else {
+        await ventasService.delete(ventaBase.id);
+        toast.success('Factura eliminada');
+      }
       if (editandoId === ventaBase.id) limpiarFormulario();
       await cargarDatos();
     } catch (error) {
@@ -760,8 +793,17 @@ const Ventas = () => {
         {sugerenciasProducto.length > 0 && (
           <div className="md:col-span-4 rounded-lg border border-gray-200 bg-white shadow-lg max-h-56 overflow-auto">
             {sugerenciasProducto.map((p) => (
-              <button key={p.id} type="button" className="w-full text-left px-3 py-2 hover:bg-gray-50" onClick={() => seleccionarProductoSugerido(p)}>
-                {formatProductSearchLabel(p)} - {p.codigo_barras || 'sin código'}
+              <button
+                key={p.id}
+                type="button"
+                className={`w-full text-left px-3 py-2 hover:bg-gray-50 ${getStockEstado(p).key === 'agotado' ? 'opacity-60 cursor-not-allowed' : ''}`}
+                onClick={() => seleccionarProductoSugerido(p)}
+                disabled={getStockEstado(p).key === 'agotado'}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span>{formatProductSearchLabel(p)} - {p.codigo_barras || 'sin código'} (stock {p.stock})</span>
+                  <span className={`text-xs px-2 py-1 rounded-full border ${getStockEstado(p).badgeClass}`}>{getStockEstado(p).label}</span>
+                </div>
               </button>
             ))}
           </div>
@@ -784,7 +826,7 @@ const Ventas = () => {
 
         {productoSeleccionado && (
           <div className="md:col-span-4 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
-            Producto: <strong>{formatProductSearchLabel(productoSeleccionado)}</strong> | Stock: <strong>{productoSeleccionado.stock}</strong>
+            Producto: <strong>{formatProductSearchLabel(productoSeleccionado)}</strong> | Stock: <strong>{productoSeleccionado.stock}</strong> | Estado: <strong>{getStockEstado(productoSeleccionado).label}</strong>
           </div>
         )}
 

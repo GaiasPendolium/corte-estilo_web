@@ -74,6 +74,15 @@ const formatServiceSearchLabel = (servicio) => {
   return [servicio.descripcion, servicio.nombre].filter(Boolean).join(' - ') || servicio.nombre || 'Servicio';
 };
 
+const getStockEstado = (producto) => {
+  const stock = Number(producto?.stock || 0);
+  const stockMinimo = Number(producto?.stock_minimo || 0);
+
+  if (stock <= 0) return { key: 'agotado', label: 'Agotado', badgeClass: 'bg-red-100 text-red-700 border-red-200' };
+  if (stock <= stockMinimo) return { key: 'por_agotar', label: 'Por agotarse', badgeClass: 'bg-amber-100 text-amber-700 border-amber-200' };
+  return { key: 'ok', label: 'Disponible', badgeClass: 'bg-emerald-100 text-emerald-700 border-emerald-200' };
+};
+
 const Productos = () => {
   const { user } = useAuthStore();
   const puedeEditar = canManageCatalog(user);
@@ -281,6 +290,16 @@ const Productos = () => {
     [productos]
   );
 
+  const productosAgotados = useMemo(
+    () => productos.filter((p) => Number(p.stock || 0) <= 0).length,
+    [productos]
+  );
+
+  const productosPorAgotar = useMemo(
+    () => productos.filter((p) => Number(p.stock || 0) > 0 && Number(p.stock || 0) <= Number(p.stock_minimo || 0)).length,
+    [productos]
+  );
+
   // Filtra el listado principal cuando hay texto en el buscador (descripción + nombre + código + marca)
   const productosFiltrados = useMemo(() => {
     const q = codigoBusqueda.trim().toLowerCase();
@@ -447,13 +466,31 @@ const Productos = () => {
         </div>
 
         {productoEncontrado && (
-          <div className="mt-4 rounded-lg border border-green-200 bg-green-50 p-4">
-            <p className="font-semibold text-green-900">Producto encontrado: {formatProductSearchLabel(productoEncontrado)}</p>
-            <p className="text-sm text-green-800 mt-1">
+          <div className={`mt-4 rounded-lg border p-4 ${getStockEstado(productoEncontrado).key === 'agotado' ? 'border-red-200 bg-red-50' : getStockEstado(productoEncontrado).key === 'por_agotar' ? 'border-amber-200 bg-amber-50' : 'border-green-200 bg-green-50'}`}>
+            <div className="flex items-center justify-between gap-2">
+              <p className="font-semibold text-gray-900">Producto encontrado: {formatProductSearchLabel(productoEncontrado)}</p>
+              <span className={`text-xs px-2 py-1 rounded-full border ${getStockEstado(productoEncontrado).badgeClass}`}>{getStockEstado(productoEncontrado).label}</span>
+            </div>
+            <p className="text-sm text-gray-700 mt-1">
               Marca: {productoEncontrado.marca || '-'} | Presentación: {productoEncontrado.presentacion || '-'} | Stock: {productoEncontrado.stock}
             </p>
           </div>
         )}
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="card border border-slate-200 bg-slate-50">
+          <p className="text-sm text-slate-600">Total productos</p>
+          <p className="mt-2 text-2xl font-bold text-slate-900">{productos.length}</p>
+        </div>
+        <div className="card border border-red-200 bg-red-50">
+          <p className="text-sm text-red-700">Agotados</p>
+          <p className="mt-2 text-2xl font-bold text-red-800">{productosAgotados}</p>
+        </div>
+        <div className="card border border-amber-200 bg-amber-50">
+          <p className="text-sm text-amber-700">Por agotarse</p>
+          <p className="mt-2 text-2xl font-bold text-amber-800">{productosPorAgotar}</p>
+        </div>
       </div>
 
       <ModalForm
@@ -569,8 +606,10 @@ const Productos = () => {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {productosFiltrados.map((p) => (
-                  <tr key={p.id} className="hover:bg-gray-50">
+                {productosFiltrados.map((p) => {
+                  const stockEstado = getStockEstado(p);
+                  return (
+                  <tr key={p.id} className={`${stockEstado.key === 'agotado' ? 'bg-red-50/60' : stockEstado.key === 'por_agotar' ? 'bg-amber-50/60' : ''} hover:bg-gray-50`}>
                     <td className="table-cell">{p.codigo_barras || '-'}</td>
                     <td className="table-cell font-medium">{p.descripcion ? `${p.descripcion} - ${p.nombre}` : p.nombre}</td>
                     <td className="table-cell">{p.marca || '-'}</td>
@@ -578,7 +617,12 @@ const Productos = () => {
                     <td className="table-cell">${Number(p.precio_compra || 0).toFixed(2)}</td>
                     <td className="table-cell">${Number(p.precio_venta || 0).toFixed(2)}</td>
                     <td className="table-cell">{Number(p.comision_estilista || 0).toFixed(2)}%</td>
-                    <td className="table-cell">{p.stock}</td>
+                    <td className="table-cell">
+                      <div className="flex items-center gap-2">
+                        <span>{p.stock}</span>
+                        <span className={`text-xs px-2 py-1 rounded-full border ${stockEstado.badgeClass}`}>{stockEstado.label}</span>
+                      </div>
+                    </td>
                     <td className="table-cell">
                       {p.activo ? (
                         <span className="px-2 py-1 rounded-full text-xs bg-green-100 text-green-800">Activo</span>
@@ -606,7 +650,8 @@ const Productos = () => {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

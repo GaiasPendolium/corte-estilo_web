@@ -75,6 +75,19 @@ const formatProductSearchLabel = (producto) => {
   return [producto.marca, producto.descripcion, producto.nombre].filter(Boolean).join(' - ') || producto.nombre || 'Producto';
 };
 
+const getProductoStockEstado = (producto) => {
+  const stock = Number(producto?.stock || 0);
+  const stockMinimo = Number(producto?.stock_minimo || 0);
+
+  if (stock <= 0) {
+    return { key: 'agotado', label: 'Agotado', badgeClass: 'bg-red-100 text-red-700 border-red-200' };
+  }
+  if (stock <= stockMinimo) {
+    return { key: 'por_agotar', label: 'Por agotarse', badgeClass: 'bg-amber-100 text-amber-700 border-amber-200' };
+  }
+  return { key: 'ok', label: 'Disponible', badgeClass: 'bg-emerald-100 text-emerald-700 border-emerald-200' };
+};
+
 const formatServiceSearchLabel = (servicio) => {
   return [servicio.descripcion, servicio.nombre].filter(Boolean).join(' - ') || servicio.nombre || 'Servicio';
 };
@@ -284,6 +297,11 @@ const Servicios = () => {
     () => carrito.reduce((acc, item) => acc + item.cantidad * item.precio_unitario, 0),
     [carrito]
   );
+
+  const cantidadReservadaEnCarrito = (productoId) =>
+    carrito
+      .filter((item) => Number(item.producto?.id) === Number(productoId))
+      .reduce((acc, item) => acc + Number(item.cantidad || 0), 0);
 
   const totalFinalizacion = useMemo(() => {
     const precioBase = toPesoInt(finalizacion.precio_cobrado || 0);
@@ -526,6 +544,10 @@ const Servicios = () => {
   };
 
   const seleccionarProductoCaja = (producto) => {
+    if (Number(producto?.stock || 0) <= 0) {
+      toast.warning('Este producto está agotado y no se puede seleccionar.');
+      return;
+    }
     setProductoVentaSeleccionado(producto);
     setVentaBusqueda(formatProductSearchLabel(producto));
     setVentaSugerencias([]);
@@ -541,6 +563,17 @@ const Servicios = () => {
     const precioUnitario = toPesoInt(ventaForm.precio_unitario || 0);
     if (cantidad <= 0 || precioUnitario <= 0) {
       toast.warning('Cantidad y valor unitario deben ser mayores a cero');
+      return;
+    }
+    const stockActual = Number(productoVentaSeleccionado.stock || 0);
+    const reservado = cantidadReservadaEnCarrito(productoVentaSeleccionado.id);
+    const disponible = stockActual - reservado;
+    if (disponible <= 0) {
+      toast.warning('No hay stock disponible para este producto.');
+      return;
+    }
+    if (cantidad > disponible) {
+      toast.warning(`Stock insuficiente para agregar. Disponible: ${disponible}`);
       return;
     }
     if (!validarPrecioMinimoProducto(productoVentaSeleccionado, precioUnitario)) return;
@@ -577,6 +610,21 @@ const Servicios = () => {
     if (itemsParaRegistrar.length === 0) {
       toast.warning('Agrega al menos un producto al carrito');
       return;
+    }
+
+    const cantidadPorProducto = new Map();
+    for (const item of itemsParaRegistrar) {
+      const pid = Number(item.producto?.id || item.producto);
+      const qty = Number(item.cantidad || 0);
+      cantidadPorProducto.set(pid, Number(cantidadPorProducto.get(pid) || 0) + qty);
+    }
+    for (const [pid, qty] of cantidadPorProducto.entries()) {
+      const prod = productos.find((p) => Number(p.id) === Number(pid));
+      const stock = Number(prod?.stock || 0);
+      if (qty > stock) {
+        toast.warning(`Stock insuficiente para ${prod?.nombre || 'producto'}. Disponible: ${stock}`);
+        return;
+      }
     }
 
     try {
@@ -667,14 +715,23 @@ const Servicios = () => {
               {ventaSugerencias.length > 0 && (
                 <div className="absolute z-20 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg max-h-56 overflow-auto">
                   {ventaSugerencias.map((p) => (
+                    (() => {
+                      const estadoStock = getProductoStockEstado(p);
+                      return (
                     <button
                       key={p.id}
                       type="button"
-                      className="w-full text-left px-3 py-2 hover:bg-gray-50"
+                      className={`w-full text-left px-3 py-2 hover:bg-gray-50 ${estadoStock.key === 'agotado' ? 'opacity-60 cursor-not-allowed' : ''}`}
+                      disabled={estadoStock.key === 'agotado'}
                       onClick={() => seleccionarProductoCaja(p)}
                     >
-                      {formatProductSearchLabel(p)} - {formatCOP(p.precio_venta || 0)} (stock {p.stock})
+                      <div className="flex items-center justify-between gap-2">
+                        <span>{formatProductSearchLabel(p)} - {formatCOP(p.precio_venta || 0)} (stock {p.stock})</span>
+                        <span className={`text-xs px-2 py-1 rounded-full border ${estadoStock.badgeClass}`}>{estadoStock.label}</span>
+                      </div>
                     </button>
+                      );
+                    })()
                   ))}
                 </div>
               )}
@@ -714,7 +771,7 @@ const Servicios = () => {
                 className="btn-secondary w-full inline-flex items-center justify-center gap-2"
                 type="button"
                 onClick={agregarAlCarrito}
-                disabled={!productoVentaSeleccionado}
+                disabled={!productoVentaSeleccionado || Number(productoVentaSeleccionado?.stock || 0) <= 0}
               >
                 <FiPlus /> Agregar al carrito
               </button>
@@ -1029,14 +1086,23 @@ const Servicios = () => {
                 {sugerenciasAdicional.length > 0 && (
                   <div className="absolute z-20 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg max-h-56 overflow-auto">
                     {sugerenciasAdicional.map((p) => (
+                      (() => {
+                        const estadoStock = getProductoStockEstado(p);
+                        return (
                       <button
                         key={p.id}
                         type="button"
-                        className="w-full text-left px-3 py-2 hover:bg-gray-50"
+                        className={`w-full text-left px-3 py-2 hover:bg-gray-50 ${estadoStock.key === 'agotado' ? 'opacity-60 cursor-not-allowed' : ''}`}
+                        disabled={estadoStock.key === 'agotado'}
                         onClick={() => setFinalizacion((f) => ({ ...f, adicional_otro_producto: String(p.id), busqueda_adicional: formatProductSearchLabel(p), adicional_otro_precio_unitario: String(p.precio_venta || '') }))}
                       >
-                        {formatProductSearchLabel(p)} - {formatCOP(p.precio_venta || 0)} (stock {p.stock})
+                        <div className="flex items-center justify-between gap-2">
+                          <span>{formatProductSearchLabel(p)} - {formatCOP(p.precio_venta || 0)} (stock {p.stock})</span>
+                          <span className={`text-xs px-2 py-1 rounded-full border ${estadoStock.badgeClass}`}>{estadoStock.label}</span>
+                        </div>
                       </button>
+                        );
+                      })()
                     ))}
                   </div>
                 )}

@@ -293,6 +293,13 @@ export const ventasService = {
     return response.data;
   },
 
+  cancelByInvoice: async (numeroFactura) => {
+    const response = await api.post('/ventas/cancelar-factura/', {
+      numero_factura: numeroFactura,
+    });
+    return response.data;
+  },
+
   getFactura: async (id) => {
     const response = await api.get(`/ventas/${id}/factura/`);
     return response.data;
