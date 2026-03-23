@@ -35,6 +35,15 @@ def _validar_edicion_admin_gerente(user, recurso):
         raise PermissionDenied(f'Solo administrador o gerente puede modificar {recurso}.')
 
 
+def _fecha_operativa_desde_dt(fecha_hora):
+    """Normaliza DateTime a fecha local para evitar descuadres UTC/local en BI."""
+    if not fecha_hora:
+        return None
+    if timezone.is_aware(fecha_hora):
+        return timezone.localtime(fecha_hora).date()
+    return fecha_hora.date()
+
+
 class UsuarioViewSet(viewsets.ModelViewSet):
     """ViewSet para el modelo Usuario"""
     
@@ -710,19 +719,13 @@ def _calcular_datos_bi(request):
         # Total facturado al cliente = precio_cobrado + valor_adicionales
         total_facturado_cliente = total_servicios_precio_cobrado + total_adicionales_est
         
-        # Días trabajados: contar cada día que tenga al menos un servicio o venta
-        dias_trabajados = {
-            *servicios_est.values_list('fecha_hora__date', flat=True).distinct(),
-            *ventas_est.values_list('fecha_hora__date', flat=True).distinct(),
-        }
-        
         comision_ventas_producto_caja_est = Decimal(0)
         comision_por_dia = {}
         for v in ventas_est:
             pct = Decimal(v.producto.comision_estilista or 0)
             valor_comision = (Decimal(v.total) * pct) / Decimal(100)
             comision_ventas_producto_caja_est += valor_comision
-            fecha_v = v.fecha_hora.date()
+            fecha_v = _fecha_operativa_desde_dt(v.fecha_hora)
             comision_por_dia[fecha_v] = comision_por_dia.get(fecha_v, Decimal(0)) + valor_comision
 
         comision_ventas_producto_servicios_est = Decimal(0)
@@ -733,8 +736,11 @@ def _calcular_datos_bi(request):
 
         servicios_por_dia = {}
         for srv in servicios_est:
-            fecha_srv = srv.fecha_hora.date()
+            fecha_srv = _fecha_operativa_desde_dt(srv.fecha_hora)
             servicios_por_dia[fecha_srv] = servicios_por_dia.get(fecha_srv, Decimal(0)) + Decimal(srv.precio_cobrado or 0)
+
+        # Días trabajados: usar la misma fecha operativa que los mapas por día.
+        dias_trabajados = set(servicios_por_dia.keys()) | set(comision_por_dia.keys())
 
         descuento_espacio = Decimal(0)
         pago_neto_periodo = Decimal(0)
@@ -1155,7 +1161,7 @@ def bi_desglose_estilista_debug(request):
         pct = Decimal(v.producto.comision_estilista or 0)
         valor_comision = (Decimal(v.total) * pct) / Decimal(100)
         comision_ventas_producto_caja_est += valor_comision
-        fecha_v = v.fecha_hora.date()
+        fecha_v = _fecha_operativa_desde_dt(v.fecha_hora)
         comision_por_dia[fecha_v] = comision_por_dia.get(fecha_v, Decimal(0)) + valor_comision
         ventas_detalle.append({
             'fecha': fecha_v.strftime('%Y-%m-%d'),
@@ -1164,18 +1170,15 @@ def bi_desglose_estilista_debug(request):
             'comision_pct': float(pct),
             'comision_valor': float(valor_comision),
         })
-    
-    # Días trabajados
-    dias_trabajados = {
-        *servicios_est.values_list('fecha_hora__date', flat=True).distinct(),
-        *ventas_est.values_list('fecha_hora__date', flat=True).distinct(),
-    }
-    
+
     # Servicios por día
     servicios_por_dia = {}
     for srv in servicios_est:
-        fecha_srv = srv.fecha_hora.date()
+        fecha_srv = _fecha_operativa_desde_dt(srv.fecha_hora)
         servicios_por_dia[fecha_srv] = servicios_por_dia.get(fecha_srv, Decimal(0)) + Decimal(srv.precio_cobrado or 0)
+
+    # Días trabajados
+    dias_trabajados = set(servicios_por_dia.keys()) | set(comision_por_dia.keys())
     
     # Cargar estados
     try:
@@ -1312,7 +1315,7 @@ def bi_desglose_estilista(request):
         pct = Decimal(v.producto.comision_estilista or 0)
         valor_comision = (Decimal(v.total) * pct) / Decimal(100)
         comision_ventas_producto_caja_est += valor_comision
-        fecha_v = v.fecha_hora.date()
+        fecha_v = _fecha_operativa_desde_dt(v.fecha_hora)
         comision_por_dia[fecha_v] = comision_por_dia.get(fecha_v, Decimal(0)) + valor_comision
         ventas_detalle.append({
             'fecha': fecha_v.strftime('%Y-%m-%d'),
@@ -1321,18 +1324,15 @@ def bi_desglose_estilista(request):
             'comision_pct': float(pct),
             'comision_valor': float(valor_comision),
         })
-    
-    # Días trabajados
-    dias_trabajados = {
-        *servicios_est.values_list('fecha_hora__date', flat=True).distinct(),
-        *ventas_est.values_list('fecha_hora__date', flat=True).distinct(),
-    }
-    
+
     # Servicios por día
     servicios_por_dia = {}
     for srv in servicios_est:
-        fecha_srv = srv.fecha_hora.date()
+        fecha_srv = _fecha_operativa_desde_dt(srv.fecha_hora)
         servicios_por_dia[fecha_srv] = servicios_por_dia.get(fecha_srv, Decimal(0)) + Decimal(srv.precio_cobrado or 0)
+
+    # Días trabajados
+    dias_trabajados = set(servicios_por_dia.keys()) | set(comision_por_dia.keys())
     
     # Cargar estados
     try:
