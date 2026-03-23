@@ -328,15 +328,17 @@ const Servicios = () => {
 
   const totalFinalizacion = useMemo(() => {
     const precioBase = toPesoInt(finalizacion.precio_cobrado || 0);
-    const adicionalesServicios = (finalizacion.adicionales_servicio_items || []).reduce(
-      (acc, item) => acc + toPesoInt(item.valor || 0),
-      0
-    );
+    const adicionalesServicios = finalizacion.tiene_adicionales
+      ? (finalizacion.adicionales_servicio_items || []).reduce(
+          (acc, item) => acc + toPesoInt(item.valor || 0),
+          0
+        )
+      : 0;
     const productoAdicionalSeleccionado = productos.find(
       (p) => Number(p.id) === Number(finalizacion.adicional_otro_producto || 0)
     );
     const cantidadProductoAdicional = toPositiveInt(finalizacion.adicional_otro_cantidad || 0);
-    const totalProductoAdicional = productoAdicionalSeleccionado
+    const totalProductoAdicional = finalizacion.tiene_adicionales && productoAdicionalSeleccionado
       ? cantidadProductoAdicional * toPesoInt(productoAdicionalSeleccionado.precio_venta || 0)
       : 0;
 
@@ -530,49 +532,55 @@ const Servicios = () => {
 
     if (finalizacion.tiene_adicionales) {
       const items = finalizacion.adicionales_servicio_items || [];
-      if (!items.length) {
-        toast.warning('Agrega al menos un servicio adicional');
+
+      const productoAdicional = finalizacion.adicional_otro_producto
+        ? productos.find((p) => Number(p.id) === Number(finalizacion.adicional_otro_producto))
+        : null;
+      const tieneServicioAdicional = items.length > 0;
+      const tieneProductoAdicional = Boolean(productoAdicional);
+
+      if (!tieneServicioAdicional && !tieneProductoAdicional) {
+        toast.warning('Selecciona al menos un adicional: servicio, producto o ambos');
         return;
       }
 
-      const itemInvalido = items.find(
-        (item) => !item.id || !item.estilista_id || toPesoInt(item.valor || 0) <= 0
-      );
-      if (itemInvalido) {
-        toast.warning('Cada adicional debe tener servicio, empleado y valor mayor a 0');
-        return;
+      if (tieneServicioAdicional) {
+        const itemInvalido = items.find(
+          (item) => !item.id || !item.estilista_id || toPesoInt(item.valor || 0) <= 0
+        );
+        if (itemInvalido) {
+          toast.warning('Cada servicio adicional debe tener servicio, empleado y valor mayor a 0');
+          return;
+        }
+
+        const porcentajeInvalido = items.find((item) => {
+          if (!item.aplica_porcentaje_establecimiento) return false;
+          const pct = Number(item.porcentaje_establecimiento || 0);
+          return !Number.isFinite(pct) || pct <= 0 || pct > 100;
+        });
+        if (porcentajeInvalido) {
+          toast.warning('El porcentaje para establecimiento debe ser mayor a 0 y menor o igual a 100');
+          return;
+        }
       }
 
-      const porcentajeInvalido = items.find((item) => {
-        if (!item.aplica_porcentaje_establecimiento) return false;
-        const pct = Number(item.porcentaje_establecimiento || 0);
-        return !Number.isFinite(pct) || pct <= 0 || pct > 100;
-      });
-      if (porcentajeInvalido) {
-        toast.warning('El porcentaje para establecimiento debe ser mayor a 0 y menor o igual a 100');
-        return;
-      }
-    }
+      if (tieneProductoAdicional) {
+        const qtyProdAd = toPositiveInt(finalizacion.adicional_otro_cantidad || 0);
+        if (qtyProdAd <= 0) {
+          toast.warning('La cantidad del producto adicional debe ser mayor a 0');
+          return;
+        }
 
-    const productoAdicional = finalizacion.adicional_otro_producto
-      ? productos.find((p) => Number(p.id) === Number(finalizacion.adicional_otro_producto))
-      : null;
-    if (productoAdicional) {
-      const qtyProdAd = toPositiveInt(finalizacion.adicional_otro_cantidad || 0);
-      if (qtyProdAd <= 0) {
-        toast.warning('La cantidad del producto adicional debe ser mayor a 0');
-        return;
-      }
+        if (!finalizacion.adicional_otro_estilista) {
+          toast.warning('Selecciona el empleado que gana la comisión del producto adicional');
+          return;
+        }
 
-      if (!finalizacion.adicional_otro_estilista) {
-        toast.warning('Selecciona el empleado que gana la comisión del producto adicional');
-        return;
-      }
-
-      const stockDisponible = Number(productoAdicional.stock || 0);
-      if (qtyProdAd > stockDisponible) {
-        toast.warning(`Stock insuficiente para producto adicional. Disponible: ${stockDisponible}`);
-        return;
+        const stockDisponible = Number(productoAdicional.stock || 0);
+        if (qtyProdAd > stockDisponible) {
+          toast.warning(`Stock insuficiente para producto adicional. Disponible: ${stockDisponible}`);
+          return;
+        }
       }
     }
 
@@ -598,7 +606,9 @@ const Servicios = () => {
         : [];
       const flagsLegacy = mapearFlagsLegacyAdicionales(itemsNormalizados.map((x) => x.id));
       const qtyProductoAdicional = toPositiveInt(finalizacion.adicional_otro_cantidad || 0);
-      const productoAdicionalId = finalizacion.adicional_otro_producto ? Number(finalizacion.adicional_otro_producto) : null;
+      const productoAdicionalId = finalizacion.tiene_adicionales && finalizacion.adicional_otro_producto
+        ? Number(finalizacion.adicional_otro_producto)
+        : null;
       const res = await serviciosRealizadosService.finalizar(servicioFinalizarId, {
         precio_cobrado: toPesoInt(finalizacion.precio_cobrado),
         medio_pago: finalizacion.medio_pago,
@@ -1139,9 +1149,18 @@ const Servicios = () => {
             <input
               type="checkbox"
               checked={finalizacion.tiene_adicionales}
-              onChange={(e) => setFinalizacion((p) => ({ ...p, tiene_adicionales: e.target.checked }))}
+              onChange={(e) =>
+                setFinalizacion((p) => ({
+                  ...p,
+                  tiene_adicionales: e.target.checked,
+                  adicionales_servicio_items: e.target.checked ? p.adicionales_servicio_items : [],
+                  adicional_otro_producto: e.target.checked ? p.adicional_otro_producto : '',
+                  adicional_otro_cantidad: e.target.checked ? p.adicional_otro_cantidad : '1',
+                  adicional_otro_estilista: e.target.checked ? p.adicional_otro_estilista : '',
+                }))
+              }
             />
-            Este servicio tiene adicionales
+            Este servicio tiene adicionales (servicio y/o producto)
           </label>
 
           {finalizacion.tiene_adicionales && (
@@ -1155,7 +1174,7 @@ const Servicios = () => {
                 </div>
 
                 {(finalizacion.adicionales_servicio_items || []).length === 0 && (
-                  <p className="text-xs text-blue-800">Agrega uno o más servicios adicionales y asigna empleado + valor.</p>
+                  <p className="text-xs text-blue-800">Puedes agregar servicios adicionales, un producto adicional, o ambos.</p>
                 )}
 
                 <div className="space-y-3">

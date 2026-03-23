@@ -535,8 +535,9 @@ const Ventas = () => {
 
     const idsAdicionales = adicionalesNormalizados.map((it) => it.id);
 
-    if (servicioForm.tiene_adicionales && adicionalesNormalizados.length === 0) {
-      toast.warning('Agrega al menos un servicio adicional válido o desmarca adicionales');
+    const tieneProductoAdicional = Boolean(servicioForm.adicional_otro_producto);
+    if (servicioForm.tiene_adicionales && adicionalesNormalizados.length === 0 && !tieneProductoAdicional) {
+      toast.warning('Selecciona al menos un adicional: servicio, producto o ambos');
       return;
     }
 
@@ -1282,10 +1283,13 @@ const Ventas = () => {
                   ...p,
                   tiene_adicionales: e.target.checked,
                   adicionales_servicio_items: e.target.checked ? p.adicionales_servicio_items : [],
+                  adicional_otro_producto: e.target.checked ? p.adicional_otro_producto : '',
+                  adicional_otro_cantidad: e.target.checked ? p.adicional_otro_cantidad : '1',
+                  adicional_otro_estilista: e.target.checked ? p.adicional_otro_estilista : '',
                 }))
               }
             />
-            Esta factura tiene servicios adicionales
+            Esta factura tiene adicionales (servicio y/o producto)
           </label>
 
           {servicioForm.tiene_adicionales && (
