@@ -986,16 +986,13 @@ def estado_pago_estilista_dia(request):
             actual = EstadoPagoEstilistaDia.objects.filter(estilista=estilista, fecha=fecha_cursor).first()
             estado_anterior = actual.estado if actual else 'pendiente'
 
-            if estado == 'pendiente':
-                # Pendiente es el estado por defecto, por lo que eliminamos marca explícita.
-                if actual:
-                    actual.delete()
-            else:
-                EstadoPagoEstilistaDia.objects.update_or_create(
-                    estilista=estilista,
-                    fecha=fecha_cursor,
-                    defaults={'estado': estado, 'notas': notas},
-                )
+            # Siempre actualizar/crear el registro, incluso si es 'pendiente'
+            # Así evitamos problemas de sincronización en el BI
+            EstadoPagoEstilistaDia.objects.update_or_create(
+                estilista=estilista,
+                fecha=fecha_cursor,
+                defaults={'estado': estado, 'notas': notas},
+            )
 
             if estado_anterior != estado:
                 EstadoPagoEstilistaHistorial.objects.create(
