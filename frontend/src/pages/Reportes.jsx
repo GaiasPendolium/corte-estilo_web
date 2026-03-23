@@ -59,8 +59,34 @@ const Reportes = () => {
   const [estilistaFiltro, setEstilistaFiltro] = useState('todos');
   const [savingEstadoByEstilista, setSavingEstadoByEstilista] = useState({});
   const [stats, setStats] = useState(null);
+  const [historialEstados, setHistorialEstados] = useState([]);
+  const [loadingHistorial, setLoadingHistorial] = useState(false);
   const [resumenDiario, setResumenDiario] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  const resolveEstilistaIdFiltro = (dataStats) => {
+    if (estilistaFiltro === 'todos') return undefined;
+    const found = (dataStats?.estilistas || []).find((x) => x.estilista_nombre === estilistaFiltro);
+    return found?.estilista_id;
+  };
+
+  const cargarHistorialEstados = async (dataStats = stats) => {
+    try {
+      setLoadingHistorial(true);
+      const estilistaId = resolveEstilistaIdFiltro(dataStats);
+      const resp = await reportesService.getEstadoPagoHistorial({
+        fecha_inicio: fechaInicio,
+        fecha_fin: fechaFin,
+        ...(estilistaId ? { estilista_id: estilistaId } : {}),
+        limit: 80,
+      });
+      setHistorialEstados(resp?.items || []);
+    } catch (error) {
+      setHistorialEstados([]);
+    } finally {
+      setLoadingHistorial(false);
+    }
+  };
 
   const loadData = async () => {
     try {
@@ -72,9 +98,11 @@ const Reportes = () => {
         ...(medioPagoFiltro !== 'todos' ? { medio_pago: medioPagoFiltro } : {}),
       });
       setStats(data);
+      await cargarHistorialEstados(data);
     } catch (error) {
       toast.error('Error al cargar reportes');
       setStats(null);
+      setHistorialEstados([]);
     } finally {
       setLoading(false);
     }
@@ -542,6 +570,50 @@ const Reportes = () => {
                         : `${s.dias_cancelados_rango || 0} días cancelados / ${s.total_dias_trabajados || 0} trabajados`}
                     </div>
                   </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h2 className="card-header mb-0">Historial de cambios de estado</h2>
+            <p className="text-sm text-gray-500">Auditoría para revisar quién cambió el estado y revertir errores si es necesario.</p>
+          </div>
+          <button className="btn-secondary" onClick={() => cargarHistorialEstados()} disabled={loadingHistorial}>
+            {loadingHistorial ? 'Cargando...' : 'Actualizar historial'}
+          </button>
+        </div>
+
+        <div className="mt-4 overflow-auto rounded-2xl border border-gray-200" style={{ maxHeight: '18rem' }}>
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="table-header sticky top-0 bg-white">
+              <tr>
+                <th className="px-6 py-3 text-left">Fecha</th>
+                <th className="px-6 py-3 text-left">Estilista</th>
+                <th className="px-6 py-3 text-left">Cambio</th>
+                <th className="px-6 py-3 text-left">Usuario</th>
+                <th className="px-6 py-3 text-left">Fecha cambio</th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {historialEstados.length === 0 && (
+                <tr>
+                  <td className="table-cell text-slate-500" colSpan={5}>No hay cambios registrados para este rango.</td>
+                </tr>
+              )}
+              {historialEstados.map((h) => (
+                <tr key={h.id} className="hover:bg-gray-50">
+                  <td className="table-cell">{h.fecha}</td>
+                  <td className="table-cell font-medium text-slate-900">{h.estilista_nombre}</td>
+                  <td className="table-cell">
+                    <span className="text-slate-600">{h.estado_anterior}</span> {'->'} <span className="font-semibold text-slate-900">{h.estado_nuevo}</span>
+                  </td>
+                  <td className="table-cell">{h.usuario_nombre || 'Sistema'}</td>
+                  <td className="table-cell">{h.fecha_cambio}</td>
                 </tr>
               ))}
             </tbody>

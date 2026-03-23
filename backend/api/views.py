@@ -15,7 +15,8 @@ import io
 
 from .models import (
     Usuario, Estilista, Servicio, Cliente, Producto,
-    ServicioRealizado, VentaProducto, MovimientoInventario, EstadoPagoEstilistaDia
+    ServicioRealizado, VentaProducto, MovimientoInventario, EstadoPagoEstilistaDia,
+    EstadoPagoEstilistaHistorial
 )
 from .serializers import (
     UsuarioSerializer, EstilistaSerializer, ServicioSerializer, ClienteSerializer,
@@ -975,19 +976,38 @@ def estado_pago_estilista_dia(request):
     except Exception:
         return Response({'error': 'Estilista no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
 
+    usuario_obj = request.user if isinstance(request.user, Usuario) else None
+
     try:
         fechas_procesadas = 0
+        cambios_registrados = 0
         fecha_cursor = fecha_inicio_dt
         while fecha_cursor <= fecha_fin_dt:
+            actual = EstadoPagoEstilistaDia.objects.filter(estilista=estilista, fecha=fecha_cursor).first()
+            estado_anterior = actual.estado if actual else 'pendiente'
+
             if estado == 'pendiente':
                 # Pendiente es el estado por defecto, por lo que eliminamos marca explícita.
-                EstadoPagoEstilistaDia.objects.filter(estilista=estilista, fecha=fecha_cursor).delete()
+                if actual:
+                    actual.delete()
             else:
                 EstadoPagoEstilistaDia.objects.update_or_create(
                     estilista=estilista,
                     fecha=fecha_cursor,
                     defaults={'estado': estado, 'notas': notas},
                 )
+
+            if estado_anterior != estado:
+                EstadoPagoEstilistaHistorial.objects.create(
+                    estilista=estilista,
+                    fecha=fecha_cursor,
+                    estado_anterior=estado_anterior,
+                    estado_nuevo=estado,
+                    notas=notas,
+                    usuario=usuario_obj,
+                )
+                cambios_registrados += 1
+
             fechas_procesadas += 1
             fecha_cursor += timedelta(days=1)
     except (OperationalError, ProgrammingError):
@@ -1004,6 +1024,73 @@ def estado_pago_estilista_dia(request):
             'estado': estado,
             'notas': notas,
             'fechas_procesadas': fechas_procesadas,
+            'cambios_registrados': cambios_registrados,
+        }
+    )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def estado_pago_estilista_historial(request):
+    fecha_inicio_raw = (request.query_params.get('fecha_inicio') or '').strip()
+    fecha_fin_raw = (request.query_params.get('fecha_fin') or '').strip()
+    estilista_id_raw = (request.query_params.get('estilista_id') or '').strip()
+    limit_raw = (request.query_params.get('limit') or '100').strip()
+
+    try:
+        limit = max(1, min(int(limit_raw), 300))
+    except Exception:
+        limit = 100
+
+    try:
+        if fecha_inicio_raw and fecha_fin_raw:
+            fecha_inicio = datetime.strptime(fecha_inicio_raw, '%Y-%m-%d').date()
+            fecha_fin = datetime.strptime(fecha_fin_raw, '%Y-%m-%d').date()
+        else:
+            hoy = timezone.localdate()
+            fecha_inicio = hoy.replace(day=1)
+            fecha_fin = hoy
+    except Exception:
+        return Response({'error': 'Formato de fecha inválido. Usa YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if fecha_inicio > fecha_fin:
+        return Response({'error': 'fecha_inicio no puede ser mayor que fecha_fin.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        qs = EstadoPagoEstilistaHistorial.objects.select_related('estilista', 'usuario').filter(
+            fecha__gte=fecha_inicio,
+            fecha__lte=fecha_fin,
+        )
+        if estilista_id_raw:
+            qs = qs.filter(estilista_id=int(estilista_id_raw))
+
+        registros = [
+            {
+                'id': x.id,
+                'estilista_id': x.estilista_id,
+                'estilista_nombre': x.estilista.nombre,
+                'fecha': x.fecha.strftime('%Y-%m-%d'),
+                'estado_anterior': x.estado_anterior,
+                'estado_nuevo': x.estado_nuevo,
+                'notas': x.notas,
+                'usuario_id': x.usuario_id,
+                'usuario_nombre': x.usuario.nombre_completo if x.usuario else 'Sistema',
+                'fecha_cambio': timezone.localtime(x.fecha_cambio).strftime('%Y-%m-%d %H:%M:%S'),
+            }
+            for x in qs[:limit]
+        ]
+    except (OperationalError, ProgrammingError):
+        return Response(
+            {'error': 'Debes aplicar migraciones del backend para habilitar historial de estados.'},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+
+    return Response(
+        {
+            'fecha_inicio': fecha_inicio.strftime('%Y-%m-%d'),
+            'fecha_fin': fecha_fin.strftime('%Y-%m-%d'),
+            'estilista_id': int(estilista_id_raw) if estilista_id_raw else None,
+            'items': registros,
         }
     )
 

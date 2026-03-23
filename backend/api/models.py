@@ -429,3 +429,41 @@ class EstadoPagoEstilistaDia(models.Model):
 
     def __str__(self):
         return f"{self.estilista.nombre} - {self.fecha} - {self.estado}"
+
+
+class EstadoPagoEstilistaHistorial(models.Model):
+    """Bitácora de cambios de estado de pago por día y estilista."""
+
+    ESTADOS = [
+        ('pendiente', 'Pendiente'),
+        ('cancelado', 'Cancelado'),
+    ]
+
+    estilista = models.ForeignKey(
+        Estilista,
+        on_delete=models.CASCADE,
+        related_name='historial_estados_pago',
+        verbose_name='Estilista'
+    )
+    fecha = models.DateField(verbose_name='Fecha Afectada')
+    estado_anterior = models.CharField(max_length=20, choices=ESTADOS, default='pendiente', verbose_name='Estado Anterior')
+    estado_nuevo = models.CharField(max_length=20, choices=ESTADOS, verbose_name='Estado Nuevo')
+    notas = models.CharField(max_length=255, blank=True, null=True, verbose_name='Notas')
+    usuario = models.ForeignKey(
+        Usuario,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='cambios_estado_pago',
+        verbose_name='Usuario'
+    )
+    fecha_cambio = models.DateTimeField(default=timezone.now, verbose_name='Fecha Cambio')
+
+    class Meta:
+        db_table = 'estado_pago_estilista_historial'
+        verbose_name = 'Historial Estado Pago Estilista'
+        verbose_name_plural = 'Historial Estados Pago Estilista'
+        ordering = ['-fecha_cambio', '-fecha']
+
+    def __str__(self):
+        return f"{self.estilista.nombre} {self.fecha}: {self.estado_anterior} -> {self.estado_nuevo}"
