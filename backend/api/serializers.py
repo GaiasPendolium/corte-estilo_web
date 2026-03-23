@@ -344,19 +344,31 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
         numero_factura = servicio.numero_factura or f"FS-{timezone.now().strftime('%Y%m%d')}-{servicio.id:06d}"
 
         cliente = servicio.cliente.nombre if servicio.cliente else 'Cliente no registrado'
-        adicionales = getattr(servicio, '_adicionales_detalle', None)
-        if not adicionales:
+        
+        # Obtener detalles de adicionales si existen (durante create())
+        # O construir desglose si tenemos los datos disponibles
+        adicionales = getattr(servicio, '_adicionales_detalle', None) or []
+        
+        # Si tenemos valor de adicionales pero no desglose, construir manualmente
+        if not adicionales and float(servicio.valor_adicionales or 0) > 0:
             valor_shampoo = self._valor_adicional_rapido('Adicional Shampoo', 4000)
             valor_guantes = self._valor_adicional_rapido('Adicional Guantes', 1500)
-            adicionales = []
+            
             if servicio.adicional_shampoo:
                 adicionales.append(f'Shampoo ${valor_shampoo:.2f}')
             if servicio.adicional_guantes:
                 adicionales.append(f'Guantes ${valor_guantes:.2f}')
             if servicio.adicional_otro_producto:
+                cantidad = int(servicio.adicional_otro_cantidad or 1)
+                precio_unitario = float(servicio.adicional_otro_producto.precio_venta or 0)
                 adicionales.append(
-                    f"{servicio.adicional_otro_producto.nombre} x{servicio.adicional_otro_cantidad} = ${float((servicio.adicional_otro_producto.precio_venta or 0) * servicio.adicional_otro_cantidad):.2f}"
+                    f"{servicio.adicional_otro_producto.nombre} x{cantidad} = ${(precio_unitario * cantidad):.2f}"
                 )
+            
+            # Si aún así no hay desglose pero valor_adicionales > 0, mostrar genérico
+            if not adicionales:
+                adicionales.append(f'Otros servicios/productos: ${float(servicio.valor_adicionales):.2f}')
+        
         adicionales_texto = ', '.join(adicionales) if adicionales else 'Sin adicionales'
         nota_liquidacion = ''
         if (servicio.estilista.tipo_cobro_espacio or 'sin_cobro') == 'costo_fijo_neto':
@@ -382,8 +394,8 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
         )
 
     def get_factura_texto(self, obj):
-        self._calcular_adicionales(obj)
-        self._calcular_reparto(obj)
+        # NO recalcular en lectura. Simplemente usar valores guardados en BD.
+        # La recalculación solo ocurre en create() y update() con parámetros completos.
         return self._construir_factura_texto(obj)
 
     def create(self, validated_data):
