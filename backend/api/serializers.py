@@ -309,7 +309,10 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
 
     def _calcular_reparto(self, servicio):
         precio = float(servicio.precio_cobrado or 0)
-        neto = max(precio - float(servicio.valor_adicionales or 0), 0)
+        # La base del servicio para liquidar al estilista es el precio del servicio.
+        # Los adicionales (shampoo/guantes/otros) son ingreso del establecimiento,
+        # no un descuento sobre la base del servicio.
+        neto = max(precio, 0)
         tipo_cobro = servicio.estilista.tipo_cobro_espacio or 'sin_cobro'
         valor_cobro = float(servicio.estilista.valor_cobro_espacio or 0)
 
@@ -361,9 +364,10 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
             f"Facturado por: {(servicio.usuario.username if servicio.usuario else 'No especificado')}\n"
             f"Estilista: {servicio.estilista.nombre}\n"
             f"Servicio: {servicio.servicio.nombre}\n"
-            f"Total: ${float(servicio.precio_cobrado):.2f}\n"
+            f"Valor servicio base: ${float(servicio.precio_cobrado):.2f}\n"
             f"Adicionales: {adicionales_texto}\n"
             f"Valor adicionales: ${float(servicio.valor_adicionales):.2f}\n"
+            f"Total cobrado al cliente: ${(float(servicio.precio_cobrado or 0) + float(servicio.valor_adicionales or 0)):.2f}\n"
             f"Neto del servicio: ${float(servicio.neto_servicio):.2f}\n"
             f"Medio de pago: {servicio.get_medio_pago_display() if servicio.medio_pago else '-'}\n"
             f"Establecimiento: ${float(servicio.monto_establecimiento):.2f}\n"
