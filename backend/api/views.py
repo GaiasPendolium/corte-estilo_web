@@ -1727,6 +1727,367 @@ def bi_export_pdf(request):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+def bi_export_html(request):
+    """Exporta los datos de BI en HTML formateado"""
+    try:
+        data = _calcular_datos_bi(request)
+        
+        kpis = data.get('kpis', {})
+        venta_neta_total = Decimal(str(kpis.get('venta_neta_total', 0) or 0))
+        ganancia_establecimiento_total = Decimal(str(kpis.get('ganancia_establecimiento_total', 0) or 0))
+        pago_total_estilistas = Decimal(str(kpis.get('pago_total_estilistas', 0) or 0))
+        margen_establecimiento_pct = float((ganancia_establecimiento_total / venta_neta_total) * 100) if venta_neta_total > 0 else 0.0
+        participacion_estilistas_pct = float((pago_total_estilistas / venta_neta_total) * 100) if venta_neta_total > 0 else 0.0
+
+        # Generar filas de estilistas
+        filas_estilistas = ""
+        for est in data.get('estilistas', []):
+            filas_estilistas += f"""
+            <tr>
+                <td>{est.get('estilista_nombre', '-')}</td>
+                <td class="text-right">${float(est.get('facturacion_servicios', 0)):.2f}</td>
+                <td class="text-right">${float(est.get('valor_servicios_adicionales', 0)):.2f}</td>
+                <td class="text-right">${float(est.get('ganancias_servicios', 0)):.2f}</td>
+                <td class="text-right">${float(est.get('comision_ventas_producto', 0)):.2f}</td>
+                <td class="text-right">${float(est.get('descuento_espacio', 0)):.2f}</td>
+                <td class="text-right font-bold">${float(est.get('pago_neto_estilista', 0)):.2f}</td>
+            </tr>
+            """
+        
+        # Generar filas de productos
+        filas_productos = ""
+        for item in data.get('top_ventas_productos', [])[:15]:
+            filas_productos += f"""
+            <tr>
+                <td>{item.get('producto_nombre', '-')}</td>
+                <td class="text-center">{item.get('cantidad', 0)}</td>
+                <td class="text-right">${float(item.get('total', 0)):.2f}</td>
+            </tr>
+            """
+
+        html_content = f"""
+        <!DOCTYPE html>
+        <html lang="es">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Informe Gerencial - Reporte BI</title>
+            <style>
+                * {{
+                    margin: 0;
+                    padding: 0;
+                    box-sizing: border-box;
+                }}
+                body {{
+                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                    background-color: #f5f5f5;
+                    padding: 20px;
+                    color: #333;
+                }}
+                .container {{
+                    max-width: 1000px;
+                    margin: 0 auto;
+                    background: white;
+                    border-radius: 8px;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                    padding: 40px;
+                }}
+                .header {{
+                    text-align: center;
+                    margin-bottom: 40px;
+                    border-bottom: 3px solid #007bff;
+                    padding-bottom: 20px;
+                }}
+                .logo {{
+                    margin-bottom: 20px;
+                }}
+                .logo img {{
+                    max-height: 80px;
+                    object-fit: contain;
+                }}
+                .header h1 {{
+                    font-size: 28px;
+                    color: #007bff;
+                    margin-bottom: 10px;
+                }}
+                .header-info {{
+                    display: grid;
+                    grid-template-columns: 1fr 1fr;
+                    gap: 20px;
+                    margin-top: 15px;
+                    font-size: 14px;
+                    color: #666;
+                }}
+                .info-item {{
+                    display: flex;
+                    justify-content: space-between;
+                }}
+                .section {{
+                    margin-bottom: 40px;
+                }}
+                .section-title {{
+                    font-size: 18px;
+                    font-weight: bold;
+                    color: #007bff;
+                    margin-bottom: 15px;
+                    padding-bottom: 8px;
+                    border-bottom: 2px solid #e0e0e0;
+                }}
+                .metrics-grid {{
+                    display: grid;
+                    grid-template-columns: repeat(3, 1fr);
+                    gap: 20px;
+                    margin-bottom: 30px;
+                }}
+                .metric-card {{
+                    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+                    color: white;
+                    padding: 20px;
+                    border-radius: 6px;
+                    text-align: center;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                }}
+                .metric-card.secondary {{
+                    background: linear-gradient(135deg, #28a745 0%, #1e7e34 100%);
+                }}
+                .metric-card.tertiary {{
+                    background: linear-gradient(135deg, #ffc107 0%, #e0a800 100%);
+                    color: #333;
+                }}
+                .metric-card.warning {{
+                    background: linear-gradient(135deg, #dc3545 0%, #a02622 100%);
+                }}
+                .metric-label {{
+                    font-size: 12px;
+                    opacity: 0.9;
+                    margin-bottom: 8px;
+                }}
+                .metric-value {{
+                    font-size: 24px;
+                    font-weight: bold;
+                }}
+                .kpis-block {{
+                    background: #f9f9f9;
+                    padding: 20px;
+                    border-radius: 6px;
+                    border-left: 4px solid #007bff;
+                }}
+                .kpi-item {{
+                    display: grid;
+                    grid-template-columns: 40% 60%;
+                    gap: 20px;
+                    margin-bottom: 10px;
+                    padding-bottom: 10px;
+                    border-bottom: 1px solid #e0e0e0;
+                }}
+                .kpi-item:last-child {{
+                    border-bottom: none;
+                    margin-bottom: 0;
+                    padding-bottom: 0;
+                }}
+                .kpi-label {{
+                    font-weight: 500;
+                    color: #555;
+                }}
+                .kpi-value {{
+                    text-align: right;
+                    font-weight: bold;
+                    color: #007bff;
+                }}
+                table {{
+                    width: 100%;
+                    border-collapse: collapse;
+                    margin-top: 15px;
+                }}
+                thead {{
+                    background-color: #007bff;
+                    color: white;
+                }}
+                th {{
+                    padding: 12px;
+                    text-align: left;
+                    font-weight: 600;
+                    font-size: 13px;
+                }}
+                td {{
+                    padding: 12px;
+                    border-bottom: 1px solid #e0e0e0;
+                }}
+                tbody tr:hover {{
+                    background-color: #f5f5f5;
+                }}
+                .text-right {{
+                    text-align: right;
+                }}
+                .text-center {{
+                    text-align: center;
+                }}
+                .font-bold {{
+                    font-weight: bold;
+                }}
+                .footer {{
+                    margin-top: 40px;
+                    padding-top: 20px;
+                    border-top: 1px solid #e0e0e0;
+                    text-align: center;
+                    font-size: 12px;
+                    color: #999;
+                }}
+                @media print {{
+                    body {{
+                        background: white;
+                        padding: 0;
+                    }}
+                    .container {{
+                        max-width: 100%;
+                        box-shadow: none;
+                        padding: 0;
+                    }}
+                }}
+                @media (max-width: 768px) {{
+                    .metrics-grid {{
+                        grid-template-columns: 1fr;
+                    }}
+                    .header-info {{
+                        grid-template-columns: 1fr;
+                    }}
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <div class="logo">
+                        <img src="/corte_estilo_logo.png" alt="Logo Corte & Estilo" style="max-height: 80px;">
+                    </div>
+                    <h1>Informe Gerencial</h1>
+                    <p style="font-size: 16px; margin-top: 10px; color: #666;">Reporte BI - Análisis de Negocio</p>
+                    <div class="header-info">
+                        <div class="info-item">
+                            <span><strong>Período:</strong></span>
+                            <span>{data['fecha_inicio']} a {data['fecha_fin']}</span>
+                        </div>
+                        <div class="info-item">
+                            <span><strong>Generado:</strong></span>
+                            <span>{timezone.localtime().strftime('%Y-%m-%d %H:%M:%S')}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <div class="section-title">📊 Resumen Ejecutivo</div>
+                    <div class="metrics-grid">
+                        <div class="metric-card">
+                            <div class="metric-label">Venta Neta Total</div>
+                            <div class="metric-value">${float(venta_neta_total):,.2f}</div>
+                        </div>
+                        <div class="metric-card secondary">
+                            <div class="metric-label">Ganancia Establecimiento</div>
+                            <div class="metric-value">${float(ganancia_establecimiento_total):,.2f}</div>
+                        </div>
+                        <div class="metric-card tertiary">
+                            <div class="metric-label">Margen Establecimiento</div>
+                            <div class="metric-value">{margen_establecimiento_pct:.2f}%</div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-label">Pago Total Estilistas</div>
+                            <div class="metric-value">${float(pago_total_estilistas):,.2f}</div>
+                        </div>
+                        <div class="metric-card secondary">
+                            <div class="metric-label">Participación Estilistas</div>
+                            <div class="metric-value">{participacion_estilistas_pct:.2f}%</div>
+                        </div>
+                        <div class="metric-card tertiary">
+                            <div class="metric-label">Ingresos Adicionales</div>
+                            <div class="metric-value">${float(kpis.get('ingresos_servicios_adicionales', 0)):,.2f}</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <div class="section-title">📈 KPIs Clave</div>
+                    <div class="kpis-block">
+                        <div class="kpi-item">
+                            <div class="kpi-label">Ingresos por Productos</div>
+                            <div class="kpi-value">${float(kpis.get('ingresos_productos', 0)):,.2f}</div>
+                        </div>
+                        <div class="kpi-item">
+                            <div class="kpi-label">Ingresos por Servicios</div>
+                            <div class="kpi-value">${float(kpis.get('ingresos_servicios', 0)):,.2f}</div>
+                        </div>
+                        <div class="kpi-item">
+                            <div class="kpi-label">Costo de Productos</div>
+                            <div class="kpi-value" style="color: #dc3545;">${float(kpis.get('costo_productos', 0)):,.2f}</div>
+                        </div>
+                        <div class="kpi-item">
+                            <div class="kpi-label">Utilidad de Productos</div>
+                            <div class="kpi-value" style="color: #28a745;">${float(kpis.get('utilidad_productos', 0)):,.2f}</div>
+                        </div>
+                        <div class="kpi-item">
+                            <div class="kpi-label">Descripción Espacio Estilistas</div>
+                            <div class="kpi-value">${float(kpis.get('descuentos_espacio_estilistas', 0)):,.2f}</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <div class="section-title">👥 Liquidación por Estilista</div>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Estilista</th>
+                                <th class="text-right">Facturación Servicios</th>
+                                <th class="text-right">Adicionales</th>
+                                <th class="text-right">Base Pago</th>
+                                <th class="text-right">Comisión Producto</th>
+                                <th class="text-right">Cobro Espacio</th>
+                                <th class="text-right">Neto a Pagar</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {filas_estilistas}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="section">
+                    <div class="section-title">🏆 Top Productos</div>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Producto</th>
+                                <th class="text-center">Cantidad</th>
+                                <th class="text-right">Total Venta</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {filas_productos}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="footer">
+                    <p>Este reporte fue generado automáticamente por el sistema de BI de Corte & Estilo</p>
+                    <p>© 2026 Corte & Estilo - Todos los derechos reservados</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+
+        response = HttpResponse(html_content, content_type='text/html; charset=utf-8')
+        response['Content-Disposition'] = f'inline; filename="reporte_bi_{data["fecha_inicio"]}_{data["fecha_fin"]}.html"'
+        return response
+
+    except Exception as e:
+        return Response(
+            {'error': f'Error generando HTML: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def bi_resumen_diario(request):
     hoy = timezone.localdate().strftime('%Y-%m-%d')
 

@@ -7,7 +7,7 @@ from .views import (
     ProductoViewSet, ServicioRealizadoViewSet, VentaProductoViewSet,
     MovimientoInventarioViewSet, estadisticas_generales,
     reporte_ventas, reporte_servicios, bi_resumen, bi_export_csv,
-    bi_export_pdf, bi_resumen_diario, estado_pago_estilista_dia,
+    bi_export_pdf, bi_export_html, bi_resumen_diario, estado_pago_estilista_dia,
     estado_pago_estilista_historial, bi_desglose_estilista, bi_desglose_estilista_debug
 )
 
@@ -34,6 +34,7 @@ urlpatterns = [
     path('reportes/bi/', bi_resumen, name='reporte-bi'),
     path('reportes/bi/export/', bi_export_csv, name='reporte-bi-export'),
     path('reportes/bi/export-pdf/', bi_export_pdf, name='reporte-bi-export-pdf'),
+    path('reportes/bi/export-html/', bi_export_html, name='reporte-bi-export-html'),
     path('reportes/bi/resumen-diario/', bi_resumen_diario, name='reporte-bi-resumen-diario'),
     path('reportes/bi/desglose/', bi_desglose_estilista, name='reporte-bi-desglose-estilista'),
     path('reportes/bi/desglose-debug/', bi_desglose_estilista_debug, name='reporte-bi-desglose-debug'),

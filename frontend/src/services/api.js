@@ -363,6 +363,27 @@ export const reportesService = {
     }
   },
 
+  exportBIHtml: async (params) => {
+    try {
+      const response = await api.get('/reportes/bi/export-html/', {
+        params,
+        responseType: 'blob',
+      });
+      
+      // Si el blob es en realidad un JSON con error, convertirlo
+      if (response.data.type === 'application/json') {
+        const text = await response.data.text();
+        const error = JSON.parse(text);
+        throw new Error(error.error || error.message || 'Error al exportar HTML');
+      }
+      
+      return response.data;
+    } catch (error) {
+      console.error('Error exportando HTML:', error);
+      throw error;
+    }
+  },
+
   getResumenDiario: async () => {
     const response = await api.get('/reportes/bi/resumen-diario/');
     return response.data;
