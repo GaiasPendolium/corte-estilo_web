@@ -193,6 +193,45 @@ const Servicios = () => {
   const [productoVentaSeleccionado, setProductoVentaSeleccionado] = useState(null);
   const [carrito, setCarrito] = useState([]);
 
+  const abrirTecladoWindows = async () => {
+    try {
+      if (navigator?.virtualKeyboard && typeof navigator.virtualKeyboard.show === 'function') {
+        navigator.virtualKeyboard.show();
+        toast.success('Teclado virtual activado');
+        return;
+      }
+    } catch (error) {
+      // Continúa con fallback para Windows.
+    }
+
+    const intentarUri = (uri) => {
+      const iframe = document.createElement('iframe');
+      iframe.style.display = 'none';
+      iframe.src = uri;
+      document.body.appendChild(iframe);
+      setTimeout(() => {
+        if (iframe.parentNode) {
+          iframe.parentNode.removeChild(iframe);
+        }
+      }, 1200);
+    };
+
+    try {
+      intentarUri('ms-inputapp:');
+      toast.info('Intentando abrir teclado táctil de Windows');
+      return;
+    } catch (error) {
+      // Último fallback con configuración de Windows.
+    }
+
+    try {
+      intentarUri('ms-settings:easeofaccess-keyboard');
+      toast.info('Abre Windows > Teclado táctil para activarlo');
+    } catch (error) {
+      toast.warning('No se pudo abrir el teclado desde el navegador. Activa el teclado táctil en Windows.');
+    }
+  };
+
   const cargarTodo = async () => {
     try {
       setLoading(true);
@@ -916,6 +955,9 @@ const Servicios = () => {
         <div className="flex flex-wrap gap-2 justify-end">
           <button className="btn-secondary inline-flex items-center gap-2" onClick={cargarTodo} disabled={loading}>
             <FiRefreshCw className={loading ? 'animate-spin' : ''} /> Actualizar
+          </button>
+          <button className="btn-secondary inline-flex items-center gap-2" onClick={abrirTecladoWindows}>
+            Teclado Windows
           </button>
           <button className="btn-primary inline-flex items-center gap-2" onClick={() => setShowNuevoClienteModal(true)}>
             <FiPlus /> Nuevo cliente
