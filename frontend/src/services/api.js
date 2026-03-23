@@ -398,4 +398,18 @@ export const reportesService = {
     });
     return response.data;
   },
+
+  getConsumoEmpleadoDeudas: async (params) => {
+    const response = await api.get('/reportes/consumo-empleado/deudas/', { params });
+    return response.data;
+  },
+
+  abonarConsumoEmpleado: async ({ estilista_id, monto, notas }) => {
+    const response = await api.post('/reportes/consumo-empleado/abonar/', {
+      estilista_id,
+      monto,
+      notas,
+    });
+    return response.data;
+  },
 };

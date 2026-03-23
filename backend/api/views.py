@@ -18,6 +18,7 @@ import uuid
 from .models import (
     Usuario, Estilista, Servicio, Cliente, Producto,
     ServicioRealizado, VentaProducto, MovimientoInventario, EstadoPagoEstilistaDia,
+    DeudaConsumoEmpleado, AbonoDeudaEmpleado,
     EstadoPagoEstilistaHistorial
 )
 from .serializers import (
@@ -281,6 +282,50 @@ class ServicioRealizadoViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(usuario=self.request.user)
+
+    def perform_destroy(self, instance):
+        """Al eliminar un servicio, revierte inventario pendiente de su adicional de producto."""
+        tag = f"adicional servicio #{instance.id}"
+
+        movimientos = (
+            MovimientoInventario.objects
+            .filter(descripcion__icontains=tag)
+            .values('producto_id', 'tipo_movimiento')
+            .annotate(total=Sum('cantidad'))
+        )
+
+        saldo_por_producto = {}
+        for mov in movimientos:
+            pid = mov.get('producto_id')
+            if not pid:
+                continue
+            saldo_por_producto.setdefault(pid, 0)
+            if mov.get('tipo_movimiento') == 'salida':
+                saldo_por_producto[pid] += int(mov.get('total') or 0)
+            elif mov.get('tipo_movimiento') == 'entrada':
+                saldo_por_producto[pid] -= int(mov.get('total') or 0)
+
+        with transaction.atomic():
+            for producto_id, saldo_pendiente in saldo_por_producto.items():
+                if saldo_pendiente <= 0:
+                    continue
+
+                producto = Producto.objects.filter(id=producto_id).first()
+                if not producto:
+                    continue
+
+                producto.stock += int(saldo_pendiente)
+                producto.save(update_fields=['stock'])
+
+                MovimientoInventario.objects.create(
+                    producto=producto,
+                    tipo_movimiento='entrada',
+                    cantidad=int(saldo_pendiente),
+                    descripcion=f"reverso final {tag} por eliminación factura {instance.numero_factura or instance.id}",
+                    usuario=self.request.user,
+                )
+
+            instance.delete()
     
     def get_queryset(self):
         """Filtrar por rango de fechas si se proporciona"""
@@ -380,11 +425,11 @@ class ServicioRealizadoViewSet(viewsets.ModelViewSet):
 class VentaProductoViewSet(viewsets.ModelViewSet):
     """ViewSet para el modelo VentaProducto"""
     
-    queryset = VentaProducto.objects.select_related('producto', 'usuario').all()
+    queryset = VentaProducto.objects.select_related('producto', 'usuario', 'estilista', 'deuda_consumo').all()
     serializer_class = VentaProductoSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['producto', 'usuario']
+    filterset_fields = ['producto', 'usuario', 'tipo_operacion', 'deuda_consumo']
     search_fields = ['producto__nombre', 'producto__codigo_barras', 'cliente_nombre', 'numero_factura']
     ordering_fields = ['fecha_hora', 'total']
     ordering = ['-fecha_hora']
@@ -433,10 +478,19 @@ class VentaProductoViewSet(viewsets.ModelViewSet):
         cliente_nombre = request.data.get('cliente_nombre')
         estilista = request.data.get('estilista')
         medio_pago = request.data.get('medio_pago') or 'efectivo'
+        tipo_operacion = (request.data.get('tipo_operacion') or 'venta').strip().lower()
+
+        if tipo_operacion not in {'venta', 'consumo_empleado'}:
+            return Response({'error': 'tipo_operacion inválido. Usa venta o consumo_empleado.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if tipo_operacion == 'consumo_empleado' and not estilista:
+            return Response({'error': 'Para consumo de empleado debes seleccionar un empleado.'}, status=status.HTTP_400_BAD_REQUEST)
 
         ahora = timezone.localtime()
-        prefijo = f"FP-{ahora.strftime('%Y%m%d')}-{uuid.uuid4().hex[:8].upper()}"
+        prefijo_tipo = 'FC' if tipo_operacion == 'consumo_empleado' else 'FP'
+        prefijo = f"{prefijo_tipo}-{ahora.strftime('%Y%m%d')}-{uuid.uuid4().hex[:8].upper()}"
         ventas_creadas = []
+        deuda_obj = None
 
         try:
             with transaction.atomic():
@@ -448,6 +502,7 @@ class VentaProductoViewSet(viewsets.ModelViewSet):
                         'cliente_nombre': cliente_nombre,
                         'estilista': estilista,
                         'medio_pago': medio_pago,
+                        'tipo_operacion': tipo_operacion,
                     }
                     serializer = self.get_serializer(data=payload)
                     serializer.is_valid(raise_exception=True)
@@ -455,6 +510,20 @@ class VentaProductoViewSet(viewsets.ModelViewSet):
                     ventas_creadas.append(venta)
 
                 total_transaccion = sum((Decimal(v.total or 0) for v in ventas_creadas), Decimal(0))
+
+                if tipo_operacion == 'consumo_empleado':
+                    deuda_obj = DeudaConsumoEmpleado.objects.create(
+                        estilista_id=int(estilista),
+                        numero_factura=prefijo,
+                        total_cargo=total_transaccion,
+                        total_abonado=Decimal(0),
+                        saldo_pendiente=total_transaccion,
+                        estado='pendiente',
+                        fecha_hora=ahora,
+                        usuario=request.user,
+                        notas='Generada automaticamente desde consumo de empleado',
+                    )
+
                 cliente_txt = cliente_nombre or 'Cliente no registrado'
                 lineas = []
                 for v in ventas_creadas:
@@ -462,20 +531,29 @@ class VentaProductoViewSet(viewsets.ModelViewSet):
                         f"- {v.producto.nombre} x{v.cantidad} @ ${float(v.precio_unitario):.2f} = ${float(v.total):.2f}"
                     )
 
+                texto_cuenta = ''
+                if deuda_obj:
+                    texto_cuenta = (
+                        f"\nCuenta por cobrar: {deuda_obj.numero_factura}\n"
+                        f"Saldo pendiente: ${float(deuda_obj.saldo_pendiente):.2f}"
+                    )
+
                 factura_texto = (
                     f"Factura: {prefijo}\n"
-                    f"Tipo: Producto\n"
+                    f"Tipo: {'Consumo Empleado' if tipo_operacion == 'consumo_empleado' else 'Producto'}\n"
                     f"Fecha: {ahora.strftime('%Y-%m-%d %H:%M')}\n"
                     f"Cliente: {cliente_txt}\n"
                     f"Medio de pago: {ventas_creadas[0].get_medio_pago_display()}\n"
                     f"Items:\n" + "\n".join(lineas) + "\n"
                     f"Total transacción: ${float(total_transaccion):.2f}"
+                    f"{texto_cuenta}"
                 )
 
                 for v in ventas_creadas:
                     v.numero_factura = prefijo
                     v.factura_texto = factura_texto
-                    v.save(update_fields=['numero_factura', 'factura_texto'])
+                    v.deuda_consumo = deuda_obj
+                    v.save(update_fields=['numero_factura', 'factura_texto', 'deuda_consumo'])
 
         except serializers.ValidationError as exc:
             return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
@@ -484,9 +562,15 @@ class VentaProductoViewSet(viewsets.ModelViewSet):
         return Response(
             {
                 'numero_factura': prefijo,
+                'tipo_operacion': tipo_operacion,
                 'total_transaccion': float(total_transaccion),
                 'cantidad_items': len(ventas_creadas),
                 'factura_texto': factura_texto,
+                'deuda': {
+                    'id': deuda_obj.id,
+                    'estado': deuda_obj.estado,
+                    'saldo_pendiente': float(deuda_obj.saldo_pendiente),
+                } if deuda_obj else None,
                 'items': output_serializer.data,
                 'venta_principal': output_serializer.data[0] if output_serializer.data else None,
             },
@@ -753,7 +837,7 @@ def _calcular_datos_bi(request):
         costo_unitario = Decimal(venta.producto.precio_compra or 0)
         costo_productos += costo_unitario * Decimal(venta.cantidad)
 
-        if venta.estilista:
+        if venta.estilista and venta.tipo_operacion != 'consumo_empleado':
             # La comisión de venta se toma del producto vendido, no del estilista.
             pct = Decimal(venta.producto.comision_estilista or 0)
             comision_producto_estilistas += (Decimal(venta.total) * pct) / Decimal(100)
@@ -824,6 +908,8 @@ def _calcular_datos_bi(request):
         comision_ventas_producto_caja_est = Decimal(0)
         comision_por_dia = {}
         for v in ventas_est:
+            if v.tipo_operacion == 'consumo_empleado':
+                continue
             pct = Decimal(v.producto.comision_estilista or 0)
             valor_comision = (Decimal(v.total) * pct) / Decimal(100)
             comision_ventas_producto_caja_est += valor_comision
@@ -1031,6 +1117,180 @@ def _calcular_datos_bi(request):
         ],
         'serie_diaria': series_diaria,
     }
+
+
+def _recalcular_estado_deuda(deuda):
+    """Normaliza saldo y estado según cargos/abonos acumulados."""
+    saldo = Decimal(deuda.total_cargo or 0) - Decimal(deuda.total_abonado or 0)
+    if saldo <= 0:
+        deuda.saldo_pendiente = Decimal(0)
+        deuda.estado = 'cancelado'
+    elif Decimal(deuda.total_abonado or 0) > 0:
+        deuda.saldo_pendiente = saldo
+        deuda.estado = 'parcial'
+    else:
+        deuda.saldo_pendiente = saldo
+        deuda.estado = 'pendiente'
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def reporte_consumo_empleado(request):
+    """Resumen de deudas por consumo de empleado en un rango de fechas."""
+    fecha_inicio, fecha_fin = _resolver_rango_fechas(request)
+    estilista_id = (request.query_params.get('estilista_id') or '').strip()
+
+    qs = DeudaConsumoEmpleado.objects.select_related('estilista').filter(
+        fecha_hora__date__gte=fecha_inicio,
+        fecha_hora__date__lte=fecha_fin,
+    )
+
+    if estilista_id:
+        qs = qs.filter(estilista_id=int(estilista_id))
+
+    resumen_mapa = {}
+    deudas_items = []
+    for deuda in qs.order_by('-fecha_hora'):
+        est_id = int(deuda.estilista_id)
+        if est_id not in resumen_mapa:
+            resumen_mapa[est_id] = {
+                'estilista_id': est_id,
+                'estilista_nombre': deuda.estilista.nombre,
+                'total_consumido': Decimal(0),
+                'total_abonado': Decimal(0),
+                'saldo_pendiente': Decimal(0),
+                'facturas': 0,
+            }
+
+        resumen_mapa[est_id]['total_consumido'] += Decimal(deuda.total_cargo or 0)
+        resumen_mapa[est_id]['total_abonado'] += Decimal(deuda.total_abonado or 0)
+        resumen_mapa[est_id]['saldo_pendiente'] += Decimal(deuda.saldo_pendiente or 0)
+        resumen_mapa[est_id]['facturas'] += 1
+
+        deudas_items.append(
+            {
+                'deuda_id': deuda.id,
+                'estilista_id': est_id,
+                'estilista_nombre': deuda.estilista.nombre,
+                'numero_factura': deuda.numero_factura,
+                'fecha_hora': timezone.localtime(deuda.fecha_hora).strftime('%Y-%m-%d %H:%M:%S'),
+                'total_cargo': float(deuda.total_cargo or 0),
+                'total_abonado': float(deuda.total_abonado or 0),
+                'saldo_pendiente': float(deuda.saldo_pendiente or 0),
+                'estado': deuda.estado,
+            }
+        )
+
+    resumen = []
+    for item in sorted(resumen_mapa.values(), key=lambda x: x['estilista_nombre'].lower()):
+        saldo = Decimal(item['saldo_pendiente'])
+        if saldo <= 0:
+            estado = 'cancelado'
+        elif Decimal(item['total_abonado']) > 0:
+            estado = 'parcial'
+        else:
+            estado = 'pendiente'
+
+        resumen.append(
+            {
+                'estilista_id': item['estilista_id'],
+                'estilista_nombre': item['estilista_nombre'],
+                'facturas': item['facturas'],
+                'total_consumido': float(item['total_consumido']),
+                'total_abonado': float(item['total_abonado']),
+                'saldo_pendiente': float(item['saldo_pendiente']),
+                'estado': estado,
+            }
+        )
+
+    return Response(
+        {
+            'fecha_inicio': fecha_inicio,
+            'fecha_fin': fecha_fin,
+            'resumen': resumen,
+            'deudas': deudas_items,
+        }
+    )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def abonar_consumo_empleado(request):
+    """Registra un abono y lo distribuye en las deudas pendientes más antiguas."""
+    estilista_id = request.data.get('estilista_id')
+    monto = request.data.get('monto')
+    notas = request.data.get('notas')
+
+    try:
+        estilista = Estilista.objects.get(id=int(estilista_id))
+    except Exception:
+        return Response({'error': 'Empleado no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+
+    try:
+        monto_decimal = Decimal(str(monto or 0))
+    except Exception:
+        return Response({'error': 'Monto inválido.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if monto_decimal <= 0:
+        return Response({'error': 'El monto debe ser mayor a cero.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    deudas_pendientes = list(
+        DeudaConsumoEmpleado.objects.filter(
+            estilista=estilista,
+            saldo_pendiente__gt=0,
+        ).order_by('fecha_hora', 'id')
+    )
+
+    if not deudas_pendientes:
+        return Response({'error': 'El empleado no tiene deudas pendientes.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    restante = monto_decimal
+    aplicaciones = []
+
+    with transaction.atomic():
+        for deuda in deudas_pendientes:
+            if restante <= 0:
+                break
+
+            saldo = Decimal(deuda.saldo_pendiente or 0)
+            aplicado = saldo if restante >= saldo else restante
+            if aplicado <= 0:
+                continue
+
+            AbonoDeudaEmpleado.objects.create(
+                deuda=deuda,
+                monto=aplicado,
+                usuario=request.user,
+                notas=notas,
+            )
+
+            deuda.total_abonado = Decimal(deuda.total_abonado or 0) + aplicado
+            _recalcular_estado_deuda(deuda)
+            deuda.save(update_fields=['total_abonado', 'saldo_pendiente', 'estado'])
+
+            aplicaciones.append(
+                {
+                    'deuda_id': deuda.id,
+                    'numero_factura': deuda.numero_factura,
+                    'monto_aplicado': float(aplicado),
+                    'saldo_restante': float(deuda.saldo_pendiente),
+                    'estado': deuda.estado,
+                }
+            )
+
+            restante -= aplicado
+
+    return Response(
+        {
+            'ok': True,
+            'estilista_id': estilista.id,
+            'estilista_nombre': estilista.nombre,
+            'monto_recibido': float(monto_decimal),
+            'monto_aplicado': float(monto_decimal - restante),
+            'monto_sobrante': float(restante),
+            'aplicaciones': aplicaciones,
+        }
+    )
 
 
 @api_view(['GET', 'POST'])

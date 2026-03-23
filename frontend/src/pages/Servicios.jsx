@@ -298,6 +298,8 @@ const Servicios = () => {
     [carrito]
   );
 
+  const esConsumoEmpleado = modoVista === 'consumo_empleado';
+
   const cantidadReservadaEnCarrito = (productoId) =>
     carrito
       .filter((item) => Number(item.producto?.id) === Number(productoId))
@@ -594,6 +596,11 @@ const Servicios = () => {
       return;
     }
 
+    if (esConsumoEmpleado && !ventaForm.estilista) {
+      toast.warning('Selecciona el empleado para registrar el consumo');
+      return;
+    }
+
     // Build items: carrito items + current product selection if filled
     const itemsParaRegistrar = [...carrito];
     if (productoVentaSeleccionado) {
@@ -633,6 +640,7 @@ const Servicios = () => {
         cliente_nombre: ventaForm.cliente_nombre.trim() || null,
         estilista: ventaForm.estilista ? Number(ventaForm.estilista) : null,
         medio_pago: ventaForm.medio_pago,
+        tipo_operacion: esConsumoEmpleado ? 'consumo_empleado' : 'venta',
         items: itemsParaRegistrar.map((item) => ({
           producto: item.producto.id,
           cantidad: item.cantidad,
@@ -645,7 +653,14 @@ const Servicios = () => {
         customerDisplayService.publishProductSale(ventaPrincipal);
       }
 
-      toast.success(`Factura ${transaccion?.numero_factura || ''} registrada con ${itemsParaRegistrar.length} producto(s)`);
+      const deudaInfo = transaccion?.deuda;
+      if (esConsumoEmpleado) {
+        toast.success(
+          `Consumo registrado ${transaccion?.numero_factura || ''}. Saldo pendiente: ${formatCOP(deudaInfo?.saldo_pendiente || 0)}`
+        );
+      } else {
+        toast.success(`Factura ${transaccion?.numero_factura || ''} registrada con ${itemsParaRegistrar.length} producto(s)`);
+      }
 
       try {
         if (ventaPrincipal) {
@@ -688,20 +703,30 @@ const Servicios = () => {
       </div>
 
       <div className="card p-2">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
           <button className={modoVista === 'servicios' ? 'btn-primary' : 'btn-secondary'} onClick={() => setModoVista('servicios')}>
             Modo servicios
           </button>
           <button className={modoVista === 'ventas' ? 'btn-primary' : 'btn-secondary'} onClick={() => setModoVista('ventas')}>
             Modo venta productos
           </button>
+          <button className={modoVista === 'consumo_empleado' ? 'btn-primary' : 'btn-secondary'} onClick={() => setModoVista('consumo_empleado')}>
+            Consumo Empleado
+          </button>
         </div>
       </div>
 
-      {modoVista === 'ventas' && (
+      {(modoVista === 'ventas' || modoVista === 'consumo_empleado') && (
         <div className="card space-y-4">
-          <h2 className="card-header">Caja registradora - Venta de productos</h2>
+          <h2 className="card-header">
+            {esConsumoEmpleado ? 'Caja registradora - Consumo de empleado' : 'Caja registradora - Venta de productos'}
+          </h2>
           {!puedeFacturar && <p className="text-amber-700">Este perfil solo puede visualizar. Para facturar usa Administrador o Gerente.</p>}
+          {esConsumoEmpleado && (
+            <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">
+              Este modo registra productos usados por el empleado y crea una cuenta por cobrar automática.
+            </p>
+          )}
 
           <form className="grid grid-cols-1 md:grid-cols-4 gap-3" onSubmit={registrarVentaCaja}>
             <div className="md:col-span-4 relative">
@@ -737,10 +762,15 @@ const Servicios = () => {
               )}
             </div>
 
-            <input className="input-field" placeholder="Cliente" value={ventaForm.cliente_nombre} onChange={(e) => setVentaForm((p) => ({ ...p, cliente_nombre: e.target.value }))} />
+            <input
+              className="input-field"
+              placeholder={esConsumoEmpleado ? 'Detalle opcional (ej. uso interno)' : 'Cliente'}
+              value={ventaForm.cliente_nombre}
+              onChange={(e) => setVentaForm((p) => ({ ...p, cliente_nombre: e.target.value }))}
+            />
 
             <select className="input-field" value={ventaForm.estilista} onChange={(e) => setVentaForm((p) => ({ ...p, estilista: e.target.value }))}>
-              <option value="">Empleado (opcional)</option>
+              <option value="">{esConsumoEmpleado ? 'Empleado (obligatorio)' : 'Empleado (opcional)'}</option>
               {estilistas.map((e) => (
                 <option key={e.id} value={e.id}>{e.nombre}</option>
               ))}
@@ -812,8 +842,8 @@ const Servicios = () => {
                 {saving
                   ? 'Guardando...'
                   : carrito.length > 0
-                  ? `Registrar ${carrito.length + (productoVentaSeleccionado ? 1 : 0)} venta(s)`
-                  : 'Registrar venta'}
+                  ? `${esConsumoEmpleado ? 'Registrar consumo' : 'Registrar'} ${carrito.length + (productoVentaSeleccionado ? 1 : 0)} producto(s)`
+                  : esConsumoEmpleado ? 'Registrar consumo' : 'Registrar venta'}
               </button>
             </div>
           </form>

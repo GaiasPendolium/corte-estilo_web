@@ -59,6 +59,9 @@ const Reportes = () => {
   const [estilistaFiltro, setEstilistaFiltro] = useState('todos');
   const [savingEstadoByEstilista, setSavingEstadoByEstilista] = useState({});
   const [stats, setStats] = useState(null);
+  const [consumoEmpleado, setConsumoEmpleado] = useState({ resumen: [], deudas: [] });
+  const [abonoPorEstilista, setAbonoPorEstilista] = useState({});
+  const [savingAbonoByEstilista, setSavingAbonoByEstilista] = useState({});
   const [historialEstados, setHistorialEstados] = useState([]);
   const [loadingHistorial, setLoadingHistorial] = useState(false);
   const [resumenDiario, setResumenDiario] = useState(null);
@@ -93,17 +96,29 @@ const Reportes = () => {
   const loadData = async () => {
     try {
       setLoading(true);
-      const data = await reportesService.getBIResumen({
-        periodo,
-        fecha_inicio: fechaInicio,
-        fecha_fin: fechaFin,
-        ...(medioPagoFiltro !== 'todos' ? { medio_pago: medioPagoFiltro } : {}),
-      });
+      const [data, consumoData] = await Promise.all([
+        reportesService.getBIResumen({
+          periodo,
+          fecha_inicio: fechaInicio,
+          fecha_fin: fechaFin,
+          ...(medioPagoFiltro !== 'todos' ? { medio_pago: medioPagoFiltro } : {}),
+        }),
+        reportesService.getConsumoEmpleadoDeudas({
+          periodo,
+          fecha_inicio: fechaInicio,
+          fecha_fin: fechaFin,
+        }),
+      ]);
       setStats(data);
+      setConsumoEmpleado({
+        resumen: consumoData?.resumen || [],
+        deudas: consumoData?.deudas || [],
+      });
       await cargarHistorialEstados(data);
     } catch (error) {
       toast.error('Error al cargar reportes');
       setStats(null);
+      setConsumoEmpleado({ resumen: [], deudas: [] });
       setHistorialEstados([]);
     } finally {
       setLoading(false);
@@ -243,6 +258,35 @@ const Reportes = () => {
     if (estilistaFiltro === 'todos') return base;
     return base.filter((item) => item.estilista_nombre === estilistaFiltro);
   }, [stats, estilistaFiltro]);
+
+  const consumoResumenFiltrado = useMemo(() => {
+    const base = consumoEmpleado?.resumen || [];
+    if (estilistaFiltro === 'todos') return base;
+    return base.filter((item) => item.estilista_nombre === estilistaFiltro);
+  }, [consumoEmpleado, estilistaFiltro]);
+
+  const registrarAbonoConsumo = async (fila) => {
+    const monto = Number(abonoPorEstilista[fila.estilista_id] || 0);
+    if (!Number.isFinite(monto) || monto <= 0) {
+      toast.warning('Ingresa un valor de abono válido');
+      return;
+    }
+
+    setSavingAbonoByEstilista((prev) => ({ ...prev, [fila.estilista_id]: true }));
+    try {
+      const resp = await reportesService.abonarConsumoEmpleado({
+        estilista_id: fila.estilista_id,
+        monto,
+      });
+      setAbonoPorEstilista((prev) => ({ ...prev, [fila.estilista_id]: '' }));
+      await loadData();
+      toast.success(`Abono aplicado: ${formatMoney(resp?.monto_aplicado || 0)}`);
+    } catch (error) {
+      toast.error(error?.response?.data?.error || 'No se pudo registrar el abono');
+    } finally {
+      setSavingAbonoByEstilista((prev) => ({ ...prev, [fila.estilista_id]: false }));
+    }
+  };
 
   const servicioPromedio = useMemo(() => {
     if (!kpis.cantidad_servicios) return 0;
@@ -599,6 +643,77 @@ const Reportes = () => {
                         Deshacer liquidación
                       </button>
                     )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h2 className="card-header mb-0">Consumo Empleado y cartera</h2>
+            <p className="text-sm text-gray-500">Resumen por empleado con abonos, estado de deuda y saldo restante.</p>
+          </div>
+          <div className="rounded-2xl bg-amber-50 px-4 py-2 text-sm text-amber-700">
+            {estilistaFiltro === 'todos' ? 'Todos los empleados' : estilistaFiltro}
+          </div>
+        </div>
+
+        <div className="mt-4 overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="table-header">
+              <tr>
+                <th className="px-6 py-3 text-left">Empleado</th>
+                <th className="px-6 py-3 text-left">Facturas consumo</th>
+                <th className="px-6 py-3 text-left">Total consumido</th>
+                <th className="px-6 py-3 text-left">Total abonado</th>
+                <th className="px-6 py-3 text-left">Saldo</th>
+                <th className="px-6 py-3 text-left">Estado</th>
+                <th className="px-6 py-3 text-left">Abonar</th>
+                <th className="px-6 py-3 text-right">Acción</th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {consumoResumenFiltrado.length === 0 && (
+                <tr>
+                  <td className="table-cell text-slate-500" colSpan={8}>No hay consumos de empleado en el rango seleccionado.</td>
+                </tr>
+              )}
+              {consumoResumenFiltrado.map((fila) => (
+                <tr key={fila.estilista_id} className="hover:bg-gray-50">
+                  <td className="table-cell font-medium">{fila.estilista_nombre}</td>
+                  <td className="table-cell">{fila.facturas || 0}</td>
+                  <td className="table-cell">{formatMoney(fila.total_consumido)}</td>
+                  <td className="table-cell">{formatMoney(fila.total_abonado)}</td>
+                  <td className="table-cell font-semibold">{formatMoney(fila.saldo_pendiente)}</td>
+                  <td className="table-cell capitalize">{fila.estado}</td>
+                  <td className="table-cell">
+                    <input
+                      className="input-field !py-2 !min-h-0"
+                      type="number"
+                      min="0"
+                      step="1"
+                      placeholder="0"
+                      value={abonoPorEstilista[fila.estilista_id] ?? ''}
+                      onChange={(e) =>
+                        setAbonoPorEstilista((prev) => ({
+                          ...prev,
+                          [fila.estilista_id]: e.target.value,
+                        }))
+                      }
+                    />
+                  </td>
+                  <td className="table-cell text-right">
+                    <button
+                      className="btn-primary !px-3 !py-2"
+                      disabled={!!savingAbonoByEstilista[fila.estilista_id] || Number(fila.saldo_pendiente || 0) <= 0}
+                      onClick={() => registrarAbonoConsumo(fila)}
+                    >
+                      {savingAbonoByEstilista[fila.estilista_id] ? 'Guardando...' : 'Aplicar abono'}
+                    </button>
                   </td>
                 </tr>
               ))}

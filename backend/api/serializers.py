@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from django.utils import timezone
+from django.db import transaction
 from .models import (
     Usuario, Estilista, Servicio, Cliente, Producto,
     ServicioRealizado, VentaProducto, MovimientoInventario
@@ -201,9 +202,24 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
             if adicional_otro_producto is None and self.instance is not None:
                 adicional_otro_producto = self.instance.adicional_otro_producto
 
-            if adicional_otro_producto and adicional_otro_producto.stock < int(adicional_otro_cantidad or 1):
+            cantidad_requerida = int(adicional_otro_cantidad or 1)
+            stock_disponible = int(adicional_otro_producto.stock or 0) if adicional_otro_producto else 0
+
+            # En update, si mantiene el mismo producto adicional ya descontado,
+            # validamos contra stock + cantidad previa para evaluar solo el delta real.
+            if (
+                self.instance
+                and adicional_otro_producto
+                and self.instance.adicional_otro_producto
+                and int(self.instance.adicional_otro_producto.id) == int(adicional_otro_producto.id)
+                and self.instance.estado == 'finalizado'
+                and self.instance.tiene_adicionales
+            ):
+                stock_disponible += int(self.instance.adicional_otro_cantidad or 1)
+
+            if adicional_otro_producto and stock_disponible < cantidad_requerida:
                 raise serializers.ValidationError(
-                    {'adicional_otro_producto': f'Stock insuficiente para adicional. Disponible: {adicional_otro_producto.stock}'}
+                    {'adicional_otro_producto': f'Stock insuficiente para adicional. Disponible: {stock_disponible}'}
                 )
 
             descuento_empleado = attrs.get('adicional_otro_descuento_empleado', False)
@@ -233,6 +249,56 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
         if not servicio_cfg:
             return float(valor_default)
         return float(servicio_cfg.precio or valor_default)
+
+    def _aplica_descuento_inventario_adicional(self, servicio):
+        return bool(
+            servicio.estado == 'finalizado'
+            and servicio.tiene_adicionales
+            and servicio.adicional_otro_producto
+            and int(servicio.adicional_otro_cantidad or 1) > 0
+        )
+
+    def _tag_movimiento_adicional(self, servicio):
+        return f"adicional servicio #{servicio.id}"
+
+    def _descontar_inventario_adicional(self, servicio, cantidad, producto=None):
+        producto_obj = producto or servicio.adicional_otro_producto
+        qty = int(cantidad or 0)
+        if not producto_obj or qty <= 0:
+            return
+
+        if producto_obj.stock < qty:
+            raise serializers.ValidationError(
+                {'adicional_otro_producto': f'Stock insuficiente para adicional. Disponible: {producto_obj.stock}'}
+            )
+
+        producto_obj.stock -= qty
+        producto_obj.save(update_fields=['stock'])
+
+        MovimientoInventario.objects.create(
+            producto=producto_obj,
+            tipo_movimiento='salida',
+            cantidad=qty,
+            descripcion=f"{self._tag_movimiento_adicional(servicio)} (factura {servicio.numero_factura or '-'})",
+            usuario=servicio.usuario,
+        )
+
+    def _reponer_inventario_adicional(self, servicio, cantidad, producto=None):
+        producto_obj = producto or servicio.adicional_otro_producto
+        qty = int(cantidad or 0)
+        if not producto_obj or qty <= 0:
+            return
+
+        producto_obj.stock += qty
+        producto_obj.save(update_fields=['stock'])
+
+        MovimientoInventario.objects.create(
+            producto=producto_obj,
+            tipo_movimiento='entrada',
+            cantidad=qty,
+            descripcion=f"reverso {self._tag_movimiento_adicional(servicio)} (factura {servicio.numero_factura or '-'})",
+            usuario=servicio.usuario,
+        )
 
     def _calcular_adicionales(
         self,
@@ -406,46 +472,78 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
         if 'precio_cobrado' not in validated_data:
             validated_data['precio_cobrado'] = validated_data['servicio'].precio
 
-        servicio_realizado = ServicioRealizado.objects.create(**validated_data)
+        with transaction.atomic():
+            servicio_realizado = ServicioRealizado.objects.create(**validated_data)
 
-        if servicio_realizado.estado == 'finalizado':
-            self._calcular_adicionales(
-                servicio_realizado,
-                adicionales_servicio_ids=adicionales_servicio_ids,
-                adicionales_servicio_items=adicionales_servicio_items,
-                adicional_otro_descuento_empleado=adicional_otro_descuento_empleado,
-                adicional_otro_precio_unitario=adicional_otro_precio_unitario,
-            )
-            self._calcular_reparto(servicio_realizado)
-            self._generar_factura(servicio_realizado)
-            servicio_realizado.save()
+            if servicio_realizado.estado == 'finalizado':
+                self._calcular_adicionales(
+                    servicio_realizado,
+                    adicionales_servicio_ids=adicionales_servicio_ids,
+                    adicionales_servicio_items=adicionales_servicio_items,
+                    adicional_otro_descuento_empleado=adicional_otro_descuento_empleado,
+                    adicional_otro_precio_unitario=adicional_otro_precio_unitario,
+                )
+                self._calcular_reparto(servicio_realizado)
+                self._generar_factura(servicio_realizado)
+                servicio_realizado.save()
 
-        return servicio_realizado
+                if self._aplica_descuento_inventario_adicional(servicio_realizado):
+                    self._descontar_inventario_adicional(
+                        servicio_realizado,
+                        int(servicio_realizado.adicional_otro_cantidad or 1),
+                    )
+
+            return servicio_realizado
 
     def update(self, instance, validated_data):
         adicionales_servicio_ids = validated_data.pop('adicionales_servicio_ids', None)
         adicionales_servicio_items = validated_data.pop('adicionales_servicio_items', None)
         adicional_otro_descuento_empleado = validated_data.pop('adicional_otro_descuento_empleado', False)
         adicional_otro_precio_unitario = validated_data.pop('adicional_otro_precio_unitario', None)
+
+        aplica_prev = self._aplica_descuento_inventario_adicional(instance)
+        producto_prev = instance.adicional_otro_producto
+        cantidad_prev = int(instance.adicional_otro_cantidad or 1)
+
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
 
         if instance.estado == 'finalizado' and not instance.fecha_fin:
             instance.fecha_fin = timezone.now()
 
-        if instance.estado == 'finalizado':
-            self._calcular_adicionales(
-                instance,
-                adicionales_servicio_ids=adicionales_servicio_ids,
-                adicionales_servicio_items=adicionales_servicio_items,
-                adicional_otro_descuento_empleado=adicional_otro_descuento_empleado,
-                adicional_otro_precio_unitario=adicional_otro_precio_unitario,
-            )
-            self._calcular_reparto(instance)
-            self._generar_factura(instance)
+        with transaction.atomic():
+            if instance.estado == 'finalizado':
+                self._calcular_adicionales(
+                    instance,
+                    adicionales_servicio_ids=adicionales_servicio_ids,
+                    adicionales_servicio_items=adicionales_servicio_items,
+                    adicional_otro_descuento_empleado=adicional_otro_descuento_empleado,
+                    adicional_otro_precio_unitario=adicional_otro_precio_unitario,
+                )
+                self._calcular_reparto(instance)
+                self._generar_factura(instance)
 
-        instance.save()
-        return instance
+            aplica_nuevo = self._aplica_descuento_inventario_adicional(instance)
+            producto_nuevo = instance.adicional_otro_producto
+            cantidad_nueva = int(instance.adicional_otro_cantidad or 1)
+
+            if aplica_prev and not aplica_nuevo:
+                self._reponer_inventario_adicional(instance, cantidad_prev, producto=producto_prev)
+            elif not aplica_prev and aplica_nuevo:
+                self._descontar_inventario_adicional(instance, cantidad_nueva, producto=producto_nuevo)
+            elif aplica_prev and aplica_nuevo:
+                if producto_prev and producto_nuevo and int(producto_prev.id) == int(producto_nuevo.id):
+                    delta = cantidad_nueva - cantidad_prev
+                    if delta > 0:
+                        self._descontar_inventario_adicional(instance, delta, producto=producto_nuevo)
+                    elif delta < 0:
+                        self._reponer_inventario_adicional(instance, abs(delta), producto=producto_nuevo)
+                else:
+                    self._reponer_inventario_adicional(instance, cantidad_prev, producto=producto_prev)
+                    self._descontar_inventario_adicional(instance, cantidad_nueva, producto=producto_nuevo)
+
+            instance.save()
+            return instance
 
 
 class VentaProductoSerializer(serializers.ModelSerializer):
@@ -454,6 +552,13 @@ class VentaProductoSerializer(serializers.ModelSerializer):
     producto_nombre = serializers.CharField(source='producto.nombre', read_only=True)
     usuario_nombre = serializers.CharField(source='usuario.username', read_only=True)
     estilista_nombre = serializers.CharField(source='estilista.nombre', read_only=True)
+    deuda_consumo_estado = serializers.CharField(source='deuda_consumo.estado', read_only=True)
+    deuda_consumo_saldo = serializers.DecimalField(
+        source='deuda_consumo.saldo_pendiente',
+        max_digits=12,
+        decimal_places=2,
+        read_only=True,
+    )
     
     class Meta:
         model = VentaProducto
@@ -461,20 +566,33 @@ class VentaProductoSerializer(serializers.ModelSerializer):
             'id', 'producto', 'producto_nombre', 'cantidad',
             'precio_unitario', 'total', 'fecha_hora',
             'cliente_nombre', 'medio_pago', 'numero_factura', 'factura_texto',
+            'tipo_operacion',
             'estilista', 'estilista_nombre',
+            'deuda_consumo', 'deuda_consumo_estado', 'deuda_consumo_saldo',
             'usuario', 'usuario_nombre'
         ]
         read_only_fields = ['total', 'numero_factura', 'factura_texto']
 
     def _generar_factura(self, venta):
         if not venta.numero_factura:
-            venta.numero_factura = f"FP-{timezone.now().strftime('%Y%m%d')}-{venta.id:06d}"
+            prefijo = 'FC' if venta.tipo_operacion == 'consumo_empleado' else 'FP'
+            venta.numero_factura = f"{prefijo}-{timezone.now().strftime('%Y%m%d')}-{venta.id:06d}"
         cliente = venta.cliente_nombre or 'Cliente no registrado'
-        comision_pct = float(venta.estilista.comision_ventas_productos) if venta.estilista else 0
+        if venta.tipo_operacion == 'consumo_empleado':
+            comision_pct = 0
+        else:
+            comision_pct = float(venta.estilista.comision_ventas_productos) if venta.estilista else 0
         comision_valor = float(venta.total or 0) * comision_pct / 100
+        etiqueta_operacion = 'Consumo empleado' if venta.tipo_operacion == 'consumo_empleado' else 'Producto'
+        detalle_deuda = ''
+        if venta.tipo_operacion == 'consumo_empleado' and venta.deuda_consumo:
+            detalle_deuda = (
+                f"\nCuenta por cobrar: {venta.deuda_consumo.numero_factura}"
+                f"\nSaldo pendiente: ${float(venta.deuda_consumo.saldo_pendiente or 0):.2f}"
+            )
         venta.factura_texto = (
             f"Factura: {venta.numero_factura}\n"
-            f"Tipo: Producto\n"
+            f"Tipo: {etiqueta_operacion}\n"
             f"Fecha: {timezone.localtime(venta.fecha_hora).strftime('%Y-%m-%d %H:%M')}\n"
             f"Cliente: {cliente}\n"
             f"Producto: {venta.producto.nombre}\n"
@@ -483,6 +601,7 @@ class VentaProductoSerializer(serializers.ModelSerializer):
             f"Total: ${float(venta.total):.2f}\n"
             f"Comisión empleado por venta: {comision_pct:.2f}% (${comision_valor:.2f})\n"
             f"Medio de pago: {venta.get_medio_pago_display()}"
+            f"{detalle_deuda}"
         )
     
     def create(self, validated_data):

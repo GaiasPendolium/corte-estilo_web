@@ -8,7 +8,8 @@ from .views import (
     MovimientoInventarioViewSet, estadisticas_generales,
     reporte_ventas, reporte_servicios, bi_resumen, bi_export_csv,
     bi_export_pdf, bi_resumen_diario, estado_pago_estilista_dia,
-    estado_pago_estilista_historial, bi_desglose_estilista, bi_desglose_estilista_debug
+    estado_pago_estilista_historial, bi_desglose_estilista, bi_desglose_estilista_debug,
+    reporte_consumo_empleado, abonar_consumo_empleado
 )
 
 # Crear router para los viewsets
@@ -39,6 +40,8 @@ urlpatterns = [
     path('reportes/bi/desglose-debug/', bi_desglose_estilista_debug, name='reporte-bi-desglose-debug'),
     path('reportes/estilistas/estado-pago-dia/', estado_pago_estilista_dia, name='reporte-estilista-estado-pago-dia'),
     path('reportes/estilistas/estado-pago-historial/', estado_pago_estilista_historial, name='reporte-estilista-estado-pago-historial'),
+    path('reportes/consumo-empleado/deudas/', reporte_consumo_empleado, name='reporte-consumo-empleado-deudas'),
+    path('reportes/consumo-empleado/abonar/', abonar_consumo_empleado, name='reporte-consumo-empleado-abonar'),
     
     # Incluir todas las rutas del router
     path('', include(router.urls)),

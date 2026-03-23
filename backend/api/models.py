@@ -317,6 +317,11 @@ class VentaProducto(models.Model):
         ('efectivo', 'Efectivo'),
         ('otros', 'Otros'),
     ]
+
+    TIPOS_OPERACION = [
+        ('venta', 'Venta'),
+        ('consumo_empleado', 'Consumo empleado'),
+    ]
     
     producto = models.ForeignKey(
         Producto, 
@@ -329,6 +334,12 @@ class VentaProducto(models.Model):
     total = models.DecimalField(max_digits=10, decimal_places=2, verbose_name='Total')
     cliente_nombre = models.CharField(max_length=255, blank=True, null=True, verbose_name='Nombre Cliente')
     medio_pago = models.CharField(max_length=20, choices=MEDIOS_PAGO, verbose_name='Medio de Pago', default='efectivo')
+    tipo_operacion = models.CharField(
+        max_length=30,
+        choices=TIPOS_OPERACION,
+        default='venta',
+        verbose_name='Tipo de Operación'
+    )
     estilista = models.ForeignKey(
         Estilista,
         on_delete=models.SET_NULL,
@@ -347,6 +358,14 @@ class VentaProducto(models.Model):
         blank=True,
         related_name='ventas',
         verbose_name='Usuario'
+    )
+    deuda_consumo = models.ForeignKey(
+        'DeudaConsumoEmpleado',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='ventas_items',
+        verbose_name='Deuda consumo'
     )
     
     class Meta:
@@ -399,6 +418,78 @@ class MovimientoInventario(models.Model):
     
     def __str__(self):
         return f"{self.tipo_movimiento} - {self.producto.nombre} ({self.cantidad})"
+
+
+class DeudaConsumoEmpleado(models.Model):
+    """Cuenta por cobrar por consumo de productos del empleado."""
+
+    ESTADOS = [
+        ('pendiente', 'Pendiente'),
+        ('parcial', 'Parcial'),
+        ('cancelado', 'Cancelado'),
+    ]
+
+    estilista = models.ForeignKey(
+        Estilista,
+        on_delete=models.PROTECT,
+        related_name='deudas_consumo',
+        verbose_name='Empleado'
+    )
+    numero_factura = models.CharField(max_length=40, unique=True, verbose_name='Numero Factura')
+    total_cargo = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Total Cargo')
+    total_abonado = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Total Abonado')
+    saldo_pendiente = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Saldo Pendiente')
+    estado = models.CharField(max_length=20, choices=ESTADOS, default='pendiente', verbose_name='Estado')
+    fecha_hora = models.DateTimeField(default=timezone.now, verbose_name='Fecha y Hora')
+    usuario = models.ForeignKey(
+        Usuario,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='deudas_consumo_registradas',
+        verbose_name='Usuario'
+    )
+    notas = models.CharField(max_length=255, blank=True, null=True, verbose_name='Notas')
+
+    class Meta:
+        db_table = 'deudas_consumo_empleado'
+        verbose_name = 'Deuda Consumo Empleado'
+        verbose_name_plural = 'Deudas Consumo Empleado'
+        ordering = ['-fecha_hora']
+
+    def __str__(self):
+        return f"{self.numero_factura} - {self.estilista.nombre} - {self.estado}"
+
+
+class AbonoDeudaEmpleado(models.Model):
+    """Registro de abonos aplicados a deudas de consumo de empleados."""
+
+    deuda = models.ForeignKey(
+        DeudaConsumoEmpleado,
+        on_delete=models.CASCADE,
+        related_name='abonos',
+        verbose_name='Deuda'
+    )
+    monto = models.DecimalField(max_digits=12, decimal_places=2, verbose_name='Monto Abono')
+    fecha_hora = models.DateTimeField(default=timezone.now, verbose_name='Fecha y Hora')
+    usuario = models.ForeignKey(
+        Usuario,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='abonos_deuda_empleado',
+        verbose_name='Usuario'
+    )
+    notas = models.CharField(max_length=255, blank=True, null=True, verbose_name='Notas')
+
+    class Meta:
+        db_table = 'abonos_deuda_empleado'
+        verbose_name = 'Abono Deuda Empleado'
+        verbose_name_plural = 'Abonos Deuda Empleado'
+        ordering = ['-fecha_hora']
+
+    def __str__(self):
+        return f"Abono {self.deuda.numero_factura}: ${self.monto}"
 
 
 class EstadoPagoEstilistaDia(models.Model):

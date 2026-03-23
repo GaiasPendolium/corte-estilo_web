@@ -435,9 +435,19 @@ const Ventas = () => {
     });
   }, [ventas, filtroUsuario, filtroEmpleado]);
 
+  const ventasProductosFiltradas = useMemo(
+    () => ventasFiltradas.filter((v) => (v.tipo_operacion || 'venta') !== 'consumo_empleado'),
+    [ventasFiltradas]
+  );
+
+  const consumosEmpleadoFiltrados = useMemo(
+    () => ventasFiltradas.filter((v) => (v.tipo_operacion || 'venta') === 'consumo_empleado'),
+    [ventasFiltradas]
+  );
+
   const ventasAgrupadas = useMemo(() => {
     const grupos = new Map();
-    for (const v of ventasFiltradas) {
+    for (const v of ventasProductosFiltradas) {
       const key = v.numero_factura || `SIN-${v.id}`;
       const existente = grupos.get(key);
       if (!existente) {
@@ -475,7 +485,51 @@ const Ventas = () => {
     }
 
     return Array.from(grupos.values()).sort((a, b) => String(b.fecha_hora || '').localeCompare(String(a.fecha_hora || '')));
-  }, [ventasFiltradas]);
+  }, [ventasProductosFiltradas]);
+
+  const consumosEmpleadoAgrupados = useMemo(() => {
+    const grupos = new Map();
+    for (const v of consumosEmpleadoFiltrados) {
+      const key = v.numero_factura || `CON-${v.id}`;
+      const existente = grupos.get(key);
+      if (!existente) {
+        grupos.set(key, {
+          id: v.id,
+          numero_factura: v.numero_factura,
+          fecha_hora: v.fecha_hora,
+          cliente_nombre: v.cliente_nombre,
+          estilista_nombre: v.estilista_nombre,
+          usuario_nombre: v.usuario_nombre,
+          medio_pago: v.medio_pago,
+          factura_texto: v.factura_texto,
+          total: Number(v.total || 0),
+          cantidad_total: Number(v.cantidad || 0),
+          deuda_consumo_estado: v.deuda_consumo_estado || 'pendiente',
+          deuda_consumo_saldo: Number(v.deuda_consumo_saldo || 0),
+          items: [v],
+        });
+        continue;
+      }
+
+      existente.total += Number(v.total || 0);
+      existente.cantidad_total += Number(v.cantidad || 0);
+      existente.items.push(v);
+      existente.deuda_consumo_saldo = Math.max(existente.deuda_consumo_saldo, Number(v.deuda_consumo_saldo || 0));
+      if (String(v.fecha_hora || '') > String(existente.fecha_hora || '')) {
+        existente.fecha_hora = v.fecha_hora;
+      }
+      if (!existente.factura_texto && v.factura_texto) {
+        existente.factura_texto = v.factura_texto;
+      }
+      if (v.deuda_consumo_estado === 'parcial') {
+        existente.deuda_consumo_estado = 'parcial';
+      } else if (v.deuda_consumo_estado === 'cancelado' && existente.deuda_consumo_estado !== 'parcial') {
+        existente.deuda_consumo_estado = 'cancelado';
+      }
+    }
+
+    return Array.from(grupos.values()).sort((a, b) => String(b.fecha_hora || '').localeCompare(String(a.fecha_hora || '')));
+  }, [consumosEmpleadoFiltrados]);
 
   const serviciosFiltrados = useMemo(() => {
     const qUsuario = filtroUsuario.trim().toLowerCase();
@@ -489,7 +543,8 @@ const Ventas = () => {
     });
   }, [serviciosFinalizados, filtroUsuario, filtroEmpleado]);
 
-  const totalVentas = useMemo(() => ventasFiltradas.reduce((acc, v) => acc + Number(v.total || 0), 0), [ventasFiltradas]);
+  const totalVentas = useMemo(() => ventasProductosFiltradas.reduce((acc, v) => acc + Number(v.total || 0), 0), [ventasProductosFiltradas]);
+  const totalConsumoEmpleado = useMemo(() => consumosEmpleadoFiltrados.reduce((acc, v) => acc + Number(v.total || 0), 0), [consumosEmpleadoFiltrados]);
   const ticketPromedio = useMemo(() => (ventasAgrupadas.length ? totalVentas / ventasAgrupadas.length : 0), [totalVentas, ventasAgrupadas.length]);
   const totalServicios = useMemo(
     () => serviciosFiltrados.reduce((acc, s) => acc + (Number(s.precio_cobrado || 0) + Number(s.valor_adicionales || 0)), 0),
@@ -524,12 +579,15 @@ const Ventas = () => {
       </div>
 
       <div className="card p-4 space-y-3">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
           <button className={modoVista === 'ventas' ? 'btn-primary' : 'btn-secondary'} onClick={() => setModoVista('ventas')}>
             Ventas de productos
           </button>
           <button className={modoVista === 'servicios' ? 'btn-primary' : 'btn-secondary'} onClick={() => setModoVista('servicios')}>
             Servicios facturados
+          </button>
+          <button className={modoVista === 'consumo_empleado' ? 'btn-primary' : 'btn-secondary'} onClick={() => setModoVista('consumo_empleado')}>
+            Consumo Empleado
           </button>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3">
@@ -559,7 +617,7 @@ const Ventas = () => {
             Limpiar filtros
           </button>
           <div className="text-sm text-gray-600 flex items-center">
-            Total resultados: {modoVista === 'ventas' ? ventasAgrupadas.length : serviciosFiltrados.length}
+            Total resultados: {modoVista === 'ventas' ? ventasAgrupadas.length : modoVista === 'servicios' ? serviciosFiltrados.length : consumosEmpleadoAgrupados.length}
           </div>
         </div>
       </div>
@@ -760,6 +818,10 @@ const Ventas = () => {
         <div className="card">
           <p className="text-sm text-gray-500">Total servicios facturados</p>
           <p className="text-2xl font-bold text-gray-900">${totalServicios.toFixed(2)}</p>
+        </div>
+        <div className="card">
+          <p className="text-sm text-gray-500">Total consumo empleado</p>
+          <p className="text-2xl font-bold text-gray-900">${totalConsumoEmpleado.toFixed(2)}</p>
         </div>
       </div>
 
@@ -990,6 +1052,61 @@ const Ventas = () => {
                             <FiTrash2 size={14} /> Eliminar
                           </button>
                         )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+      </>
+      )}
+
+      {modoVista === 'consumo_empleado' && (
+      <>
+      <div className="card">
+        <h2 className="card-header">Facturas de consumo de empleado</h2>
+        {consumosEmpleadoAgrupados.length === 0 && <p className="text-gray-600">No hay consumos de empleado con los filtros actuales.</p>}
+        {consumosEmpleadoAgrupados.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="table-header">
+                <tr>
+                  <th className="px-6 py-3 text-left">Factura</th>
+                  <th className="px-6 py-3 text-left">Fecha</th>
+                  <th className="px-6 py-3 text-left">Empleado</th>
+                  <th className="px-6 py-3 text-left">Items</th>
+                  <th className="px-6 py-3 text-left">Total</th>
+                  <th className="px-6 py-3 text-left">Saldo</th>
+                  <th className="px-6 py-3 text-left">Estado</th>
+                  <th className="px-6 py-3 text-left">Usuario facturó</th>
+                  <th className="px-6 py-3 text-right">Acciones</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {consumosEmpleadoAgrupados.map((v) => (
+                  <tr key={v.id} className="hover:bg-gray-50">
+                    <td className="table-cell">{v.numero_factura || '-'}</td>
+                    <td className="table-cell">{String(v.fecha_hora || '').slice(0, 10)}</td>
+                    <td className="table-cell">{v.estilista_nombre || '-'}</td>
+                    <td className="table-cell">{(v.items || []).length}</td>
+                    <td className="table-cell">${Number(v.total || 0).toFixed(2)}</td>
+                    <td className="table-cell">${Number(v.deuda_consumo_saldo || 0).toFixed(2)}</td>
+                    <td className="table-cell capitalize">{v.deuda_consumo_estado || 'pendiente'}</td>
+                    <td className="table-cell">{v.usuario_nombre || '-'}</td>
+                    <td className="table-cell">
+                      <div className="flex justify-end gap-2">
+                        <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => visualizarVenta(v)}>
+                          <FiEye size={14} /> Ver
+                        </button>
+                        <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => copiarTexto(v.factura_texto)}>
+                          <FiCopy size={14} /> Copiar
+                        </button>
+                        <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => reimprimirVenta(v)}>
+                          Imprimir
+                        </button>
                       </div>
                     </td>
                   </tr>
