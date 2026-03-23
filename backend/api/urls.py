@@ -8,7 +8,7 @@ from .views import (
     MovimientoInventarioViewSet, estadisticas_generales,
     reporte_ventas, reporte_servicios, bi_resumen, bi_export_csv,
     bi_export_pdf, bi_resumen_diario, estado_pago_estilista_dia,
-    estado_pago_estilista_historial
+    estado_pago_estilista_historial, bi_desglose_estilista
 )
 
 # Crear router para los viewsets
@@ -35,6 +35,7 @@ urlpatterns = [
     path('reportes/bi/export/', bi_export_csv, name='reporte-bi-export'),
     path('reportes/bi/export-pdf/', bi_export_pdf, name='reporte-bi-export-pdf'),
     path('reportes/bi/resumen-diario/', bi_resumen_diario, name='reporte-bi-resumen-diario'),
+    path('reportes/bi/desglose/', bi_desglose_estilista, name='reporte-bi-desglose-estilista'),
     path('reportes/estilistas/estado-pago-dia/', estado_pago_estilista_dia, name='reporte-estilista-estado-pago-dia'),
     path('reportes/estilistas/estado-pago-historial/', estado_pago_estilista_historial, name='reporte-estilista-estado-pago-historial'),
     
