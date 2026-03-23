@@ -97,6 +97,12 @@ export const buildEscPosTicket = (payload, options = {}) => {
 
     output += `${truncate(item.nombre || 'Producto/Servicio', width)}\n`;
     output += line(`${qty} x ${money(unit)}`, money(total), width);
+
+    if (Array.isArray(item.infoLines) && item.infoLines.length) {
+      item.infoLines.forEach((infoLine) => {
+        output += `${truncate(`  ${String(infoLine || '')}`, width)}\n`;
+      });
+    }
   });
 
   output += divider(width);
@@ -154,11 +160,20 @@ export const buildServiceSaleTicketPayload = (service) => {
   adicionales.forEach((item) => {
     const valor = Number(item?.valor || 0);
     if (valor <= 0) return;
+
+    const aplicaPct = Boolean(item?.aplica_porcentaje_establecimiento);
+    const pctEstablecimiento = Number(item?.porcentaje_establecimiento || 0);
+    const pctNormalizado = Math.max(0, Math.min(100, pctEstablecimiento));
+    const comisionEmpleado = aplicaPct
+      ? valor * (1 - (pctNormalizado / 100))
+      : valor;
+
     items.push({
       nombre: `${item?.servicio_nombre || 'Servicio adicional'} - ${item?.estilista_nombre || '-'}`,
       cantidad: 1,
       precio_unitario: valor,
       total: valor,
+      infoLines: [`Comision estilista: ${money(comisionEmpleado)}`],
     });
   });
 
@@ -168,6 +183,22 @@ export const buildServiceSaleTicketPayload = (service) => {
       cantidad: 1,
       precio_unitario: Number(service?.valor_adicionales || 0),
       total: Number(service?.valor_adicionales || 0),
+    });
+  }
+
+  if (service?.adicional_otro_producto) {
+    const qtyProductoAd = Number(service?.adicional_otro_cantidad || 1);
+    const totalProductoAd = Number(service?.adicional_otro_total || 0);
+    const unitProductoAd = qtyProductoAd > 0 ? totalProductoAd / qtyProductoAd : totalProductoAd;
+    const comisionProductoAd = Number(service?.adicional_otro_comision_estilista || 0);
+    const estilistaComisionProducto = service?.adicional_otro_estilista_nombre || service?.estilista_nombre || '-';
+
+    items.push({
+      nombre: `${service?.adicional_otro_producto_nombre || 'Producto adicional'} - ${estilistaComisionProducto}`,
+      cantidad: qtyProductoAd,
+      precio_unitario: unitProductoAd,
+      total: totalProductoAd,
+      infoLines: [`Comision venta: ${money(comisionProductoAd)}`],
     });
   }
 

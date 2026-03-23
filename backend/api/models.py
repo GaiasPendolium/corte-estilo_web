@@ -284,6 +284,14 @@ class ServicioRealizado(models.Model):
         related_name='servicios_adicionales',
         verbose_name='Adicional Otro Producto'
     )
+    adicional_otro_estilista = models.ForeignKey(
+        Estilista,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='servicios_adicional_producto_comision',
+        verbose_name='Estilista comisión producto adicional'
+    )
     adicional_otro_cantidad = models.IntegerField(default=1, verbose_name='Cantidad Adicional Otro')
     valor_adicionales = models.DecimalField(max_digits=10, decimal_places=2, default=0, verbose_name='Valor Adicionales')
     numero_factura = models.CharField(max_length=40, blank=True, null=True, verbose_name='Número Factura')

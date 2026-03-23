@@ -259,7 +259,9 @@ class ProductoViewSet(viewsets.ModelViewSet):
 class ServicioRealizadoViewSet(viewsets.ModelViewSet):
     """ViewSet para el modelo ServicioRealizado"""
     
-    queryset = ServicioRealizado.objects.select_related('estilista', 'servicio', 'cliente', 'usuario').prefetch_related(
+    queryset = ServicioRealizado.objects.select_related(
+        'estilista', 'servicio', 'cliente', 'usuario', 'adicional_otro_producto', 'adicional_otro_estilista'
+    ).prefetch_related(
         'adicionales_asignados__servicio',
         'adicionales_asignados__estilista',
     ).all()
@@ -399,6 +401,7 @@ class ServicioRealizadoViewSet(viewsets.ModelViewSet):
             'adicional_shampoo': request.data.get('adicional_shampoo', servicio_realizado.adicional_shampoo),
             'adicional_guantes': request.data.get('adicional_guantes', servicio_realizado.adicional_guantes),
             'adicional_otro_producto': request.data.get('adicional_otro_producto', servicio_realizado.adicional_otro_producto_id),
+            'adicional_otro_estilista': request.data.get('adicional_otro_estilista', servicio_realizado.adicional_otro_estilista_id),
             'adicional_otro_cantidad': request.data.get('adicional_otro_cantidad', servicio_realizado.adicional_otro_cantidad),
             'adicional_otro_descuento_empleado': request.data.get('adicional_otro_descuento_empleado', False),
             'adicional_otro_precio_unitario': request.data.get('adicional_otro_precio_unitario'),
@@ -979,7 +982,9 @@ def _calcular_datos_bi(request):
         fecha_hora__date__lte=fecha_fin_dt,
     )
     ventas_pagadas_qs = ventas_qs.exclude(tipo_operacion='consumo_empleado')
-    servicios_qs = ServicioRealizado.objects.select_related('estilista').filter(
+    servicios_qs = ServicioRealizado.objects.select_related(
+        'estilista', 'adicional_otro_producto', 'adicional_otro_estilista'
+    ).filter(
         estado='finalizado',
         fecha_hora__date__gte=fecha_inicio_dt,
         fecha_hora__date__lte=fecha_fin_dt,
@@ -1042,16 +1047,42 @@ def _calcular_datos_bi(request):
 
     utilidad_productos = ingresos_productos_caja - costo_productos
 
+    comision_producto_servicios_por_estilista = {}
+    comision_producto_servicios_por_estilista_dia = {}
+
     # Productos vendidos como adicional dentro de servicios finalizados.
-    # Se valorizan para ingresos/costos de inventario, pero no generan comisión de venta.
-    for srv in servicios_qs.select_related('adicional_otro_producto', 'estilista'):
+    # Se valorizan para ingresos/costos de inventario y sí generan comisión al estilista seleccionado.
+    for srv in servicios_qs:
         if srv.adicional_otro_producto_id:
             cantidad_ad = Decimal(srv.adicional_otro_cantidad or 1)
             precio_venta_ad = Decimal(srv.adicional_otro_producto.precio_venta or 0)
             precio_compra_ad = Decimal(srv.adicional_otro_producto.precio_compra or 0)
             ingresos_productos_en_servicios += precio_venta_ad * cantidad_ad
             costo_productos_en_servicios += precio_compra_ad * cantidad_ad
-    comision_producto_estilistas_total = comision_producto_estilistas
+
+            if srv.adicional_otro_estilista_id:
+                pct_srv = Decimal(srv.adicional_otro_producto.comision_estilista or 0)
+                if pct_srv < 0:
+                    pct_srv = Decimal(0)
+                if pct_srv > 100:
+                    pct_srv = Decimal(100)
+
+                valor_venta_srv = precio_venta_ad * cantidad_ad
+                valor_comision_srv = (valor_venta_srv * pct_srv) / Decimal(100)
+                comision_producto_estilistas_en_servicios += valor_comision_srv
+                comision_producto_servicios_por_estilista[srv.adicional_otro_estilista_id] = (
+                    comision_producto_servicios_por_estilista.get(srv.adicional_otro_estilista_id, Decimal(0))
+                    + valor_comision_srv
+                )
+
+                fecha_srv = _fecha_operativa_desde_dt(srv.fecha_hora)
+                key_dia = (srv.adicional_otro_estilista_id, fecha_srv)
+                comision_producto_servicios_por_estilista_dia[key_dia] = (
+                    comision_producto_servicios_por_estilista_dia.get(key_dia, Decimal(0))
+                    + valor_comision_srv
+                )
+
+    comision_producto_estilistas_total = comision_producto_estilistas + comision_producto_estilistas_en_servicios
 
     ingresos_productos_totales = ingresos_productos + ingresos_productos_en_servicios
     costo_productos_totales = costo_productos + costo_productos_en_servicios
@@ -1139,7 +1170,7 @@ def _calcular_datos_bi(request):
             fecha_v = _fecha_operativa_desde_dt(v.fecha_hora)
             comision_por_dia[fecha_v] = comision_por_dia.get(fecha_v, Decimal(0)) + valor_comision
 
-        comision_ventas_producto_servicios_est = Decimal(0)
+        comision_ventas_producto_servicios_est = comision_producto_servicios_por_estilista.get(estilista.id, Decimal(0))
 
         comision_ventas_producto_est = comision_ventas_producto_caja_est + comision_ventas_producto_servicios_est
 
@@ -1160,6 +1191,11 @@ def _calcular_datos_bi(request):
                 pct = Decimal(100)
             valor_emp = valor - ((valor * pct) / Decimal(100))
             servicios_por_dia[fecha_ad] = servicios_por_dia.get(fecha_ad, Decimal(0)) + valor_emp
+
+        for (est_id, fecha_est), valor_comision_srv in comision_producto_servicios_por_estilista_dia.items():
+            if int(est_id) != int(estilista.id):
+                continue
+            comision_por_dia[fecha_est] = comision_por_dia.get(fecha_est, Decimal(0)) + valor_comision_srv
 
         # Días trabajados: usar la misma fecha operativa que los mapas por día.
         dias_trabajados = set(servicios_por_dia.keys()) | set(comision_por_dia.keys())

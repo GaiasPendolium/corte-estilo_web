@@ -170,9 +170,14 @@ const Servicios = () => {
     medio_pago: 'efectivo',
     tiene_adicionales: false,
     adicionales_servicio_items: [],
+    adicional_otro_producto: '',
+    adicional_otro_cantidad: '1',
+    adicional_otro_estilista: '',
     notas: '',
   });
   const [adicionalActivoKey, setAdicionalActivoKey] = useState(null);
+  const [productoAdicionalBusqueda, setProductoAdicionalBusqueda] = useState('');
+  const [productoAdicionalSugerencias, setProductoAdicionalSugerencias] = useState([]);
 
   const [ventaForm, setVentaForm] = useState({
     cliente_nombre: '',
@@ -239,6 +244,18 @@ const Servicios = () => {
         .filter((p) => productMatchesSearch(p, q))
     );
   }, [ventaBusqueda, productos]);
+
+  useEffect(() => {
+    const q = productoAdicionalBusqueda.trim().toLowerCase();
+    if (!q) {
+      setProductoAdicionalSugerencias([]);
+      return;
+    }
+
+    setProductoAdicionalSugerencias(
+      productos.filter((p) => productMatchesSearch(p, q)).slice(0, 10)
+    );
+  }, [productoAdicionalBusqueda, productos]);
 
   const estilistasOcupados = useMemo(
     () => new Set(estadoEstilistas.filter((e) => e.estado === 'ocupado').map((e) => e.estilista_id)),
@@ -315,7 +332,15 @@ const Servicios = () => {
       (acc, item) => acc + toPesoInt(item.valor || 0),
       0
     );
-    return precioBase + adicionalesServicios;
+    const productoAdicionalSeleccionado = productos.find(
+      (p) => Number(p.id) === Number(finalizacion.adicional_otro_producto || 0)
+    );
+    const cantidadProductoAdicional = toPositiveInt(finalizacion.adicional_otro_cantidad || 0);
+    const totalProductoAdicional = productoAdicionalSeleccionado
+      ? cantidadProductoAdicional * toPesoInt(productoAdicionalSeleccionado.precio_venta || 0)
+      : 0;
+
+    return precioBase + adicionalesServicios + totalProductoAdicional;
   }, [finalizacion]);
 
   const validarPrecioMinimoProducto = (producto, precioUnitario) => {
@@ -372,8 +397,14 @@ const Servicios = () => {
       medio_pago: srv.medio_pago || 'efectivo',
       tiene_adicionales: Boolean(srv.tiene_adicionales),
       adicionales_servicio_items: itemsIniciales,
+      adicional_otro_producto: srv.adicional_otro_producto ? String(srv.adicional_otro_producto) : '',
+      adicional_otro_cantidad: String(srv.adicional_otro_cantidad || 1),
+      adicional_otro_estilista: srv.adicional_otro_estilista ? String(srv.adicional_otro_estilista) : '',
       notas: srv.notas || '',
     });
+    const productoSrv = productos.find((p) => Number(p.id) === Number(srv.adicional_otro_producto || 0));
+    setProductoAdicionalBusqueda(productoSrv ? formatProductSearchLabel(productoSrv) : '');
+    setProductoAdicionalSugerencias([]);
     setAdicionalActivoKey(null);
   };
 
@@ -523,6 +554,28 @@ const Servicios = () => {
       }
     }
 
+    const productoAdicional = finalizacion.adicional_otro_producto
+      ? productos.find((p) => Number(p.id) === Number(finalizacion.adicional_otro_producto))
+      : null;
+    if (productoAdicional) {
+      const qtyProdAd = toPositiveInt(finalizacion.adicional_otro_cantidad || 0);
+      if (qtyProdAd <= 0) {
+        toast.warning('La cantidad del producto adicional debe ser mayor a 0');
+        return;
+      }
+
+      if (!finalizacion.adicional_otro_estilista) {
+        toast.warning('Selecciona el empleado que gana la comisión del producto adicional');
+        return;
+      }
+
+      const stockDisponible = Number(productoAdicional.stock || 0);
+      if (qtyProdAd > stockDisponible) {
+        toast.warning(`Stock insuficiente para producto adicional. Disponible: ${stockDisponible}`);
+        return;
+      }
+    }
+
     setShowConfirmacionFinalizar(true);
   };
 
@@ -544,6 +597,8 @@ const Servicios = () => {
             }))
         : [];
       const flagsLegacy = mapearFlagsLegacyAdicionales(itemsNormalizados.map((x) => x.id));
+      const qtyProductoAdicional = toPositiveInt(finalizacion.adicional_otro_cantidad || 0);
+      const productoAdicionalId = finalizacion.adicional_otro_producto ? Number(finalizacion.adicional_otro_producto) : null;
       const res = await serviciosRealizadosService.finalizar(servicioFinalizarId, {
         precio_cobrado: toPesoInt(finalizacion.precio_cobrado),
         medio_pago: finalizacion.medio_pago,
@@ -552,8 +607,9 @@ const Servicios = () => {
         adicionales_servicio_items: itemsNormalizados,
         adicional_shampoo: finalizacion.tiene_adicionales ? flagsLegacy.adicional_shampoo : false,
         adicional_guantes: finalizacion.tiene_adicionales ? flagsLegacy.adicional_guantes : false,
-        adicional_otro_producto: null,
-        adicional_otro_cantidad: 1,
+        adicional_otro_producto: productoAdicionalId,
+        adicional_otro_estilista: productoAdicionalId ? Number(finalizacion.adicional_otro_estilista) : null,
+        adicional_otro_cantidad: productoAdicionalId ? qtyProductoAdicional : 1,
         adicional_otro_descuento_empleado: false,
         adicional_otro_precio_unitario: null,
         notas: finalizacion.notas || null,
@@ -586,8 +642,13 @@ const Servicios = () => {
         medio_pago: 'efectivo',
         tiene_adicionales: false,
         adicionales_servicio_items: [],
+        adicional_otro_producto: '',
+        adicional_otro_cantidad: '1',
+        adicional_otro_estilista: '',
         notas: '',
       });
+      setProductoAdicionalBusqueda('');
+      setProductoAdicionalSugerencias([]);
       setAdicionalActivoKey(null);
       await cargarTodo();
     } catch (error) {
@@ -1215,6 +1276,93 @@ const Servicios = () => {
                 {serviciosAdicionalesConfigurados.length === 0 && (
                   <p className="text-xs text-blue-800 mt-2">No hay servicios marcados como adicionales en Inventario y Servicio.</p>
                 )}
+
+                <div className="mt-4 rounded-lg border border-indigo-200 bg-indigo-50 p-3">
+                  <p className="text-sm font-medium text-indigo-900 mb-2">Producto de venta adicional (un solo ticket)</p>
+                  <div className="grid grid-cols-1 md:grid-cols-12 gap-2">
+                    <div className="md:col-span-6 relative">
+                      <input
+                        className="input-field"
+                        placeholder="Buscar producto por código, marca o nombre"
+                        value={productoAdicionalBusqueda}
+                        onChange={(e) => {
+                          setProductoAdicionalBusqueda(e.target.value);
+                          setFinalizacion((p) => ({ ...p, adicional_otro_producto: '' }));
+                        }}
+                      />
+                      {productoAdicionalSugerencias.length > 0 && (
+                        <div className="absolute z-20 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg max-h-56 overflow-auto">
+                          {productoAdicionalSugerencias.map((p) => {
+                            const estadoStock = getProductoStockEstado(p);
+                            return (
+                              <button
+                                key={p.id}
+                                type="button"
+                                className={`w-full text-left px-3 py-2 hover:bg-gray-50 ${estadoStock.key === 'agotado' ? 'opacity-60 cursor-not-allowed' : ''}`}
+                                disabled={estadoStock.key === 'agotado'}
+                                onClick={() => {
+                                  setFinalizacion((prev) => ({ ...prev, adicional_otro_producto: String(p.id) }));
+                                  setProductoAdicionalBusqueda(formatProductSearchLabel(p));
+                                  setProductoAdicionalSugerencias([]);
+                                }}
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <span>{formatProductSearchLabel(p)} - {formatCOP(p.precio_venta || 0)} (stock {p.stock})</span>
+                                  <span className={`text-xs px-2 py-1 rounded-full border ${estadoStock.badgeClass}`}>{estadoStock.label}</span>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="md:col-span-2">
+                      <input
+                        className="input-field"
+                        type="number"
+                        min="1"
+                        step="1"
+                        placeholder="Cantidad"
+                        value={finalizacion.adicional_otro_cantidad || '1'}
+                        onChange={(e) =>
+                          setFinalizacion((p) => ({ ...p, adicional_otro_cantidad: sanitizePesoInput(e.target.value) || '1' }))
+                        }
+                      />
+                    </div>
+
+                    <div className="md:col-span-4">
+                      <select
+                        className="input-field"
+                        value={finalizacion.adicional_otro_estilista || ''}
+                        onChange={(e) => setFinalizacion((p) => ({ ...p, adicional_otro_estilista: e.target.value }))}
+                      >
+                        <option value="">Empleado que gana comisión de producto</option>
+                        {estilistas.map((e) => (
+                          <option key={e.id} value={e.id}>{e.nombre}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {finalizacion.adicional_otro_producto && (
+                    (() => {
+                      const productoSel = productos.find((p) => Number(p.id) === Number(finalizacion.adicional_otro_producto));
+                      if (!productoSel) return null;
+                      const qtySel = toPositiveInt(finalizacion.adicional_otro_cantidad || 0);
+                      const totalSel = qtySel * toPesoInt(productoSel.precio_venta || 0);
+                      const pctComision = Number(productoSel.comision_estilista || 0);
+                      const valorComision = totalSel * (pctComision / 100);
+                      return (
+                        <div className="mt-3 rounded border border-indigo-200 bg-white p-2 text-xs text-indigo-900">
+                          <p>Producto: <strong>{formatProductSearchLabel(productoSel)}</strong></p>
+                          <p>Total producto adicional: <strong>{formatCOP(totalSel)}</strong></p>
+                          <p>Comisión ({pctComision}%): <strong>{formatCOP(valorComision)}</strong></p>
+                        </div>
+                      );
+                    })()
+                  )}
+                </div>
               </div>
             </>
           )}

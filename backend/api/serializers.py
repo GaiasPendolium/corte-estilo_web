@@ -105,6 +105,9 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
     cliente_nombre = serializers.CharField(source='cliente.nombre', read_only=True)
     usuario_nombre = serializers.CharField(source='usuario.username', read_only=True)
     adicional_otro_producto_nombre = serializers.CharField(source='adicional_otro_producto.nombre', read_only=True)
+    adicional_otro_estilista_nombre = serializers.CharField(source='adicional_otro_estilista.nombre', read_only=True)
+    adicional_otro_total = serializers.SerializerMethodField(read_only=True)
+    adicional_otro_comision_estilista = serializers.SerializerMethodField(read_only=True)
     factura_texto = serializers.SerializerMethodField(read_only=True)
     adicionales_servicio_ids = serializers.ListField(
         child=serializers.IntegerField(min_value=1),
@@ -138,13 +141,36 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
             'valor_reparto_establecimiento', 'monto_establecimiento',
             'monto_estilista', 'neto_servicio', 'tiene_adicionales',
             'adicional_shampoo', 'adicional_guantes', 'adicional_otro_producto',
+            'adicional_otro_estilista',
             'adicionales_servicio_ids', 'adicionales_servicio_items',
             'adicionales_asignados',
-            'adicional_otro_producto_nombre', 'adicional_otro_cantidad', 'valor_adicionales',
+            'adicional_otro_producto_nombre', 'adicional_otro_estilista_nombre',
+            'adicional_otro_cantidad', 'adicional_otro_total', 'adicional_otro_comision_estilista',
+            'valor_adicionales',
             'adicional_otro_descuento_empleado', 'adicional_otro_precio_unitario',
             'numero_factura', 'factura_texto', 'notas'
         ]
         read_only_fields = ['monto_establecimiento', 'monto_estilista', 'neto_servicio', 'valor_adicionales', 'numero_factura', 'factura_texto']
+
+    def get_adicional_otro_total(self, obj):
+        if not obj.adicional_otro_producto_id:
+            return 0
+        qty = int(obj.adicional_otro_cantidad or 1)
+        unit = float(obj.adicional_otro_producto.precio_venta or 0)
+        return float(unit * qty)
+
+    def get_adicional_otro_comision_estilista(self, obj):
+        if not obj.adicional_otro_producto_id or not obj.adicional_otro_estilista_id:
+            return 0
+        qty = int(obj.adicional_otro_cantidad or 1)
+        unit = float(obj.adicional_otro_producto.precio_venta or 0)
+        total = unit * qty
+        pct = float(obj.adicional_otro_producto.comision_estilista or 0)
+        if pct < 0:
+            pct = 0
+        if pct > 100:
+            pct = 100
+        return float((total * pct) / 100)
 
     def get_adicionales_asignados(self, obj):
         detalles = obj.adicionales_asignados.select_related('servicio', 'estilista').all()
@@ -261,6 +287,20 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
             if adicional_otro_producto and stock_disponible < cantidad_requerida:
                 raise serializers.ValidationError(
                     {'adicional_otro_producto': f'Stock insuficiente para adicional. Disponible: {stock_disponible}'}
+                )
+
+            adicional_otro_estilista = attrs.get('adicional_otro_estilista')
+            if adicional_otro_estilista is None and self.instance is not None:
+                adicional_otro_estilista = self.instance.adicional_otro_estilista
+
+            if adicional_otro_producto and not adicional_otro_estilista:
+                raise serializers.ValidationError(
+                    {'adicional_otro_estilista': 'Debes seleccionar el empleado que gana la comisión del producto adicional.'}
+                )
+
+            if adicional_otro_estilista and not adicional_otro_producto:
+                raise serializers.ValidationError(
+                    {'adicional_otro_producto': 'Si seleccionas empleado para comisión, debes seleccionar producto adicional.'}
                 )
 
             descuento_empleado = attrs.get('adicional_otro_descuento_empleado', False)
@@ -462,8 +502,18 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
                 detalle_tag = ''
 
             total_adicionales += precio_unitario * cantidad
+            comision_pct = float(servicio.adicional_otro_producto.comision_estilista or 0)
+            if comision_pct < 0:
+                comision_pct = 0
+            if comision_pct > 100:
+                comision_pct = 100
+            comision_valor = (precio_unitario * cantidad) * (comision_pct / 100.0)
+            estilista_comision = servicio.adicional_otro_estilista.nombre if servicio.adicional_otro_estilista else 'Sin empleado'
             adicionales_detalle.append(
-                f"{servicio.adicional_otro_producto.nombre} x{cantidad} = ${(precio_unitario * cantidad):.2f}{detalle_tag}"
+                (
+                    f"{servicio.adicional_otro_producto.nombre} x{cantidad} = ${(precio_unitario * cantidad):.2f}{detalle_tag}"
+                    f" (Comision {estilista_comision}: ${comision_valor:.2f})"
+                )
             )
 
         servicio.valor_adicionales = total_adicionales
@@ -550,15 +600,30 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
                 }
             )
 
-        if len(detalle_servicios) == 1 and float(servicio.valor_adicionales or 0) > 0:
-            # Fallback para facturas antiguas que no tienen detalle por adicional.
+        valor_producto_adicional = 0.0
+        if servicio.adicional_otro_producto_id:
+            qty_prod = int(servicio.adicional_otro_cantidad or 1)
+            unit_prod = float(servicio.adicional_otro_producto.precio_venta or 0)
+            valor_producto_adicional = unit_prod * qty_prod
             detalle_servicios.append(
                 {
-                    'servicio': 'Adicionales',
-                    'estilista': servicio.estilista.nombre,
-                    'valor': float(servicio.valor_adicionales or 0),
+                    'servicio': f"Producto: {servicio.adicional_otro_producto.nombre} x{qty_prod}",
+                    'estilista': servicio.adicional_otro_estilista.nombre if servicio.adicional_otro_estilista else '-',
+                    'valor': valor_producto_adicional,
                 }
             )
+
+        if len(adicionales_asignados) == 0:
+            valor_adicionales_remanente = float(servicio.valor_adicionales or 0) - valor_producto_adicional
+            if valor_adicionales_remanente > 0:
+                # Fallback para facturas antiguas sin detalle puntual de adicionales.
+                detalle_servicios.append(
+                    {
+                        'servicio': 'Adicionales',
+                        'estilista': servicio.estilista.nombre,
+                        'valor': valor_adicionales_remanente,
+                    }
+                )
 
         total_cobrado = sum(item['valor'] for item in detalle_servicios)
 
@@ -592,6 +657,44 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
 
         tabla_texto = '\n'.join([tabla_linea, tabla_header, tabla_linea, *tabla_rows, tabla_linea])
 
+        comisiones_adicionales = []
+        for adicional in adicionales_asignados:
+            valor_adicional = float(adicional.valor_cobrado or 0)
+            aplica_pct = bool(adicional.aplica_porcentaje_establecimiento)
+            pct_est = float(adicional.porcentaje_establecimiento or 0)
+            if pct_est < 0:
+                pct_est = 0
+            if pct_est > 100:
+                pct_est = 100
+
+            comision_empleado = valor_adicional * (1 - (pct_est / 100.0)) if aplica_pct else valor_adicional
+            comisiones_adicionales.append(
+                f"- {adicional.servicio.nombre} ({adicional.estilista.nombre}): ${comision_empleado:.2f}"
+            )
+
+        bloque_comision = ''
+        if comisiones_adicionales:
+            bloque_comision = (
+                "\nComision por servicios adicionales:\n"
+                + "\n".join(comisiones_adicionales)
+            )
+
+        bloque_comision_producto = ''
+        if servicio.adicional_otro_producto_id and servicio.adicional_otro_estilista_id:
+            qty_prod = int(servicio.adicional_otro_cantidad or 1)
+            unit_prod = float(servicio.adicional_otro_producto.precio_venta or 0)
+            total_prod = unit_prod * qty_prod
+            pct_prod = float(servicio.adicional_otro_producto.comision_estilista or 0)
+            if pct_prod < 0:
+                pct_prod = 0
+            if pct_prod > 100:
+                pct_prod = 100
+            comision_prod = total_prod * (pct_prod / 100.0)
+            bloque_comision_producto = (
+                "\nComision producto adicional:\n"
+                f"- {servicio.adicional_otro_producto.nombre} ({servicio.adicional_otro_estilista.nombre}): ${comision_prod:.2f}"
+            )
+
         return (
             f"Factura: {numero_factura}\n"
             f"Tipo: Servicio\n"
@@ -600,6 +703,8 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
             f"Facturado por: {(servicio.usuario.username if servicio.usuario else 'No especificado')}\n"
             f"\n"
             f"{tabla_texto}\n"
+            f"{bloque_comision}\n"
+            f"{bloque_comision_producto}\n"
             f"Total: ${total_cobrado:.2f}\n"
             f"Medio de pago: {servicio.get_medio_pago_display() if servicio.medio_pago else '-'}"
         )

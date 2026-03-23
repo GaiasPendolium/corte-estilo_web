@@ -108,6 +108,9 @@ const Ventas = () => {
     medio_pago: 'efectivo',
     tiene_adicionales: false,
     adicionales_servicio_items: [],
+    adicional_otro_producto: '',
+    adicional_otro_cantidad: '1',
+    adicional_otro_estilista: '',
     notas: '',
   });
   const [invoiceEditForm, setInvoiceEditForm] = useState({
@@ -472,6 +475,9 @@ const Ventas = () => {
         aplica_porcentaje_establecimiento: Boolean(item.aplica_porcentaje_establecimiento),
         porcentaje_establecimiento: String(item.porcentaje_establecimiento ?? '30'),
       })),
+      adicional_otro_producto: servicio.adicional_otro_producto ? String(servicio.adicional_otro_producto) : '',
+      adicional_otro_cantidad: String(servicio.adicional_otro_cantidad || 1),
+      adicional_otro_estilista: servicio.adicional_otro_estilista ? String(servicio.adicional_otro_estilista) : '',
       notas: servicio.notas || '',
     });
     setShowServicioForm(true);
@@ -544,6 +550,18 @@ const Ventas = () => {
       return;
     }
 
+    if (servicioForm.adicional_otro_producto) {
+      const qtyProd = Number(servicioForm.adicional_otro_cantidad || 0);
+      if (!Number.isFinite(qtyProd) || qtyProd <= 0) {
+        toast.warning('La cantidad del producto adicional debe ser mayor a 0');
+        return;
+      }
+      if (!servicioForm.adicional_otro_estilista) {
+        toast.warning('Selecciona el empleado que gana la comisión del producto adicional');
+        return;
+      }
+    }
+
     try {
       setSaving(true);
       await serviciosRealizadosService.update(servicioEditando.id, {
@@ -555,8 +573,9 @@ const Ventas = () => {
         tiene_adicionales: Boolean(servicioForm.tiene_adicionales),
         adicionales_servicio_ids: servicioForm.tiene_adicionales ? idsAdicionales : [],
         adicionales_servicio_items: servicioForm.tiene_adicionales ? adicionalesNormalizados : [],
-        adicional_otro_producto: null,
-        adicional_otro_cantidad: 1,
+        adicional_otro_producto: servicioForm.adicional_otro_producto ? Number(servicioForm.adicional_otro_producto) : null,
+        adicional_otro_estilista: servicioForm.adicional_otro_estilista ? Number(servicioForm.adicional_otro_estilista) : null,
+        adicional_otro_cantidad: servicioForm.adicional_otro_producto ? Number(servicioForm.adicional_otro_cantidad || 1) : 1,
         notas: servicioForm.notas || null,
       });
       toast.success('Factura de servicio actualizada');
@@ -1274,6 +1293,43 @@ const Ventas = () => {
               <div className="flex items-center justify-between">
                 <p className="text-sm font-medium text-blue-900">Servicios adicionales facturados</p>
                 <button type="button" className="btn-secondary !px-3 !py-1" onClick={agregarAdicionalServicio}>Agregar adicional</button>
+              </div>
+
+              <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-3">
+                <p className="text-sm font-medium text-indigo-900 mb-2">Producto de venta adicional</p>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                  <select
+                    className="input-field"
+                    value={servicioForm.adicional_otro_producto || ''}
+                    onChange={(e) => setServicioForm((p) => ({ ...p, adicional_otro_producto: e.target.value }))}
+                  >
+                    <option value="">Sin producto adicional</option>
+                    {productos.map((p) => (
+                      <option key={p.id} value={p.id}>{formatProductSearchLabel(p)} - {formatCOP(p.precio_venta || 0)}</option>
+                    ))}
+                  </select>
+
+                  <input
+                    className="input-field"
+                    type="number"
+                    min="1"
+                    step="1"
+                    placeholder="Cantidad"
+                    value={servicioForm.adicional_otro_cantidad || '1'}
+                    onChange={(e) => setServicioForm((p) => ({ ...p, adicional_otro_cantidad: e.target.value }))}
+                  />
+
+                  <select
+                    className="input-field"
+                    value={servicioForm.adicional_otro_estilista || ''}
+                    onChange={(e) => setServicioForm((p) => ({ ...p, adicional_otro_estilista: e.target.value }))}
+                  >
+                    <option value="">Empleado comisión producto</option>
+                    {estilistas.map((e) => (
+                      <option key={e.id} value={e.id}>{e.nombre}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
               {(servicioForm.adicionales_servicio_items || []).map((it, idx) => (
