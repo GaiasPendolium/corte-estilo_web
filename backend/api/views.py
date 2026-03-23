@@ -1103,6 +1103,165 @@ def estado_pago_estilista_historial(request):
 
 
 @api_view(['GET'])
+def bi_desglose_estilista_debug(request):
+    """
+    Endpoint PÚBLICO para debugging (sin autenticación requerida).
+    Devuelve desglose completo del cálculo del BI para un estilista específico.
+    
+    Query params:
+    - estilista_id: ID del estilista (requerido)
+    - fecha_inicio: fecha inicio (YYYY-MM-DD)
+    - fecha_fin: fecha fin (YYYY-MM-DD)
+    
+    **NOTA**: Este endpoint es solo para debugging temporal y debería desactivarse en producción.
+    """
+    from datetime import datetime, timedelta
+    
+    try:
+        estilista_id = request.query_params.get('estilista_id')
+        fecha_inicio_str = request.query_params.get('fecha_inicio', timezone.localdate().strftime('%Y-%m-%d'))
+        fecha_fin_str = request.query_params.get('fecha_fin', timezone.localdate().strftime('%Y-%m-%d'))
+        
+        fecha_inicio_dt = datetime.strptime(fecha_inicio_str, '%Y-%m-%d').date()
+        fecha_fin_dt = datetime.strptime(fecha_fin_str, '%Y-%m-%d').date()
+        
+        estilista = Estilista.objects.get(id=int(estilista_id))
+    except Exception as e:
+        return Response({'error': f'Parámetros inválidos: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    # Cargar datos
+    servicios_est = ServicioRealizado.objects.select_related('estilista').filter(
+        estilista=estilista,
+        estado='finalizado',
+        fecha_hora__date__gte=fecha_inicio_dt,
+        fecha_hora__date__lte=fecha_fin_dt,
+    )
+    ventas_est = VentaProducto.objects.select_related('producto', 'estilista').filter(
+        estilista=estilista,
+        fecha_hora__date__gte=fecha_inicio_dt,
+        fecha_hora__date__lte=fecha_fin_dt,
+    )
+    
+    # Resumen de servicios
+    total_servicios_precio_cobrado = Decimal(servicios_est.aggregate(total=Sum('precio_cobrado'))['total'] or 0)
+    total_adicionales_est = Decimal(servicios_est.aggregate(total=Sum('valor_adicionales'))['total'] or 0)
+    ganancia_servicios_est = total_servicios_precio_cobrado
+    
+    # Resumen de comisiones
+    comision_ventas_producto_caja_est = Decimal(0)
+    comision_por_dia = {}
+    ventas_detalle = []
+    for v in ventas_est:
+        pct = Decimal(v.producto.comision_estilista or 0)
+        valor_comision = (Decimal(v.total) * pct) / Decimal(100)
+        comision_ventas_producto_caja_est += valor_comision
+        fecha_v = v.fecha_hora.date()
+        comision_por_dia[fecha_v] = comision_por_dia.get(fecha_v, Decimal(0)) + valor_comision
+        ventas_detalle.append({
+            'fecha': fecha_v.strftime('%Y-%m-%d'),
+            'producto': v.producto.nombre,
+            'total_venta': float(Decimal(v.total)),
+            'comision_pct': float(pct),
+            'comision_valor': float(valor_comision),
+        })
+    
+    # Días trabajados
+    dias_trabajados = {
+        *servicios_est.values_list('fecha_hora__date', flat=True).distinct(),
+        *ventas_est.values_list('fecha_hora__date', flat=True).distinct(),
+    }
+    
+    # Servicios por día
+    servicios_por_dia = {}
+    for srv in servicios_est:
+        fecha_srv = srv.fecha_hora.date()
+        servicios_por_dia[fecha_srv] = servicios_por_dia.get(fecha_srv, Decimal(0)) + Decimal(srv.precio_cobrado or 0)
+    
+    # Cargar estados
+    try:
+        estados_pago_map = {
+            (ep.estilista_id, ep.fecha): ep.estado
+            for ep in EstadoPagoEstilistaDia.objects.filter(
+                estilista=estilista,
+                fecha__gte=fecha_inicio_dt,
+                fecha__lte=fecha_fin_dt,
+            )
+        }
+    except (OperationalError, ProgrammingError):
+        estados_pago_map = {}
+    
+    # Cálculo por día
+    dias_desglose = []
+    pago_neto_pendiente = Decimal(0)
+    pago_neto_cancelado = Decimal(0)
+    pago_neto_periodo = Decimal(0)
+    dias_cancelados = 0
+    
+    for dia in sorted(dias_trabajados):
+        base_servicio_dia = servicios_por_dia.get(dia, Decimal(0))
+        comision_dia = comision_por_dia.get(dia, Decimal(0))
+        
+        descuento_dia = Decimal(0)
+        if estilista.tipo_cobro_espacio == 'porcentaje_neto':
+            descuento_dia = (base_servicio_dia * Decimal(estilista.valor_cobro_espacio or 0)) / Decimal(100)
+            if descuento_dia > base_servicio_dia:
+                descuento_dia = base_servicio_dia
+        elif estilista.tipo_cobro_espacio == 'costo_fijo_neto':
+            descuento_dia = Decimal(estilista.valor_cobro_espacio or 0)
+        
+        neto_dia = (base_servicio_dia - descuento_dia) + comision_dia
+        estado_dia = estados_pago_map.get((estilista.id, dia), 'pendiente')
+        
+        pago_neto_periodo += neto_dia
+        dias_desglose.append({
+            'fecha': dia.strftime('%Y-%m-%d'),
+            'base_servicio': float(base_servicio_dia),
+            'descuento_espacio': float(descuento_dia),
+            'comision_productos': float(comision_dia),
+            'neto_dia': float(neto_dia),
+            'estado': estado_dia,
+            'incluido_en': 'cancelado' if estado_dia == 'cancelado' else 'pendiente',
+        })
+        
+        if estado_dia == 'cancelado':
+            pago_neto_cancelado += neto_dia
+            dias_cancelados += 1
+        else:
+            pago_neto_pendiente += neto_dia
+    
+    return Response({
+        'estilista': {
+            'id': estilista.id,
+            'nombre': estilista.nombre,
+            'tipo_cobro_espacio': estilista.tipo_cobro_espacio,
+            'valor_cobro_espacio': float(estilista.valor_cobro_espacio or 0),
+        },
+        'periodo': {
+            'fecha_inicio': fecha_inicio_dt.strftime('%Y-%m-%d'),
+            'fecha_fin': fecha_fin_dt.strftime('%Y-%m-%d'),
+        },
+        'servicios': {
+            'total_precio_cobrado': float(total_servicios_precio_cobrado),
+            'total_adicionales': float(total_adicionales_est),
+        },
+        'comisiones': {
+            'total_comision': float(comision_ventas_producto_caja_est),
+            'detalle_ventas': ventas_detalle,
+        },
+        'dias_trabajados': sorted([d.strftime('%Y-%m-%d') for d in dias_trabajados]),
+        'desglose_por_dia': dias_desglose,
+        'resumen': {
+            'pago_neto_pendiente': float(pago_neto_pendiente),
+            'pago_neto_cancelado': float(pago_neto_cancelado),
+            'pago_neto_periodo': float(pago_neto_periodo),
+            'dias_cancelados': dias_cancelados,
+            'dias_pendientes': len(dias_trabajados) - dias_cancelados,
+            'total_dias': len(dias_trabajados),
+        },
+    })
+
+
+@api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def bi_desglose_estilista(request):
     """
