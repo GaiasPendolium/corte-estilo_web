@@ -742,9 +742,9 @@ def _calcular_datos_bi(request):
         otros_servicios_no_producto = Decimal(0)
     ingresos_servicios_no_producto = ingresos_servicios + otros_servicios_no_producto
 
-    # Regla de negocio solicitada:
-    # ventas productos (modulo caja) + descuento de espacios + servicios adicionales.
-    ganancia_establecimiento_total = (
+    # Ganancia bruta de establecimiento (incluye deuda como cuenta por cobrar del estilista)
+    # = ventas productos caja + descuento espacios + servicios adicionales.
+    ganancia_establecimiento_bruta = (
         ingresos_productos +
         total_descuentos_espacio +
         total_servicios_adicionales_establecimiento
@@ -752,6 +752,10 @@ def _calcular_datos_bi(request):
 
     # Total cobrado al cliente sin separar reparto empleado/establecimiento.
     venta_neta_total = ingresos_productos + ingresos_servicios_total_cliente
+
+    # Ganancia de establecimiento para cuadre diario de caja:
+    # Venta neta total - pago real del día a estilistas (solo saldos positivos).
+    ganancia_establecimiento_total = venta_neta_total - total_pago_estilistas_positivo
     # Total ganancias: arriendo de espacios + utilidad neta productos (caja + adicionales)
     # + otros servicios no asociados a productos.
     total_ganancias_negocio = total_descuentos_espacio + utilidad_productos_total + otros_servicios_no_producto
@@ -800,6 +804,7 @@ def _calcular_datos_bi(request):
             'ganancia_establecimiento_productos': float(ganancia_establecimiento_productos),
             'disponible_productos_despues_reabastecer': float(ganancia_establecimiento_productos),
             'ganancia_establecimiento_total': float(ganancia_establecimiento_total),
+            'ganancia_establecimiento_bruta': float(ganancia_establecimiento_bruta),
             'pago_total_estilistas': float(total_pago_estilistas_positivo),
             'deudas_estilistas': float(total_deuda_estilistas),
             'pago_total_estilistas_neto': float(total_pago_neto_estilistas),

@@ -298,11 +298,21 @@ const Reportes = () => {
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-5">
         <KpiCard title="Venta neta total" value={formatMoney(kpis.venta_neta_total)} hint={`Todo lo cobrado al cliente: servicios + adicionales + productos`} tone="slate" />
-        <KpiCard title="Ganancia establecimiento" value={formatMoney(kpis.ganancia_establecimiento_total)} hint={`Ventas productos caja + arriendo espacios + servicios adicionales`} tone="emerald" />
+        <KpiCard title="Ganancia establecimiento" value={formatMoney(kpis.ganancia_establecimiento_total)} hint={`Cuadre caja: Venta neta - Pago estilistas`} tone="emerald" />
         <KpiCard title="Pago estilistas" value={formatMoney(kpis.pago_total_estilistas)} hint={`Solo saldos positivos. Descuentos espacio: ${formatMoney(kpis.descuentos_espacio_estilistas)}`} tone="sky" />
         <KpiCard title="Deudas estilistas" value={formatMoney(kpis.deudas_estilistas)} hint={`Suma de saldos negativos pendientes por cobro de espacio`} tone="amber" />
         <KpiCard title="Total ganancias" value={formatMoney(kpis.total_ganancias_negocio)} hint={`Arriendo espacios + utilidad neta productos + otros servicios no producto`} tone="amber" />
         <KpiCard title="Stock crítico" value={moneyFormatter.format(kpis.productos_bajo_stock || 0)} hint={`Promedio venta producto: ${formatMoney(ventaPromedioProducto)}`} tone="amber" />
+      </div>
+
+      <div className="card border border-emerald-100 bg-emerald-50">
+        <p className="text-sm text-emerald-700 font-medium">Cuadre automático</p>
+        <p className="mt-1 text-sm text-emerald-800">
+          {formatMoney(kpis.venta_neta_total)} = {formatMoney(kpis.pago_total_estilistas)} + {formatMoney(kpis.ganancia_establecimiento_total)}
+        </p>
+        <p className="mt-1 text-xs text-emerald-700">
+          Ganancia establecimiento bruta (incluye deudas estilistas): {formatMoney(kpis.ganancia_establecimiento_bruta)}
+        </p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
