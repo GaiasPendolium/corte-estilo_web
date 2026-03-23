@@ -308,6 +308,40 @@ class ServicioRealizado(models.Model):
         return f"{self.servicio.nombre} - {self.estilista.nombre} - {self.fecha_hora.strftime('%Y-%m-%d %H:%M')}"
 
 
+class ServicioRealizadoAdicional(models.Model):
+    """Detalle de servicios adicionales cobrados dentro de un servicio principal."""
+
+    servicio_realizado = models.ForeignKey(
+        ServicioRealizado,
+        on_delete=models.CASCADE,
+        related_name='adicionales_asignados',
+        verbose_name='Servicio realizado'
+    )
+    servicio = models.ForeignKey(
+        Servicio,
+        on_delete=models.PROTECT,
+        related_name='adicionales_realizados',
+        verbose_name='Servicio adicional'
+    )
+    estilista = models.ForeignKey(
+        Estilista,
+        on_delete=models.PROTECT,
+        related_name='servicios_adicionales_realizados',
+        verbose_name='Empleado que realiza adicional'
+    )
+    valor_cobrado = models.DecimalField(max_digits=10, decimal_places=2, verbose_name='Valor cobrado')
+    fecha_creacion = models.DateTimeField(default=timezone.now, verbose_name='Fecha de creación')
+
+    class Meta:
+        db_table = 'servicios_realizados_adicionales'
+        verbose_name = 'Servicio adicional realizado'
+        verbose_name_plural = 'Servicios adicionales realizados'
+        ordering = ['servicio_realizado_id', 'id']
+
+    def __str__(self):
+        return f"{self.servicio.nombre} - {self.estilista.nombre} (${self.valor_cobrado})"
+
+
 class VentaProducto(models.Model):
     """Modelo de Ventas de Productos"""
 

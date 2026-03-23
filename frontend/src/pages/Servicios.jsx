@@ -1,5 +1,5 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
-import { FiPlus, FiRefreshCw, FiSearch, FiTrash2 } from 'react-icons/fi';
+import { FiPlus, FiRefreshCw, FiTrash2 } from 'react-icons/fi';
 import { toast } from 'react-toastify';
 import {
   clientesService,
@@ -92,6 +92,20 @@ const formatServiceSearchLabel = (servicio) => {
   return [servicio.descripcion, servicio.nombre].filter(Boolean).join(' - ') || servicio.nombre || 'Servicio';
 };
 
+const serviceMatchesSearch = (servicio, query) => {
+  const q = normalizeSearchText(query);
+  if (!q) return true;
+
+  const index = normalizeSearchText([
+    servicio.nombre,
+    servicio.descripcion,
+  ].filter(Boolean).join(' '));
+
+  if (index.includes(q)) return true;
+  const terms = q.split(' ').filter(Boolean);
+  return terms.every((term) => index.includes(term));
+};
+
 const moneyFormatterCOP = new Intl.NumberFormat('es-CO', {
   style: 'currency',
   currency: 'COP',
@@ -155,16 +169,10 @@ const Servicios = () => {
     precio_cobrado: '',
     medio_pago: 'efectivo',
     tiene_adicionales: false,
-    adicionales_servicio_ids: [],
-    adicionales_servicio_valores: {},
-    adicional_otro_producto: '',
-    adicional_otro_cantidad: '1',
-    adicional_otro_descuento_empleado: false,
-    adicional_otro_precio_unitario: '',
-    busqueda_adicional: '',
+    adicionales_servicio_items: [],
     notas: '',
   });
-  const [sugerenciasAdicional, setSugerenciasAdicional] = useState([]);
+  const [adicionalActivoKey, setAdicionalActivoKey] = useState(null);
 
   const [ventaForm, setVentaForm] = useState({
     cliente_nombre: '',
@@ -177,20 +185,17 @@ const Servicios = () => {
   const [ventaSugerencias, setVentaSugerencias] = useState([]);
   const [productoVentaSeleccionado, setProductoVentaSeleccionado] = useState(null);
   const [carrito, setCarrito] = useState([]);
-  const [serviciosConAdicionalHoy, setServiciosConAdicionalHoy] = useState([]);
 
   const cargarTodo = async () => {
     try {
       setLoading(true);
-      const today = new Date().toISOString().slice(0, 10);
-      const [listaEstilistas, listaServicios, listaClientes, listaRealizados, estadoRes, listaProductos, listaFinalizadosHoy] = await Promise.all([
+      const [listaEstilistas, listaServicios, listaClientes, listaRealizados, estadoRes, listaProductos] = await Promise.all([
         fetchAllRows(estilistasService.getAll, { activo: true }),
         fetchAllRows(serviciosService.getAll, { activo: true }),
         fetchAllRows(clientesService.getAll),
         fetchAllRows(serviciosRealizadosService.getAll, { estado: 'en_proceso' }),
         serviciosRealizadosService.getEstadoEstilistas(),
         fetchAllRows(productosService.getAll, { activo: true }),
-        fetchAllRows(serviciosRealizadosService.getAll, { estado: 'finalizado', fecha_inicio: today, fecha_fin: today }),
       ]);
 
       setEstilistas(listaEstilistas);
@@ -199,7 +204,6 @@ const Servicios = () => {
       setProductos(listaProductos);
       setEstadoEstilistas(Array.isArray(estadoRes) ? estadoRes : []);
       setServiciosEnProceso(listaRealizados.filter((s) => s.estado === 'en_proceso'));
-      setServiciosConAdicionalHoy(listaFinalizadosHoy.filter((s) => s.adicional_otro_producto));
     } catch (error) {
       toast.error('No se pudo cargar el módulo operativo');
     } finally {
@@ -223,18 +227,6 @@ const Servicios = () => {
         .slice(0, 8)
     );
   }, [inicioServicio.servicio_busqueda, servicios]);
-
-  useEffect(() => {
-    const q = finalizacion.busqueda_adicional.trim().toLowerCase();
-    if (!q) {
-      setSugerenciasAdicional([]);
-      return;
-    }
-    setSugerenciasAdicional(
-      productos
-        .filter((p) => productMatchesSearch(p, q))
-    );
-  }, [finalizacion.busqueda_adicional, productos]);
 
   useEffect(() => {
     const q = ventaBusqueda.trim().toLowerCase();
@@ -268,15 +260,18 @@ const Servicios = () => {
     [serviciosEnProceso, servicioFinalizarId]
   );
 
-  const productoAdicionalSeleccionado = useMemo(
-    () => productos.find((p) => String(p.id) === String(finalizacion.adicional_otro_producto)),
-    [productos, finalizacion.adicional_otro_producto]
-  );
-
   const serviciosAdicionalesConfigurados = useMemo(
     () => servicios.filter((s) => Boolean(s.es_adicional) && (s.activo ?? true)),
     [servicios]
   );
+
+  const construirItemAdicional = ({ id = '', estilista_id = '', valor = '', busqueda = '' } = {}) => ({
+    key: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    id: id ? String(id) : '',
+    estilista_id: estilista_id ? String(estilista_id) : '',
+    valor: valor ? String(valor) : '',
+    busqueda: busqueda || '',
+  });
 
   const mapearFlagsLegacyAdicionales = (adicionalesIds) => {
     const ids = new Set((adicionalesIds || []).map((id) => Number(id)));
@@ -307,15 +302,12 @@ const Servicios = () => {
 
   const totalFinalizacion = useMemo(() => {
     const precioBase = toPesoInt(finalizacion.precio_cobrado || 0);
-    const adicionalesServicios = (finalizacion.adicionales_servicio_ids || []).reduce(
-      (acc, id) => acc + toPesoInt(finalizacion.adicionales_servicio_valores?.[id] || 0),
+    const adicionalesServicios = (finalizacion.adicionales_servicio_items || []).reduce(
+      (acc, item) => acc + toPesoInt(item.valor || 0),
       0
     );
-    const adicionalProducto = finalizacion.tiene_adicionales && finalizacion.adicional_otro_producto
-      ? toPositiveInt(finalizacion.adicional_otro_cantidad || 1) * toPesoInt(finalizacion.adicional_otro_precio_unitario || toPesoInt(productoAdicionalSeleccionado?.precio_venta || 0))
-      : 0;
-    return precioBase + adicionalesServicios + adicionalProducto;
-  }, [finalizacion, productoAdicionalSeleccionado]);
+    return precioBase + adicionalesServicios;
+  }, [finalizacion]);
 
   const validarPrecioMinimoProducto = (producto, precioUnitario) => {
     if (!producto) return true;
@@ -342,11 +334,25 @@ const Servicios = () => {
       })
       .map((cfg) => Number(cfg.id));
 
-    const valoresIniciales = {};
-    idsLegacy.forEach((id) => {
-      const cfg = serviciosAdicionalesConfigurados.find((s) => Number(s.id) === Number(id));
-      valoresIniciales[id] = String(cfg?.precio || '0');
-    });
+    const adicionalesAsignados = Array.isArray(srv.adicionales_asignados) ? srv.adicionales_asignados : [];
+    const itemsIniciales = adicionalesAsignados.length > 0
+      ? adicionalesAsignados.map((item) =>
+          construirItemAdicional({
+            id: item.servicio_id,
+            estilista_id: item.estilista_id,
+            valor: toPesoInt(item.valor || 0),
+            busqueda: item.servicio_nombre || '',
+          })
+        )
+      : idsLegacy.map((id) => {
+          const cfg = serviciosAdicionalesConfigurados.find((s) => Number(s.id) === Number(id));
+          return construirItemAdicional({
+            id,
+            estilista_id: srv.estilista ? String(srv.estilista) : '',
+            valor: toPesoInt(cfg?.precio || 0),
+            busqueda: formatServiceSearchLabel(cfg || {}),
+          });
+        });
 
     setServicioFinalizarId(String(srv.id));
     setShowFinalizarModal(true);
@@ -354,15 +360,10 @@ const Servicios = () => {
       precio_cobrado: srv.precio_cobrado || '',
       medio_pago: srv.medio_pago || 'efectivo',
       tiene_adicionales: Boolean(srv.tiene_adicionales),
-      adicionales_servicio_ids: idsLegacy,
-      adicionales_servicio_valores: valoresIniciales,
-      adicional_otro_producto: srv.adicional_otro_producto ? String(srv.adicional_otro_producto) : '',
-      adicional_otro_cantidad: String(srv.adicional_otro_cantidad || 1),
-      adicional_otro_descuento_empleado: false,
-      adicional_otro_precio_unitario: '',
-      busqueda_adicional: '',
+      adicionales_servicio_items: itemsIniciales,
       notas: srv.notas || '',
     });
+    setAdicionalActivoKey(null);
   };
 
   const prepararFinalizacionPorTarjeta = (tarjeta) => {
@@ -372,6 +373,47 @@ const Servicios = () => {
       return;
     }
     prepararFinalizacion(srv);
+  };
+
+  const agregarFilaAdicional = () => {
+    setFinalizacion((prev) => ({
+      ...prev,
+      adicionales_servicio_items: [...(prev.adicionales_servicio_items || []), construirItemAdicional()],
+    }));
+  };
+
+  const actualizarFilaAdicional = (key, cambios) => {
+    setFinalizacion((prev) => ({
+      ...prev,
+      adicionales_servicio_items: (prev.adicionales_servicio_items || []).map((item) =>
+        item.key === key ? { ...item, ...cambios } : item
+      ),
+    }));
+  };
+
+  const eliminarFilaAdicional = (key) => {
+    setFinalizacion((prev) => ({
+      ...prev,
+      adicionales_servicio_items: (prev.adicionales_servicio_items || []).filter((item) => item.key !== key),
+    }));
+    if (adicionalActivoKey === key) {
+      setAdicionalActivoKey(null);
+    }
+  };
+
+  const seleccionarServicioAdicional = (key, servicio) => {
+    setFinalizacion((prev) => ({
+      ...prev,
+      adicionales_servicio_items: (prev.adicionales_servicio_items || []).map((item) => {
+        if (item.key !== key) return item;
+        return {
+          ...item,
+          id: String(servicio.id),
+          busqueda: formatServiceSearchLabel(servicio),
+          valor: item.valor || String(toPesoInt(servicio.precio || 0)),
+        };
+      }),
+    }));
   };
 
   const crearCliente = async (e) => {
@@ -445,23 +487,18 @@ const Servicios = () => {
     }
 
     if (finalizacion.tiene_adicionales) {
-      const valoresInvalidos = (finalizacion.adicionales_servicio_ids || []).some((id) => Number(finalizacion.adicionales_servicio_valores?.[id] || 0) <= 0);
-      if (valoresInvalidos) {
-        toast.warning('Cada servicio adicional debe tener un valor mayor a 0');
+      const items = finalizacion.adicionales_servicio_items || [];
+      if (!items.length) {
+        toast.warning('Agrega al menos un servicio adicional');
         return;
       }
 
-      if (finalizacion.adicional_otro_producto && finalizacion.adicional_otro_descuento_empleado) {
-        const precioIngresado = toPesoInt(finalizacion.adicional_otro_precio_unitario || 0);
-        const minimoPermitido = minimoConDescuentoEmpleado(productoAdicionalSeleccionado?.precio_venta || 0);
-        if (precioIngresado <= 0) {
-          toast.warning('Ingresa el nuevo precio del producto adicional');
-          return;
-        }
-        if (precioIngresado < minimoPermitido) {
-          toast.warning(`Descuento maximo 20%. Precio minimo unitario: ${formatCOP(minimoPermitido)}`);
-          return;
-        }
+      const itemInvalido = items.find(
+        (item) => !item.id || !item.estilista_id || toPesoInt(item.valor || 0) <= 0
+      );
+      if (itemInvalido) {
+        toast.warning('Cada adicional debe tener servicio, empleado y valor mayor a 0');
+        return;
       }
     }
 
@@ -472,32 +509,28 @@ const Servicios = () => {
     setShowConfirmacionFinalizar(false);
     try {
       setSaving(true);
-      const flagsLegacy = mapearFlagsLegacyAdicionales(finalizacion.adicionales_servicio_ids);
+      const itemsNormalizados = finalizacion.tiene_adicionales
+        ? (finalizacion.adicionales_servicio_items || [])
+            .filter((item) => item.id && item.estilista_id)
+            .map((item) => ({
+              id: Number(item.id),
+              estilista_id: Number(item.estilista_id),
+              valor: toPesoInt(item.valor || 0),
+            }))
+        : [];
+      const flagsLegacy = mapearFlagsLegacyAdicionales(itemsNormalizados.map((x) => x.id));
       const res = await serviciosRealizadosService.finalizar(servicioFinalizarId, {
         precio_cobrado: toPesoInt(finalizacion.precio_cobrado),
         medio_pago: finalizacion.medio_pago,
         tiene_adicionales: finalizacion.tiene_adicionales,
-        adicionales_servicio_ids: finalizacion.tiene_adicionales
-          ? finalizacion.adicionales_servicio_ids
-          : [],
-        adicionales_servicio_items: finalizacion.tiene_adicionales
-          ? (finalizacion.adicionales_servicio_ids || []).map((id) => ({
-              id: Number(id),
-              valor: toPesoInt(finalizacion.adicionales_servicio_valores?.[id] || 0),
-            }))
-          : [],
+        adicionales_servicio_ids: finalizacion.tiene_adicionales ? itemsNormalizados.map((item) => item.id) : [],
+        adicionales_servicio_items: itemsNormalizados,
         adicional_shampoo: finalizacion.tiene_adicionales ? flagsLegacy.adicional_shampoo : false,
         adicional_guantes: finalizacion.tiene_adicionales ? flagsLegacy.adicional_guantes : false,
-        adicional_otro_producto:
-          finalizacion.tiene_adicionales && finalizacion.adicional_otro_producto
-            ? Number(finalizacion.adicional_otro_producto)
-            : null,
-        adicional_otro_cantidad: toPositiveInt(finalizacion.adicional_otro_cantidad || 1),
-        adicional_otro_descuento_empleado: Boolean(finalizacion.adicional_otro_descuento_empleado),
-        adicional_otro_precio_unitario:
-          finalizacion.tiene_adicionales && finalizacion.adicional_otro_producto && finalizacion.adicional_otro_descuento_empleado
-            ? toPesoInt(finalizacion.adicional_otro_precio_unitario)
-            : null,
+        adicional_otro_producto: null,
+        adicional_otro_cantidad: 1,
+        adicional_otro_descuento_empleado: false,
+        adicional_otro_precio_unitario: null,
         notas: finalizacion.notas || null,
       });
 
@@ -527,15 +560,10 @@ const Servicios = () => {
         precio_cobrado: '',
         medio_pago: 'efectivo',
         tiene_adicionales: false,
-        adicionales_servicio_ids: [],
-        adicionales_servicio_valores: {},
-        adicional_otro_producto: '',
-        adicional_otro_cantidad: '1',
-        adicional_otro_descuento_empleado: false,
-        adicional_otro_precio_unitario: '',
-        busqueda_adicional: '',
+        adicionales_servicio_items: [],
         notas: '',
       });
+      setAdicionalActivoKey(null);
       await cargarTodo();
     } catch (error) {
       const msg = error?.response?.data?.error || 'No se pudo finalizar el servicio';
@@ -852,28 +880,6 @@ const Servicios = () => {
         </div>
       )}
 
-      {modoVista === 'ventas' && serviciosConAdicionalHoy.length > 0 && (
-        <div className="card space-y-3">
-          <h2 className="card-header">Productos vendidos como adicionales en servicios de hoy</h2>
-          <div className="space-y-2">
-            {serviciosConAdicionalHoy.map((srv) => (
-              <div key={srv.id} className="rounded-lg border border-blue-200 bg-blue-50 p-4 flex items-center justify-between">
-                <div>
-                  <p className="font-semibold text-blue-950">{srv.adicional_otro_producto_nombre || 'Producto adicional'}</p>
-                  <p className="text-sm text-blue-700">
-                    x{srv.adicional_otro_cantidad} | {srv.servicio_nombre} — {srv.estilista_nombre}
-                  </p>
-                </div>
-                <div className="text-right">
-                  <p className="text-sm text-blue-800">Total cobrado</p>
-                  <p className="text-xl font-bold text-blue-950">{formatCOP(srv.valor_adicionales || 0)}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
       {modoVista === 'servicios' && (
       <>
       <div className="card border border-dashed border-gray-300 bg-gray-50">
@@ -1055,149 +1061,100 @@ const Servicios = () => {
           {finalizacion.tiene_adicionales && (
             <>
               <div className="md:col-span-3 rounded-lg border border-blue-200 bg-blue-50 p-3">
-                <p className="text-sm font-medium text-blue-900 mb-2">Adicionales configurados en servicios</p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  {serviciosAdicionalesConfigurados.map((srvAd) => (
-                    <div key={srvAd.id} className="rounded-lg border border-blue-200 bg-white p-2">
-                      <label className="inline-flex items-center gap-2 text-sm text-gray-700">
-                        <input
-                          type="checkbox"
-                          checked={finalizacion.adicionales_servicio_ids.includes(Number(srvAd.id))}
-                          onChange={(e) =>
-                            setFinalizacion((p) => {
-                              const id = Number(srvAd.id);
-                              const actuales = new Set((p.adicionales_servicio_ids || []).map((x) => Number(x)));
-                              const valores = { ...(p.adicionales_servicio_valores || {}) };
-                              if (e.target.checked) {
-                                actuales.add(id);
-                                if (!valores[id]) valores[id] = String(srvAd.precio || 0);
-                              } else {
-                                actuales.delete(id);
-                                delete valores[id];
-                              }
-                              return { ...p, adicionales_servicio_ids: Array.from(actuales), adicionales_servicio_valores: valores };
-                            })
-                          }
-                        />
-                        {srvAd.nombre}
-                      </label>
-                      {finalizacion.adicionales_servicio_ids.includes(Number(srvAd.id)) && (
-                        <input
-                          className="input-field mt-2"
-                          type="number"
-                          min="0"
-                          step="1"
-                          placeholder="Valor adicional"
-                          value={finalizacion.adicionales_servicio_valores?.[srvAd.id] || ''}
-                          onChange={(e) =>
-                            setFinalizacion((p) => ({
-                              ...p,
-                              adicionales_servicio_valores: {
-                                ...(p.adicionales_servicio_valores || {}),
-                                [srvAd.id]: sanitizePesoInput(e.target.value),
-                              },
-                            }))
-                          }
-                        />
-                      )}
-                    </div>
-                  ))}
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-sm font-medium text-blue-900">Servicios adicionales realizados</p>
+                  <button type="button" className="btn-secondary !px-3 !py-1" onClick={agregarFilaAdicional}>
+                    <FiPlus className="inline mr-1" /> Agregar adicional
+                  </button>
                 </div>
-                {serviciosAdicionalesConfigurados.length === 0 && (
-                  <p className="text-xs text-blue-800">No hay servicios marcados como adicionales en Inventario y Servicio.</p>
-                )}
-              </div>
 
-              <div className="md:col-span-3 relative">
-                <input
-                  className="input-field"
-                  placeholder="Otro producto por marca, descripción, nombre o código"
-                  value={finalizacion.busqueda_adicional}
-                  onChange={(e) => setFinalizacion((p) => ({ ...p, busqueda_adicional: e.target.value, adicional_otro_producto: '' }))}
-                />
-                {sugerenciasAdicional.length > 0 && (
-                  <div className="absolute z-20 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg max-h-56 overflow-auto">
-                    {sugerenciasAdicional.map((p) => (
-                      (() => {
-                        const estadoStock = getProductoStockEstado(p);
-                        return (
-                      <button
-                        key={p.id}
-                        type="button"
-                        className={`w-full text-left px-3 py-2 hover:bg-gray-50 ${estadoStock.key === 'agotado' ? 'opacity-60 cursor-not-allowed' : ''}`}
-                        disabled={estadoStock.key === 'agotado'}
-                        onClick={() => setFinalizacion((f) => ({ ...f, adicional_otro_producto: String(p.id), busqueda_adicional: formatProductSearchLabel(p), adicional_otro_precio_unitario: String(p.precio_venta || '') }))}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <span>{formatProductSearchLabel(p)} - {formatCOP(p.precio_venta || 0)} (stock {p.stock})</span>
-                          <span className={`text-xs px-2 py-1 rounded-full border ${estadoStock.badgeClass}`}>{estadoStock.label}</span>
+                {(finalizacion.adicionales_servicio_items || []).length === 0 && (
+                  <p className="text-xs text-blue-800">Agrega uno o más servicios adicionales y asigna empleado + valor.</p>
+                )}
+
+                <div className="space-y-3">
+                  {(finalizacion.adicionales_servicio_items || []).map((item) => {
+                    const sugerenciasFila = serviciosAdicionalesConfigurados
+                      .filter((s) => serviceMatchesSearch(s, item.busqueda || ''))
+                      .slice(0, 8);
+
+                    return (
+                      <div key={item.key} className="rounded-lg border border-blue-200 bg-white p-3">
+                        <div className="grid grid-cols-1 md:grid-cols-12 gap-2">
+                          <div className="md:col-span-5 relative">
+                            <input
+                              className="input-field"
+                              placeholder="Buscar servicio adicional"
+                              value={item.busqueda || ''}
+                              onFocus={() => setAdicionalActivoKey(item.key)}
+                              onBlur={() => setTimeout(() => setAdicionalActivoKey((curr) => (curr === item.key ? null : curr)), 120)}
+                              onChange={(e) => actualizarFilaAdicional(item.key, { busqueda: e.target.value, id: '' })}
+                            />
+                            {adicionalActivoKey === item.key && sugerenciasFila.length > 0 && (
+                              <div className="absolute z-20 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg max-h-56 overflow-auto">
+                                {sugerenciasFila.map((srvAd) => (
+                                  <button
+                                    key={srvAd.id}
+                                    type="button"
+                                    className="w-full text-left px-3 py-2 hover:bg-gray-50"
+                                    onMouseDown={(e) => e.preventDefault()}
+                                    onClick={() => {
+                                      seleccionarServicioAdicional(item.key, srvAd);
+                                      setAdicionalActivoKey(null);
+                                    }}
+                                  >
+                                    {formatServiceSearchLabel(srvAd)} - {formatCOP(srvAd.precio || 0)}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="md:col-span-4">
+                            <select
+                              className="input-field"
+                              value={item.estilista_id || ''}
+                              onChange={(e) => actualizarFilaAdicional(item.key, { estilista_id: e.target.value })}
+                            >
+                              <option value="">Empleado que realiza el adicional</option>
+                              {estilistas.map((e) => (
+                                <option key={e.id} value={e.id}>{e.nombre}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="md:col-span-2">
+                            <input
+                              className="input-field"
+                              type="number"
+                              min="0"
+                              step="1"
+                              placeholder="Valor"
+                              value={item.valor || ''}
+                              onChange={(e) => actualizarFilaAdicional(item.key, { valor: sanitizePesoInput(e.target.value) })}
+                            />
+                          </div>
+
+                          <div className="md:col-span-1 flex items-center justify-center">
+                            <button
+                              type="button"
+                              className="text-red-600 hover:text-red-800"
+                              onClick={() => eliminarFilaAdicional(item.key)}
+                              title="Eliminar adicional"
+                            >
+                              <FiTrash2 />
+                            </button>
+                          </div>
                         </div>
-                      </button>
-                        );
-                      })()
-                    ))}
-                  </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {serviciosAdicionalesConfigurados.length === 0 && (
+                  <p className="text-xs text-blue-800 mt-2">No hay servicios marcados como adicionales en Inventario y Servicio.</p>
                 )}
               </div>
-
-              {finalizacion.adicional_otro_producto && (
-                <label className="md:col-span-3 inline-flex items-center gap-2 text-sm text-gray-700">
-                  <input
-                    type="checkbox"
-                    checked={Boolean(finalizacion.adicional_otro_descuento_empleado)}
-                    onChange={(e) =>
-                      setFinalizacion((p) => ({
-                        ...p,
-                        adicional_otro_descuento_empleado: e.target.checked,
-                        adicional_otro_precio_unitario: e.target.checked
-                          ? (p.adicional_otro_precio_unitario || String(productoAdicionalSeleccionado?.precio_venta || ''))
-                          : '',
-                      }))
-                    }
-                  />
-                  Descuento empleado en producto adicional
-                </label>
-              )}
-
-              {finalizacion.adicional_otro_producto && finalizacion.adicional_otro_descuento_empleado && (
-                <div className="md:col-span-3">
-                  {toPesoInt(finalizacion.adicional_otro_precio_unitario || 0) > 0 &&
-                    toPesoInt(finalizacion.adicional_otro_precio_unitario || 0) < minimoConDescuentoEmpleado(productoAdicionalSeleccionado?.precio_venta || 0) && (
-                    <p className="text-xs text-red-600 mb-1">
-                      El precio ingresado es menor al permitido. Minimo: {formatCOP(minimoConDescuentoEmpleado(productoAdicionalSeleccionado?.precio_venta || 0))} por unidad.
-                    </p>
-                  )}
-                  <input
-                    className="input-field"
-                    type="number"
-                    min="0"
-                    step="1"
-                    placeholder="Nuevo precio unitario"
-                    value={finalizacion.adicional_otro_precio_unitario}
-                    onChange={(e) => setFinalizacion((p) => ({ ...p, adicional_otro_precio_unitario: sanitizePesoInput(e.target.value) }))}
-                    onBlur={() => {
-                      const minimo = minimoConDescuentoEmpleado(productoAdicionalSeleccionado?.precio_venta || 0);
-                      const actual = toPesoInt(finalizacion.adicional_otro_precio_unitario || 0);
-                      if (actual > 0 && actual < minimo) {
-                        toast.warning(`Descuento maximo 20%. Precio minimo unitario: ${formatCOP(minimo)}`);
-                      }
-                    }}
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Precio minimo unitario: {formatCOP(minimoConDescuentoEmpleado(productoAdicionalSeleccionado?.precio_venta || 0))} (descuento maximo 20%)
-                    {' | '}Total minimo para {toPositiveInt(finalizacion.adicional_otro_cantidad || 1)} und: {formatCOP(minimoConDescuentoEmpleado(productoAdicionalSeleccionado?.precio_venta || 0) * toPositiveInt(finalizacion.adicional_otro_cantidad || 1))}
-                  </p>
-                </div>
-              )}
-
-              <input
-                className="input-field md:col-span-3"
-                type="number"
-                min="1"
-                placeholder="Cantidad del otro producto"
-                value={finalizacion.adicional_otro_cantidad}
-                onChange={(e) => setFinalizacion((p) => ({ ...p, adicional_otro_cantidad: e.target.value }))}
-              />
             </>
           )}
 

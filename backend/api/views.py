@@ -18,7 +18,7 @@ import uuid
 from .models import (
     Usuario, Estilista, Servicio, Cliente, Producto,
     ServicioRealizado, VentaProducto, MovimientoInventario, EstadoPagoEstilistaDia,
-    DeudaConsumoEmpleado, AbonoDeudaEmpleado,
+    DeudaConsumoEmpleado, AbonoDeudaEmpleado, ServicioRealizadoAdicional,
     EstadoPagoEstilistaHistorial
 )
 from .serializers import (
@@ -259,7 +259,10 @@ class ProductoViewSet(viewsets.ModelViewSet):
 class ServicioRealizadoViewSet(viewsets.ModelViewSet):
     """ViewSet para el modelo ServicioRealizado"""
     
-    queryset = ServicioRealizado.objects.select_related('estilista', 'servicio', 'cliente', 'usuario').all()
+    queryset = ServicioRealizado.objects.select_related('estilista', 'servicio', 'cliente', 'usuario').prefetch_related(
+        'adicionales_asignados__servicio',
+        'adicionales_asignados__estilista',
+    ).all()
     serializer_class = ServicioRealizadoSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
@@ -987,6 +990,14 @@ def _calcular_datos_bi(request):
         ventas_pagadas_qs = ventas_pagadas_qs.filter(medio_pago=medio_pago)
         servicios_qs = servicios_qs.filter(medio_pago=medio_pago)
 
+    adicionales_asignados_qs = ServicioRealizadoAdicional.objects.select_related('servicio_realizado').filter(
+        servicio_realizado__estado='finalizado',
+        servicio_realizado__fecha_hora__date__gte=fecha_inicio_dt,
+        servicio_realizado__fecha_hora__date__lte=fecha_fin_dt,
+    )
+    if medio_pago and medio_pago != 'todos':
+        adicionales_asignados_qs = adicionales_asignados_qs.filter(servicio_realizado__medio_pago=medio_pago)
+
     abonos_consumo_qs = AbonoDeudaEmpleado.objects.filter(
         fecha_hora__date__gte=fecha_inicio_dt,
         fecha_hora__date__lte=fecha_fin_dt,
@@ -1048,6 +1059,7 @@ def _calcular_datos_bi(request):
 
     ganancia_establecimiento_productos = utilidad_productos_total - comision_producto_estilistas_total
     ingresos_servicios = Decimal(servicios_qs.aggregate(total=Sum('precio_cobrado'))['total'] or 0)
+    ingresos_servicios_adicionales_facturados = Decimal(servicios_qs.aggregate(total=Sum('valor_adicionales'))['total'] or 0)
 
     estilistas_data = []
     total_descuentos_espacio = Decimal(0)
@@ -1073,12 +1085,15 @@ def _calcular_datos_bi(request):
         # Calcular totales de servicios
         total_servicios_precio_cobrado = Decimal(servicios_est.aggregate(total=Sum('precio_cobrado'))['total'] or 0)
         total_adicionales_est = Decimal(servicios_est.aggregate(total=Sum('valor_adicionales'))['total'] or 0)
+        total_adicionales_asignados_est = Decimal(
+            adicionales_asignados_qs.filter(estilista=estilista).aggregate(total=Sum('valor_cobrado'))['total'] or 0
+        )
         
-        # Base para pagar al estilista = precio_cobrado del servicio (sin los adicionales, que son ganancia del establecimiento)
-        ganancia_servicios_est = total_servicios_precio_cobrado
+        # Base para pagar al estilista = servicios principales + servicios adicionales asignados.
+        ganancia_servicios_est = total_servicios_precio_cobrado + total_adicionales_asignados_est
         
-        # Total facturado al cliente = precio_cobrado + valor_adicionales
-        total_facturado_cliente = total_servicios_precio_cobrado + total_adicionales_est
+        # Para liquidación del estilista, facturación atribuida = servicios base + adicionales asignados.
+        total_facturado_cliente = total_servicios_precio_cobrado + total_adicionales_asignados_est
         
         comision_ventas_producto_caja_est = Decimal(0)
         comision_por_dia = {}
@@ -1101,6 +1116,10 @@ def _calcular_datos_bi(request):
         for srv in servicios_est:
             fecha_srv = _fecha_operativa_desde_dt(srv.fecha_hora)
             servicios_por_dia[fecha_srv] = servicios_por_dia.get(fecha_srv, Decimal(0)) + Decimal(srv.precio_cobrado or 0)
+
+        for ad in adicionales_asignados_qs.filter(estilista=estilista):
+            fecha_ad = _fecha_operativa_desde_dt(ad.servicio_realizado.fecha_hora)
+            servicios_por_dia[fecha_ad] = servicios_por_dia.get(fecha_ad, Decimal(0)) + Decimal(ad.valor_cobrado or 0)
 
         # Días trabajados: usar la misma fecha operativa que los mapas por día.
         dias_trabajados = set(servicios_por_dia.keys()) | set(comision_por_dia.keys())
@@ -1142,7 +1161,11 @@ def _calcular_datos_bi(request):
             total_pago_estilistas_positivo += pago_neto_pendiente
         else:
             total_deuda_estilistas += abs(pago_neto_pendiente)
-        total_servicios_adicionales_establecimiento += total_adicionales_est
+        # Lo no asignado a estilistas queda como ingreso adicional del establecimiento.
+        adicionales_establecimiento_est = total_adicionales_est - total_adicionales_asignados_est
+        if adicionales_establecimiento_est < 0:
+            adicionales_establecimiento_est = Decimal(0)
+        total_servicios_adicionales_establecimiento += adicionales_establecimiento_est
 
         total_dias = len(dias_trabajados)
         if total_dias == 0:
@@ -1164,8 +1187,8 @@ def _calcular_datos_bi(request):
                 'dias_cobrados_alquiler': int(len(dias_trabajados)) if estilista.tipo_cobro_espacio == 'costo_fijo_neto' else 0,
                 'total_dias_trabajados': int(len(dias_trabajados)),
                 'facturacion_servicios': float(total_facturado_cliente),
-                'valor_servicios_adicionales': float(total_adicionales_est),
-                'deduccion_servicios_adicionales': float(total_adicionales_est),
+                'valor_servicios_adicionales': float(total_adicionales_asignados_est),
+                'deduccion_servicios_adicionales': float(0),
                 'ganancias_servicios': float(ganancia_servicios_est),
                 'comision_ventas_producto': float(comision_ventas_producto_est),
                 'comision_ventas_producto_caja': float(comision_ventas_producto_caja_est),
@@ -1186,7 +1209,7 @@ def _calcular_datos_bi(request):
         )
 
     comision_servicios_establecimiento = total_descuentos_espacio
-    ingresos_servicios_total_cliente = ingresos_servicios + total_servicios_adicionales_establecimiento
+    ingresos_servicios_total_cliente = ingresos_servicios + ingresos_servicios_adicionales_facturados
 
     # Servicios adicionales distintos a producto (shampoo/guantes/u otros servicios)
     otros_servicios_no_producto = total_servicios_adicionales_establecimiento - ingresos_productos_en_servicios
@@ -1688,6 +1711,12 @@ def bi_desglose_estilista_debug(request):
         fecha_hora__date__gte=fecha_inicio_dt,
         fecha_hora__date__lte=fecha_fin_dt,
     )
+    adicionales_asignados_est = ServicioRealizadoAdicional.objects.select_related('servicio_realizado').filter(
+        estilista=estilista,
+        servicio_realizado__estado='finalizado',
+        servicio_realizado__fecha_hora__date__gte=fecha_inicio_dt,
+        servicio_realizado__fecha_hora__date__lte=fecha_fin_dt,
+    )
     ventas_est = VentaProducto.objects.select_related('producto', 'estilista').filter(
         estilista=estilista,
         fecha_hora__date__gte=fecha_inicio_dt,
@@ -1697,7 +1726,8 @@ def bi_desglose_estilista_debug(request):
     # Resumen de servicios
     total_servicios_precio_cobrado = Decimal(servicios_est.aggregate(total=Sum('precio_cobrado'))['total'] or 0)
     total_adicionales_est = Decimal(servicios_est.aggregate(total=Sum('valor_adicionales'))['total'] or 0)
-    ganancia_servicios_est = total_servicios_precio_cobrado
+    total_adicionales_asignados_est = Decimal(adicionales_asignados_est.aggregate(total=Sum('valor_cobrado'))['total'] or 0)
+    ganancia_servicios_est = total_servicios_precio_cobrado + total_adicionales_asignados_est
     
     # Resumen de comisiones
     comision_ventas_producto_caja_est = Decimal(0)
@@ -1722,6 +1752,9 @@ def bi_desglose_estilista_debug(request):
     for srv in servicios_est:
         fecha_srv = _fecha_operativa_desde_dt(srv.fecha_hora)
         servicios_por_dia[fecha_srv] = servicios_por_dia.get(fecha_srv, Decimal(0)) + Decimal(srv.precio_cobrado or 0)
+    for ad in adicionales_asignados_est:
+        fecha_ad = _fecha_operativa_desde_dt(ad.servicio_realizado.fecha_hora)
+        servicios_por_dia[fecha_ad] = servicios_por_dia.get(fecha_ad, Decimal(0)) + Decimal(ad.valor_cobrado or 0)
 
     # Días trabajados
     dias_trabajados = set(servicios_por_dia.keys()) | set(comision_por_dia.keys())
@@ -1792,6 +1825,8 @@ def bi_desglose_estilista_debug(request):
         'servicios': {
             'total_precio_cobrado': float(total_servicios_precio_cobrado),
             'total_adicionales': float(total_adicionales_est),
+            'total_adicionales_asignados': float(total_adicionales_asignados_est),
+            'ganancia_servicios': float(ganancia_servicios_est),
         },
         'comisiones': {
             'total_comision': float(comision_ventas_producto_caja_est),
@@ -1842,6 +1877,12 @@ def bi_desglose_estilista(request):
         fecha_hora__date__gte=fecha_inicio_dt,
         fecha_hora__date__lte=fecha_fin_dt,
     )
+    adicionales_asignados_est = ServicioRealizadoAdicional.objects.select_related('servicio_realizado').filter(
+        estilista=estilista,
+        servicio_realizado__estado='finalizado',
+        servicio_realizado__fecha_hora__date__gte=fecha_inicio_dt,
+        servicio_realizado__fecha_hora__date__lte=fecha_fin_dt,
+    )
     ventas_est = VentaProducto.objects.select_related('producto', 'estilista').filter(
         estilista=estilista,
         fecha_hora__date__gte=fecha_inicio_dt,
@@ -1851,7 +1892,8 @@ def bi_desglose_estilista(request):
     # Resumen de servicios
     total_servicios_precio_cobrado = Decimal(servicios_est.aggregate(total=Sum('precio_cobrado'))['total'] or 0)
     total_adicionales_est = Decimal(servicios_est.aggregate(total=Sum('valor_adicionales'))['total'] or 0)
-    ganancia_servicios_est = total_servicios_precio_cobrado
+    total_adicionales_asignados_est = Decimal(adicionales_asignados_est.aggregate(total=Sum('valor_cobrado'))['total'] or 0)
+    ganancia_servicios_est = total_servicios_precio_cobrado + total_adicionales_asignados_est
     
     # Resumen de comisiones
     comision_ventas_producto_caja_est = Decimal(0)
@@ -1876,6 +1918,9 @@ def bi_desglose_estilista(request):
     for srv in servicios_est:
         fecha_srv = _fecha_operativa_desde_dt(srv.fecha_hora)
         servicios_por_dia[fecha_srv] = servicios_por_dia.get(fecha_srv, Decimal(0)) + Decimal(srv.precio_cobrado or 0)
+    for ad in adicionales_asignados_est:
+        fecha_ad = _fecha_operativa_desde_dt(ad.servicio_realizado.fecha_hora)
+        servicios_por_dia[fecha_ad] = servicios_por_dia.get(fecha_ad, Decimal(0)) + Decimal(ad.valor_cobrado or 0)
 
     # Días trabajados
     dias_trabajados = set(servicios_por_dia.keys()) | set(comision_por_dia.keys())
@@ -1946,6 +1991,8 @@ def bi_desglose_estilista(request):
         'servicios': {
             'total_precio_cobrado': float(total_servicios_precio_cobrado),
             'total_adicionales': float(total_adicionales_est),
+            'total_adicionales_asignados': float(total_adicionales_asignados_est),
+            'ganancia_servicios': float(ganancia_servicios_est),
         },
         'comisiones': {
             'total_comision': float(comision_ventas_producto_caja_est),
