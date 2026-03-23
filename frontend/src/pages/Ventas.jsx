@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { FiCopy, FiEdit2, FiPlus, FiRefreshCw, FiSearch, FiTrash2, FiEye, FiX } from 'react-icons/fi';
 import { toast } from 'react-toastify';
-import { estilistasService, productosService, serviciosRealizadosService, ventasService } from '../services/api';
+import { estilistasService, productosService, serviciosRealizadosService, ventasService, serviciosService } from '../services/api';
 import ModalForm from '../components/ModalForm';
 import useAuthStore from '../store/authStore';
 import { qzTrayService } from '../services/printing/qzTrayService';
@@ -59,6 +59,10 @@ const getStockEstado = (producto) => {
   return { key: 'ok', label: 'Disponible', badgeClass: 'bg-emerald-100 text-emerald-700 border-emerald-200' };
 };
 
+const formatServiceSearchLabel = (servicio) => {
+  return [servicio.descripcion, servicio.nombre].filter(Boolean).join(' - ') || servicio.nombre || 'Servicio';
+};
+
 const Ventas = () => {
   const { user } = useAuthStore();
   const puedeEditarFacturas = canManageInvoices(user);
@@ -72,12 +76,14 @@ const Ventas = () => {
   const [editandoId, setEditandoId] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [showServicioForm, setShowServicioForm] = useState(false);
-  const [showConsumoEditForm, setShowConsumoEditForm] = useState(false);
+  const [showInvoiceEditForm, setShowInvoiceEditForm] = useState(false);
+  const [tipoFacturaEditando, setTipoFacturaEditando] = useState('venta');
   const [ventaVisualizar, setVentaVisualizar] = useState(null);
   const [servicioVisualizar, setServicioVisualizar] = useState(null);
   const [showVisualizarFactura, setShowVisualizarFactura] = useState(false);
 
   const [productos, setProductos] = useState([]);
+  const [serviciosCatalogo, setServiciosCatalogo] = useState([]);
   const [estilistas, setEstilistas] = useState([]);
   const [ventas, setVentas] = useState([]);
   const [serviciosFinalizados, setServiciosFinalizados] = useState([]);
@@ -96,14 +102,19 @@ const Ventas = () => {
   });
 
   const [servicioForm, setServicioForm] = useState({
+    servicio: '',
+    estilista: '',
     precio_cobrado: '',
     medio_pago: 'efectivo',
+    tiene_adicionales: false,
+    adicionales_servicio_items: [],
     notas: '',
   });
-  const [consumoEditForm, setConsumoEditForm] = useState({
+  const [invoiceEditForm, setInvoiceEditForm] = useState({
     numero_factura: '',
     cliente_nombre: '',
     estilista: '',
+    medio_pago: 'efectivo',
     items: [],
   });
 
@@ -114,16 +125,18 @@ const Ventas = () => {
         ...(fechaInicio ? { fecha_inicio: fechaInicio } : {}),
         ...(fechaFin ? { fecha_fin: fechaFin } : {}),
       };
-      const [productosRes, estilistasRes, ventasRes, serviciosRes] = await Promise.all([
+      const [productosRes, estilistasRes, ventasRes, serviciosRes, serviciosCatalogoRes] = await Promise.all([
         productosService.getAll(),
         estilistasService.getAll({ activo: true }),
         ventasService.getAll(paramsFecha),
         serviciosRealizadosService.getAll({ estado: 'finalizado', ...paramsFecha }),
+        serviciosService.getAll({ activo: true }),
       ]);
       setProductos(extractRows(productosRes));
       setEstilistas(extractRows(estilistasRes));
       setVentas(extractRows(ventasRes));
       setServiciosFinalizados(extractRows(serviciosRes));
+      setServiciosCatalogo(extractRows(serviciosCatalogoRes));
     } catch (error) {
       toast.error('No se pudo cargar el facturador de ventas');
     } finally {
@@ -266,37 +279,21 @@ const Ventas = () => {
   };
 
   const editarVenta = (venta) => {
-    if ((venta.items || []).length > 1 && (venta.items || []).some((x) => (x.tipo_operacion || 'venta') === 'consumo_empleado')) {
-      setConsumoEditForm({
-        numero_factura: venta.numero_factura || '',
-        cliente_nombre: venta.cliente_nombre || '',
-        estilista: venta.items?.[0]?.estilista ? String(venta.items[0].estilista) : (venta.estilista ? String(venta.estilista) : ''),
-        items: (venta.items || []).map((x) => ({
-          producto: x.producto,
-          cantidad: String(x.cantidad || 1),
-          precio_unitario: String(x.precio_unitario || ''),
-        })),
-      });
-      setShowConsumoEditForm(true);
-      return;
-    }
-    if ((venta.items || []).length > 1) {
-      toast.info('Esta factura tiene varios productos. Puedes editarla en Consumo Empleado.');
-      return;
-    }
     const ventaBase = (venta.items && venta.items[0]) ? venta.items[0] : venta;
-    setEditandoId(venta.id);
-    setShowForm(true);
-    const producto = productos.find((p) => p.id === ventaBase.producto) || null;
-    setProductoSeleccionado(producto);
-    setBusquedaProducto(producto ? formatProductSearchLabel(producto) : '');
-    setForm({
-      cliente_nombre: ventaBase.cliente_nombre || '',
-      estilista: ventaBase.estilista ? String(ventaBase.estilista) : '',
-      medio_pago: ventaBase.medio_pago || 'efectivo',
-      cantidad: String(ventaBase.cantidad || 1),
-      precio_unitario: String(ventaBase.precio_unitario || ''),
+    const esConsumo = (ventaBase.tipo_operacion || 'venta') === 'consumo_empleado';
+    setTipoFacturaEditando(esConsumo ? 'consumo_empleado' : 'venta');
+    setInvoiceEditForm({
+      numero_factura: venta.numero_factura || ventaBase.numero_factura || '',
+      cliente_nombre: venta.cliente_nombre || ventaBase.cliente_nombre || '',
+      estilista: venta.items?.[0]?.estilista ? String(venta.items[0].estilista) : (venta.estilista ? String(venta.estilista) : ''),
+      medio_pago: venta.medio_pago || ventaBase.medio_pago || 'efectivo',
+      items: (venta.items || [ventaBase]).map((x) => ({
+        producto: x.producto,
+        cantidad: String(x.cantidad || 1),
+        precio_unitario: String(x.precio_unitario || ''),
+      })),
     });
+    setShowInvoiceEditForm(true);
   };
 
   const eliminarVenta = async (venta) => {
@@ -331,39 +328,39 @@ const Ventas = () => {
     }
   };
 
-  const actualizarItemConsumo = (idx, campo, valor) => {
-    setConsumoEditForm((prev) => {
+  const actualizarItemFactura = (idx, campo, valor) => {
+    setInvoiceEditForm((prev) => {
       const items = [...(prev.items || [])];
       items[idx] = { ...items[idx], [campo]: valor };
       return { ...prev, items };
     });
   };
 
-  const agregarItemConsumo = () => {
-    setConsumoEditForm((prev) => ({
+  const agregarItemFactura = () => {
+    setInvoiceEditForm((prev) => ({
       ...prev,
       items: [...(prev.items || []), { producto: '', cantidad: '1', precio_unitario: '' }],
     }));
   };
 
-  const quitarItemConsumo = (idx) => {
-    setConsumoEditForm((prev) => ({
+  const quitarItemFactura = (idx) => {
+    setInvoiceEditForm((prev) => ({
       ...prev,
       items: (prev.items || []).filter((_, i) => i !== idx),
     }));
   };
 
-  const guardarEdicionConsumo = async (e) => {
+  const guardarEdicionFactura = async (e) => {
     e.preventDefault();
     if (!puedeEditarFacturas) {
       toast.warning('Solo administrador o gerente pueden editar facturas');
       return;
     }
-    if (!consumoEditForm.numero_factura) {
+    if (!invoiceEditForm.numero_factura) {
       toast.warning('Factura inválida');
       return;
     }
-    const items = (consumoEditForm.items || []).map((it) => ({
+    const items = (invoiceEditForm.items || []).map((it) => ({
       producto: Number(it.producto),
       cantidad: Number(it.cantidad),
       precio_unitario: Number(it.precio_unitario),
@@ -380,17 +377,17 @@ const Ventas = () => {
     try {
       setSaving(true);
       await ventasService.updateInvoiceTransaction({
-        numero_factura: consumoEditForm.numero_factura,
-        cliente_nombre: consumoEditForm.cliente_nombre || null,
-        estilista: consumoEditForm.estilista ? Number(consumoEditForm.estilista) : null,
-        medio_pago: 'efectivo',
+        numero_factura: invoiceEditForm.numero_factura,
+        cliente_nombre: invoiceEditForm.cliente_nombre || null,
+        estilista: invoiceEditForm.estilista ? Number(invoiceEditForm.estilista) : null,
+        medio_pago: tipoFacturaEditando === 'consumo_empleado' ? 'efectivo' : invoiceEditForm.medio_pago,
         items,
       });
-      toast.success('Factura de consumo actualizada');
-      setShowConsumoEditForm(false);
+      toast.success(tipoFacturaEditando === 'consumo_empleado' ? 'Factura de consumo actualizada' : 'Factura de venta actualizada');
+      setShowInvoiceEditForm(false);
       await cargarDatos();
     } catch (error) {
-      toast.error(error?.response?.data?.error || 'No se pudo actualizar la factura de consumo');
+      toast.error(error?.response?.data?.error || 'No se pudo actualizar la factura');
     } finally {
       setSaving(false);
     }
@@ -456,13 +453,56 @@ const Ventas = () => {
   };
 
   const editarServicio = (servicio) => {
+    const adicionales = Array.isArray(servicio.adicionales_asignados)
+      ? servicio.adicionales_asignados
+      : [];
+
     setServicioEditando(servicio);
     setServicioForm({
+      servicio: servicio.servicio ? String(servicio.servicio) : '',
+      estilista: servicio.estilista ? String(servicio.estilista) : '',
       precio_cobrado: String(servicio.precio_cobrado || ''),
       medio_pago: servicio.medio_pago || 'efectivo',
+      tiene_adicionales: Boolean(servicio.tiene_adicionales),
+      adicionales_servicio_items: adicionales.map((item, idx) => ({
+        _key: `${item.id || idx}`,
+        id: String(item.servicio_id || ''),
+        estilista_id: String(item.estilista_id || ''),
+        valor: String(item.valor || ''),
+      })),
       notas: servicio.notas || '',
     });
     setShowServicioForm(true);
+  };
+
+  const actualizarAdicionalServicio = (idx, campo, valor) => {
+    setServicioForm((prev) => {
+      const items = [...(prev.adicionales_servicio_items || [])];
+      items[idx] = { ...items[idx], [campo]: valor };
+      return { ...prev, adicionales_servicio_items: items };
+    });
+  };
+
+  const agregarAdicionalServicio = () => {
+    setServicioForm((prev) => ({
+      ...prev,
+      adicionales_servicio_items: [
+        ...(prev.adicionales_servicio_items || []),
+        { _key: `new-${Date.now()}`, id: '', estilista_id: '', valor: '' },
+      ],
+      tiene_adicionales: true,
+    }));
+  };
+
+  const quitarAdicionalServicio = (idx) => {
+    setServicioForm((prev) => {
+      const nuevos = (prev.adicionales_servicio_items || []).filter((_, i) => i !== idx);
+      return {
+        ...prev,
+        adicionales_servicio_items: nuevos,
+        tiene_adicionales: nuevos.length > 0,
+      };
+    });
   };
 
   const guardarServicioEditado = async (e) => {
@@ -473,12 +513,34 @@ const Ventas = () => {
     }
     if (!servicioEditando) return;
 
+    const adicionalesNormalizados = (servicioForm.adicionales_servicio_items || [])
+      .filter((it) => it.id && it.estilista_id && Number(it.valor || 0) > 0)
+      .map((it) => ({
+        id: Number(it.id),
+        estilista_id: Number(it.estilista_id),
+        valor: Number(it.valor),
+      }));
+
+    const idsAdicionales = adicionalesNormalizados.map((it) => it.id);
+
+    if (servicioForm.tiene_adicionales && adicionalesNormalizados.length === 0) {
+      toast.warning('Agrega al menos un servicio adicional válido o desmarca adicionales');
+      return;
+    }
+
     try {
       setSaving(true);
       await serviciosRealizadosService.update(servicioEditando.id, {
         estado: 'finalizado',
+        servicio: servicioForm.servicio ? Number(servicioForm.servicio) : servicioEditando.servicio,
+        estilista: servicioForm.estilista ? Number(servicioForm.estilista) : servicioEditando.estilista,
         precio_cobrado: Number(servicioForm.precio_cobrado || 0),
         medio_pago: servicioForm.medio_pago,
+        tiene_adicionales: Boolean(servicioForm.tiene_adicionales),
+        adicionales_servicio_ids: servicioForm.tiene_adicionales ? idsAdicionales : [],
+        adicionales_servicio_items: servicioForm.tiene_adicionales ? adicionalesNormalizados : [],
+        adicional_otro_producto: null,
+        adicional_otro_cantidad: 1,
         notas: servicioForm.notas || null,
       });
       toast.success('Factura de servicio actualizada');
@@ -911,6 +973,90 @@ const Ventas = () => {
         </div>
       </div>
 
+      <ModalForm
+        isOpen={showInvoiceEditForm}
+        onClose={() => setShowInvoiceEditForm(false)}
+        title={tipoFacturaEditando === 'consumo_empleado' ? 'Editar factura consumo empleado' : 'Editar factura de productos'}
+        subtitle="Edita empleado, medio de pago y productos facturados"
+        size="xl"
+      >
+        <form className="space-y-3" onSubmit={guardarEdicionFactura}>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <input className="input-field" value={invoiceEditForm.numero_factura || ''} readOnly />
+            <input
+              className="input-field"
+              placeholder={tipoFacturaEditando === 'consumo_empleado' ? 'Detalle opcional' : 'Cliente (opcional)'}
+              value={invoiceEditForm.cliente_nombre || ''}
+              onChange={(e) => setInvoiceEditForm((p) => ({ ...p, cliente_nombre: e.target.value }))}
+            />
+            <select
+              className="input-field"
+              value={invoiceEditForm.estilista || ''}
+              onChange={(e) => setInvoiceEditForm((p) => ({ ...p, estilista: e.target.value }))}
+            >
+              <option value="">Empleado</option>
+              {estilistas.map((est) => (
+                <option key={est.id} value={est.id}>{est.nombre}</option>
+              ))}
+            </select>
+            {tipoFacturaEditando !== 'consumo_empleado' ? (
+              <select
+                className="input-field"
+                value={invoiceEditForm.medio_pago || 'efectivo'}
+                onChange={(e) => setInvoiceEditForm((p) => ({ ...p, medio_pago: e.target.value }))}
+              >
+                {MEDIOS_PAGO.map((m) => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+              </select>
+            ) : (
+              <input className="input-field" value="Consumo empleado" readOnly />
+            )}
+          </div>
+
+          <div className="space-y-2">
+            {(invoiceEditForm.items || []).map((it, idx) => (
+              <div key={`inv-item-${idx}`} className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                <select
+                  className="input-field"
+                  value={it.producto}
+                  onChange={(e) => actualizarItemFactura(idx, 'producto', e.target.value)}
+                >
+                  <option value="">Producto</option>
+                  {productos.map((p) => (
+                    <option key={p.id} value={p.id}>{formatProductSearchLabel(p)} (stock {p.stock})</option>
+                  ))}
+                </select>
+                <input
+                  className="input-field"
+                  type="number"
+                  min="1"
+                  value={it.cantidad}
+                  onChange={(e) => actualizarItemFactura(idx, 'cantidad', e.target.value)}
+                />
+                <input
+                  className="input-field"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={it.precio_unitario}
+                  onChange={(e) => actualizarItemFactura(idx, 'precio_unitario', e.target.value)}
+                />
+                <button type="button" className="btn-danger" onClick={() => quitarItemFactura(idx)}>
+                  Quitar
+                </button>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex gap-2">
+            <button type="button" className="btn-secondary" onClick={agregarItemFactura}>Agregar producto</button>
+            <button type="submit" className="btn-primary" disabled={saving}>{saving ? 'Guardando...' : 'Guardar cambios'}</button>
+            <button type="button" className="btn-secondary" onClick={() => setShowInvoiceEditForm(false)}>Cancelar</button>
+          </div>
+        </form>
+      </ModalForm>
+
       {modoVista === 'ventas' && (
       <>
       <ModalForm
@@ -1068,16 +1214,90 @@ const Ventas = () => {
         isOpen={showServicioForm}
         onClose={() => setShowServicioForm(false)}
         title="Editar factura de servicio"
-        subtitle="Ajusta valores de la factura"
-        size="md"
+        subtitle="Edita servicio principal y adicionales de la factura"
+        size="xl"
       >
         <form className="space-y-3" onSubmit={guardarServicioEditado}>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <select className="input-field" value={servicioForm.servicio} onChange={(e) => setServicioForm((p) => ({ ...p, servicio: e.target.value }))}>
+              <option value="">Servicio principal</option>
+              {serviciosCatalogo.filter((s) => !s.es_adicional).map((s) => (
+                <option key={s.id} value={s.id}>{formatServiceSearchLabel(s)}</option>
+              ))}
+            </select>
+            <select className="input-field" value={servicioForm.estilista} onChange={(e) => setServicioForm((p) => ({ ...p, estilista: e.target.value }))}>
+              <option value="">Empleado principal</option>
+              {estilistas.map((e) => (
+                <option key={e.id} value={e.id}>{e.nombre}</option>
+              ))}
+            </select>
+          </div>
           <input className="input-field" type="number" min="0" step="0.01" placeholder="Total cobrado" value={servicioForm.precio_cobrado} onChange={(e) => setServicioForm((p) => ({ ...p, precio_cobrado: e.target.value }))} />
           <select className="input-field" value={servicioForm.medio_pago} onChange={(e) => setServicioForm((p) => ({ ...p, medio_pago: e.target.value }))}>
             {MEDIOS_PAGO.map((m) => (
               <option key={m.value} value={m.value}>{m.label}</option>
             ))}
           </select>
+          <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+            <input
+              type="checkbox"
+              checked={Boolean(servicioForm.tiene_adicionales)}
+              onChange={(e) =>
+                setServicioForm((p) => ({
+                  ...p,
+                  tiene_adicionales: e.target.checked,
+                  adicionales_servicio_items: e.target.checked ? p.adicionales_servicio_items : [],
+                }))
+              }
+            />
+            Esta factura tiene servicios adicionales
+          </label>
+
+          {servicioForm.tiene_adicionales && (
+            <div className="space-y-2 rounded-lg border border-blue-200 bg-blue-50 p-3">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-blue-900">Servicios adicionales facturados</p>
+                <button type="button" className="btn-secondary !px-3 !py-1" onClick={agregarAdicionalServicio}>Agregar adicional</button>
+              </div>
+
+              {(servicioForm.adicionales_servicio_items || []).map((it, idx) => (
+                <div key={it._key || `ad-${idx}`} className="grid grid-cols-1 md:grid-cols-12 gap-2 rounded border border-blue-200 bg-white p-2">
+                  <div className="md:col-span-5">
+                    <select className="input-field" value={it.id} onChange={(e) => actualizarAdicionalServicio(idx, 'id', e.target.value)}>
+                      <option value="">Servicio adicional</option>
+                      {serviciosCatalogo.filter((s) => s.es_adicional).map((s) => (
+                        <option key={s.id} value={s.id}>{formatServiceSearchLabel(s)}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="md:col-span-4">
+                    <select className="input-field" value={it.estilista_id} onChange={(e) => actualizarAdicionalServicio(idx, 'estilista_id', e.target.value)}>
+                      <option value="">Empleado</option>
+                      {estilistas.map((e) => (
+                        <option key={e.id} value={e.id}>{e.nombre}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="md:col-span-2">
+                    <input
+                      className="input-field"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={it.valor}
+                      onChange={(e) => actualizarAdicionalServicio(idx, 'valor', e.target.value)}
+                      placeholder="Valor"
+                    />
+                  </div>
+                  <div className="md:col-span-1 flex items-center">
+                    <button type="button" className="btn-danger !px-2 !py-2 w-full" onClick={() => quitarAdicionalServicio(idx)}>
+                      <FiTrash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
           <input className="input-field" placeholder="Notas" value={servicioForm.notas} onChange={(e) => setServicioForm((p) => ({ ...p, notas: e.target.value }))} />
           <div className="flex gap-2">
             <button className="btn-primary" type="submit" disabled={saving}>Guardar cambios</button>
@@ -1152,77 +1372,6 @@ const Ventas = () => {
 
       {modoVista === 'consumo_empleado' && (
       <>
-      <ModalForm
-        isOpen={showConsumoEditForm}
-        onClose={() => setShowConsumoEditForm(false)}
-        title="Editar factura consumo empleado"
-        subtitle="Cambia productos, cantidades y valores"
-        size="xl"
-      >
-        <form className="space-y-3" onSubmit={guardarEdicionConsumo}>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <input className="input-field" value={consumoEditForm.numero_factura || ''} readOnly />
-            <input
-              className="input-field"
-              placeholder="Detalle opcional"
-              value={consumoEditForm.cliente_nombre || ''}
-              onChange={(e) => setConsumoEditForm((p) => ({ ...p, cliente_nombre: e.target.value }))}
-            />
-            <select
-              className="input-field"
-              value={consumoEditForm.estilista || ''}
-              onChange={(e) => setConsumoEditForm((p) => ({ ...p, estilista: e.target.value }))}
-            >
-              <option value="">Empleado</option>
-              {estilistas.map((est) => (
-                <option key={est.id} value={est.id}>{est.nombre}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="space-y-2">
-            {(consumoEditForm.items || []).map((it, idx) => (
-              <div key={`consumo-item-${idx}`} className="grid grid-cols-1 md:grid-cols-4 gap-2">
-                <select
-                  className="input-field"
-                  value={it.producto}
-                  onChange={(e) => actualizarItemConsumo(idx, 'producto', e.target.value)}
-                >
-                  <option value="">Producto</option>
-                  {productos.map((p) => (
-                    <option key={p.id} value={p.id}>{formatProductSearchLabel(p)} (stock {p.stock})</option>
-                  ))}
-                </select>
-                <input
-                  className="input-field"
-                  type="number"
-                  min="1"
-                  value={it.cantidad}
-                  onChange={(e) => actualizarItemConsumo(idx, 'cantidad', e.target.value)}
-                />
-                <input
-                  className="input-field"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={it.precio_unitario}
-                  onChange={(e) => actualizarItemConsumo(idx, 'precio_unitario', e.target.value)}
-                />
-                <button type="button" className="btn-danger" onClick={() => quitarItemConsumo(idx)}>
-                  Quitar
-                </button>
-              </div>
-            ))}
-          </div>
-
-          <div className="flex gap-2">
-            <button type="button" className="btn-secondary" onClick={agregarItemConsumo}>Agregar producto</button>
-            <button type="submit" className="btn-primary" disabled={saving}>{saving ? 'Guardando...' : 'Guardar cambios'}</button>
-            <button type="button" className="btn-secondary" onClick={() => setShowConsumoEditForm(false)}>Cancelar</button>
-          </div>
-        </form>
-      </ModalForm>
-
       <div className="card">
         <h2 className="card-header">Facturas de consumo de empleado</h2>
         {consumosEmpleadoAgrupados.length === 0 && <p className="text-gray-600">No hay consumos de empleado con los filtros actuales.</p>}
