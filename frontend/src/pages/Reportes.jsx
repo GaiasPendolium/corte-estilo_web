@@ -294,10 +294,10 @@ const Reportes = () => {
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-5">
         <KpiCard title="Venta neta total" value={formatMoney(kpis.venta_neta_total)} hint={`Todo lo cobrado al cliente: servicios + adicionales + productos`} tone="slate" />
-        <KpiCard title="Ganancia establecimiento" value={formatMoney(kpis.ganancia_establecimiento_total)} hint={`Después de pagar estilistas y separar reabastecimiento`} tone="emerald" />
+        <KpiCard title="Ganancia establecimiento" value={formatMoney(kpis.ganancia_establecimiento_total)} hint={`Ventas productos caja + arriendo espacios + servicios adicionales`} tone="emerald" />
         <KpiCard title="Pago estilistas" value={formatMoney(kpis.pago_total_estilistas)} hint={`Solo saldos positivos. Descuentos espacio: ${formatMoney(kpis.descuentos_espacio_estilistas)}`} tone="sky" />
         <KpiCard title="Deudas estilistas" value={formatMoney(kpis.deudas_estilistas)} hint={`Suma de saldos negativos pendientes por cobro de espacio`} tone="amber" />
-        <KpiCard title="Total ganancias" value={formatMoney(kpis.total_ganancias_negocio)} hint={`Ganancia servicios + utilidad neta productos`} tone="amber" />
+        <KpiCard title="Total ganancias" value={formatMoney(kpis.total_ganancias_negocio)} hint={`Arriendo espacios + utilidad neta productos + otros servicios no producto`} tone="amber" />
         <KpiCard title="Stock crítico" value={moneyFormatter.format(kpis.productos_bajo_stock || 0)} hint={`Promedio venta producto: ${formatMoney(ventaPromedioProducto)}`} tone="amber" />
       </div>
 
@@ -310,17 +310,17 @@ const Reportes = () => {
         <div className="card">
           <p className="text-sm text-gray-500">Reserva reabastecimiento</p>
           <p className="mt-2 text-2xl font-black text-gray-900">{formatMoney(kpis.reserva_reabastecimiento_productos)}</p>
-          <p className="mt-1 text-sm text-gray-500">Costo de lo vendido en productos (guardar para reponer)</p>
+          <p className="mt-1 text-sm text-gray-500">Costo de compra de productos vendidos en caja y en servicios adicionales</p>
         </div>
         <div className="card">
           <p className="text-sm text-gray-500">Utilidad neta productos</p>
           <p className="mt-2 text-2xl font-black text-gray-900">{formatMoney(kpis.utilidad_neta_productos)}</p>
-          <p className="mt-1 text-sm text-gray-500">Total vendido - costo de reposición</p>
+          <p className="mt-1 text-sm text-gray-500">(Venta productos caja + en servicios) - (costo compra total)</p>
         </div>
         <div className="card">
-          <p className="text-sm text-gray-500">Servicios total cobrado</p>
-          <p className="mt-2 text-2xl font-black text-gray-900">{formatMoney(kpis.ingresos_servicios_totales)}</p>
-          <p className="mt-1 text-sm text-gray-500">Base: {formatMoney(kpis.ingresos_servicios)} | Adicionales: {formatMoney(kpis.ingresos_servicios_adicionales)}</p>
+          <p className="text-sm text-gray-500">Valor servicios (sin productos)</p>
+          <p className="mt-2 text-2xl font-black text-gray-900">{formatMoney(kpis.ingresos_servicios_no_producto)}</p>
+          <p className="mt-1 text-sm text-gray-500">Base servicios: {formatMoney(kpis.ingresos_servicios)} | Otros adicionales no producto: {formatMoney(kpis.otros_servicios_no_producto)}</p>
         </div>
       </div>
 
