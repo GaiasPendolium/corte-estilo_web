@@ -62,6 +62,7 @@ const Reportes = () => {
   const [historialEstados, setHistorialEstados] = useState([]);
   const [loadingHistorial, setLoadingHistorial] = useState(false);
   const [resumenDiario, setResumenDiario] = useState(null);
+  const [mostrarDetalleAvanzado, setMostrarDetalleAvanzado] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const resolveEstilistaIdFiltro = (dataStats) => {
@@ -356,88 +357,61 @@ const Reportes = () => {
             <button className="btn-secondary" onClick={() => aplicarRangoRapido('hoy')}>Hoy</button>
             <button className="btn-secondary" onClick={() => aplicarRangoRapido('7dias')}>7 días</button>
             <button className="btn-secondary" onClick={() => aplicarRangoRapido('mes')}>Mes</button>
+            <button
+              className="btn-secondary"
+              onClick={() => setMostrarDetalleAvanzado((prev) => !prev)}
+            >
+              {mostrarDetalleAvanzado ? 'Ocultar detalle avanzado' : 'Ver detalle avanzado'}
+            </button>
             <button className="btn-primary" onClick={loadData} disabled={loading}>{loading ? 'Consultando...' : 'Consultar'}</button>
           </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-5">
-        <KpiCard title="Venta neta total" value={formatMoney(kpis.venta_neta_total)} hint={`Todo lo cobrado al cliente: servicios + adicionales + productos`} tone="slate" />
-        <KpiCard title="Ganancia establecimiento" value={formatMoney(kpis.ganancia_establecimiento_total)} hint={`Cuadre caja: Venta neta - Pago estilistas`} tone="emerald" />
-        <KpiCard title="Pago estilistas" value={formatMoney(kpis.pago_total_estilistas)} hint={`Solo saldos positivos. Descuentos espacio: ${formatMoney(kpis.descuentos_espacio_estilistas)}`} tone="sky" />
-        <KpiCard title="Deudas estilistas" value={formatMoney(kpis.deudas_estilistas)} hint={`Suma de saldos negativos pendientes por cobro de espacio`} tone="amber" />
-        <KpiCard title="Total ganancias" value={formatMoney(kpis.total_ganancias_negocio)} hint={`Arriendo espacios + utilidad neta productos + otros servicios no producto`} tone="amber" />
-        <KpiCard title="Stock crítico" value={moneyFormatter.format(kpis.productos_bajo_stock || 0)} hint={`Promedio venta producto: ${formatMoney(ventaPromedioProducto)}`} tone="amber" />
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
+        <KpiCard title="Ingresos del período" value={formatMoney(kpis.venta_neta_total)} hint="Total cobrado a clientes" tone="slate" />
+        <KpiCard title="Pago a estilistas" value={formatMoney(kpis.pago_total_estilistas)} hint="Pagos positivos del período" tone="sky" />
+        <KpiCard title="Ganancia del negocio" value={formatMoney(kpis.ganancia_establecimiento_total)} hint="Lo que queda para el establecimiento" tone="emerald" />
+        <KpiCard title="Productos con stock crítico" value={moneyFormatter.format(kpis.productos_bajo_stock || 0)} hint="Cantidad de productos en alerta" tone="amber" />
       </div>
 
-      <div className="card border border-emerald-100 bg-emerald-50">
-        <p className="text-sm text-emerald-700 font-medium">Cuadre automático</p>
-        <p className="mt-1 text-sm text-emerald-800">
-          {formatMoney(kpis.venta_neta_total)} = {formatMoney(kpis.pago_total_estilistas)} + {formatMoney(kpis.ganancia_establecimiento_total)}
-        </p>
-        <p className="mt-1 text-xs text-emerald-700">
-          Ganancia establecimiento bruta (incluye deudas estilistas): {formatMoney(kpis.ganancia_establecimiento_bruta)}
-        </p>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="card border border-slate-200 bg-slate-50">
-          <p className="text-sm text-slate-600">1. Lo que recibe hoy</p>
-          <p className="mt-2 text-3xl font-black text-slate-900">{formatMoney(recibeHoy)}</p>
-          <p className="mt-1 text-sm text-slate-600">Total que entró por clientes.</p>
-        </div>
-        <div className="card border border-blue-200 bg-blue-50">
-          <p className="text-sm text-blue-700">2. Lo que paga hoy</p>
-          <p className="mt-2 text-3xl font-black text-blue-900">{formatMoney(pagaHoy)}</p>
-          <p className="mt-1 text-sm text-blue-700">Solo pagos positivos a estilistas.</p>
-        </div>
-        <div className="card border border-emerald-200 bg-emerald-50">
-          <p className="text-sm text-emerald-700">3. Lo que le queda hoy</p>
-          <p className="mt-2 text-3xl font-black text-emerald-900">{formatMoney(leQuedaHoy)}</p>
-          <p className="mt-1 text-sm text-emerald-700">Entrada del día menos pagos del día.</p>
+      <div className="card border border-slate-200 bg-slate-50">
+        <h2 className="text-base font-semibold text-slate-900">Resumen rápido del período</h2>
+        <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+          <div>
+            <p className="text-slate-500">Entró</p>
+            <p className="font-bold text-slate-900 text-lg">{formatMoney(recibeHoy)}</p>
+          </div>
+          <div>
+            <p className="text-slate-500">Se pagó</p>
+            <p className="font-bold text-sky-900 text-lg">{formatMoney(pagaHoy)}</p>
+          </div>
+          <div>
+            <p className="text-slate-500">Quedó</p>
+            <p className="font-bold text-emerald-700 text-lg">{formatMoney(leQuedaHoy)}</p>
+          </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="card">
-          <p className="text-sm text-gray-500">Productos total vendido</p>
-          <p className="mt-2 text-2xl font-black text-gray-900">{formatMoney(kpis.ingresos_productos_totales)}</p>
-          <p className="mt-1 text-sm text-gray-500">Caja productos: {formatMoney(kpis.ingresos_productos_caja)} | En servicios adicionales: {formatMoney(kpis.ingresos_productos_en_servicios)}</p>
+      {mostrarDetalleAvanzado && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="card border border-amber-200 bg-amber-50">
+            <p className="text-sm text-amber-700">Deudas estilistas</p>
+            <p className="mt-2 text-2xl font-black text-amber-900">{formatMoney(kpis.deudas_estilistas)}</p>
+            <p className="mt-1 text-sm text-amber-700">Saldos negativos por cobro de espacio</p>
+          </div>
+          <div className="card border border-slate-200 bg-white">
+            <p className="text-sm text-slate-500">Total operaciones</p>
+            <p className="mt-2 text-2xl font-black text-slate-900">{moneyFormatter.format(Number(kpis.cantidad_servicios || 0) + Number(kpis.cantidad_ventas_productos || 0))}</p>
+            <p className="mt-1 text-sm text-slate-500">{Number(kpis.cantidad_servicios || 0)} servicios y {Number(kpis.cantidad_ventas_productos || 0)} ventas</p>
+          </div>
+          <div className="card border border-emerald-200 bg-emerald-50">
+            <p className="text-sm text-emerald-700">Promedio por venta de producto</p>
+            <p className="mt-2 text-2xl font-black text-emerald-900">{formatMoney(ventaPromedioProducto)}</p>
+            <p className="mt-1 text-sm text-emerald-700">Ticket promedio de productos</p>
+          </div>
         </div>
-        <div className="card">
-          <p className="text-sm text-gray-500">Reserva reabastecimiento</p>
-          <p className="mt-2 text-2xl font-black text-gray-900">{formatMoney(kpis.reserva_reabastecimiento_productos)}</p>
-          <p className="mt-1 text-sm text-gray-500">Costo de compra de productos vendidos en caja y en servicios adicionales</p>
-        </div>
-        <div className="card">
-          <p className="text-sm text-gray-500">Utilidad neta productos</p>
-          <p className="mt-2 text-2xl font-black text-gray-900">{formatMoney(kpis.utilidad_neta_productos)}</p>
-          <p className="mt-1 text-sm text-gray-500">(Venta productos caja + en servicios) - (costo compra total)</p>
-        </div>
-        <div className="card">
-          <p className="text-sm text-gray-500">Valor servicios (sin productos)</p>
-          <p className="mt-2 text-2xl font-black text-gray-900">{formatMoney(kpis.ingresos_servicios_no_producto)}</p>
-          <p className="mt-1 text-sm text-gray-500">Base servicios: {formatMoney(kpis.ingresos_servicios)} | Otros adicionales no producto: {formatMoney(kpis.otros_servicios_no_producto)}</p>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="card border border-emerald-200 bg-emerald-50">
-          <p className="text-sm text-emerald-700">Disponible productos (establecimiento)</p>
-          <p className="mt-2 text-2xl font-black text-emerald-900">{formatMoney(kpis.disponible_productos_despues_reabastecer)}</p>
-          <p className="mt-1 text-sm text-emerald-700">Utilidad productos - comisión estilistas</p>
-        </div>
-        <div className="card border border-sky-200 bg-sky-50">
-          <p className="text-sm text-sky-700">Ganancia servicios</p>
-          <p className="mt-2 text-2xl font-black text-sky-900">{formatMoney(kpis.ingresos_servicios_totales)}</p>
-          <p className="mt-1 text-sm text-sky-700">Lo cobrado en servicios, incluyendo adicionales</p>
-        </div>
-        <div className="card border border-amber-200 bg-amber-50">
-          <p className="text-sm text-amber-700">Total operaciones</p>
-          <p className="mt-2 text-2xl font-black text-amber-900">{moneyFormatter.format(Number(kpis.cantidad_servicios || 0) + Number(kpis.cantidad_ventas_productos || 0))}</p>
-          <p className="mt-1 text-sm text-amber-700">{Number(kpis.cantidad_servicios || 0)} servicios y {Number(kpis.cantidad_ventas_productos || 0)} ventas</p>
-        </div>
-      </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="card">
@@ -597,6 +571,7 @@ const Reportes = () => {
         </div>
       </div>
 
+      {mostrarDetalleAvanzado && (
       <div className="card">
         <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
           <div>
@@ -640,6 +615,7 @@ const Reportes = () => {
           </table>
         </div>
       </div>
+      )}
 
       <div className="card">
         <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
@@ -684,6 +660,7 @@ const Reportes = () => {
         )}
       </div>
 
+      {mostrarDetalleAvanzado && (
       <div className="card">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -701,6 +678,7 @@ const Reportes = () => {
           </div>
         )}
       </div>
+      )}
     </div>
   );
 };
