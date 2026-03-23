@@ -362,4 +362,21 @@ export const reportesService = {
     const response = await api.get('/reportes/bi/resumen-diario/');
     return response.data;
   },
+
+  getEstadoPagoEstilistaDia: async (fecha) => {
+    const response = await api.get('/reportes/estilistas/estado-pago-dia/', {
+      params: { fecha },
+    });
+    return response.data;
+  },
+
+  setEstadoPagoEstilistaDia: async ({ estilista_id, fecha, estado, notas }) => {
+    const response = await api.post('/reportes/estilistas/estado-pago-dia/', {
+      estilista_id,
+      fecha,
+      estado,
+      notas,
+    });
+    return response.data;
+  },
 };

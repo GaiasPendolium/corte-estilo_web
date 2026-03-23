@@ -399,3 +399,33 @@ class MovimientoInventario(models.Model):
     
     def __str__(self):
         return f"{self.tipo_movimiento} - {self.producto.nombre} ({self.cantidad})"
+
+
+class EstadoPagoEstilistaDia(models.Model):
+    """Estado de pago por estilista y por día para control de cartera."""
+
+    ESTADOS = [
+        ('pendiente', 'Pendiente'),
+        ('cancelado', 'Cancelado'),
+    ]
+
+    estilista = models.ForeignKey(
+        Estilista,
+        on_delete=models.CASCADE,
+        related_name='estados_pago_diario',
+        verbose_name='Estilista'
+    )
+    fecha = models.DateField(verbose_name='Fecha')
+    estado = models.CharField(max_length=20, choices=ESTADOS, default='pendiente', verbose_name='Estado Pago')
+    notas = models.CharField(max_length=255, blank=True, null=True, verbose_name='Notas')
+    actualizado_en = models.DateTimeField(auto_now=True, verbose_name='Actualizado en')
+
+    class Meta:
+        db_table = 'estado_pago_estilista_dia'
+        verbose_name = 'Estado Pago Estilista Día'
+        verbose_name_plural = 'Estados Pago Estilista Día'
+        unique_together = ('estilista', 'fecha')
+        ordering = ['-fecha', 'estilista__nombre']
+
+    def __str__(self):
+        return f"{self.estilista.nombre} - {self.fecha} - {self.estado}"

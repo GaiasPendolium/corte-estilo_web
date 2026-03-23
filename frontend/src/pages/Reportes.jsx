@@ -57,6 +57,8 @@ const Reportes = () => {
   const [medioPagoFiltro, setMedioPagoFiltro] = useState('todos');
   const [marcaFiltro, setMarcaFiltro] = useState('todas');
   const [estilistaFiltro, setEstilistaFiltro] = useState('todos');
+  const [fechaEstadoPago, setFechaEstadoPago] = useState(format(today, 'yyyy-MM-dd'));
+  const [savingEstadoByEstilista, setSavingEstadoByEstilista] = useState({});
   const [stats, setStats] = useState(null);
   const [resumenDiario, setResumenDiario] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -68,6 +70,7 @@ const Reportes = () => {
         periodo,
         fecha_inicio: fechaInicio,
         fecha_fin: fechaFin,
+        fecha_estado_pago: fechaEstadoPago,
         ...(medioPagoFiltro !== 'todos' ? { medio_pago: medioPagoFiltro } : {}),
       });
       setStats(data);
@@ -83,12 +86,19 @@ const Reportes = () => {
     loadData();
   }, []);
 
+  useEffect(() => {
+    if (stats?.fecha_estado_pago) {
+      setFechaEstadoPago(stats.fecha_estado_pago);
+    }
+  }, [stats?.fecha_estado_pago]);
+
   const exportarCsv = async () => {
     try {
       const blob = await reportesService.exportBICsv({
         periodo,
         fecha_inicio: fechaInicio,
         fecha_fin: fechaFin,
+        fecha_estado_pago: fechaEstadoPago,
         ...(medioPagoFiltro !== 'todos' ? { medio_pago: medioPagoFiltro } : {}),
       });
       if (!blob || blob.size === 0) {
@@ -115,6 +125,7 @@ const Reportes = () => {
         periodo,
         fecha_inicio: fechaInicio,
         fecha_fin: fechaFin,
+        fecha_estado_pago: fechaEstadoPago,
         ...(medioPagoFiltro !== 'todos' ? { medio_pago: medioPagoFiltro } : {}),
       });
       if (!blob || blob.size === 0) {
@@ -227,6 +238,45 @@ const Reportes = () => {
   const pagaHoy = Number(kpis.pago_total_estilistas || 0);
   const leQuedaHoy = recibeHoy - pagaHoy;
 
+  const cambiarEstadoPagoDia = async (estilistaId, estado) => {
+    if (!fechaEstadoPago) {
+      toast.error('Selecciona una fecha para el estado de pago');
+      return;
+    }
+
+    setSavingEstadoByEstilista((prev) => ({ ...prev, [estilistaId]: true }));
+    try {
+      await reportesService.setEstadoPagoEstilistaDia({
+        estilista_id: estilistaId,
+        fecha: fechaEstadoPago,
+        estado,
+      });
+
+      setStats((prev) => {
+        if (!prev?.estilistas) return prev;
+        return {
+          ...prev,
+          fecha_estado_pago: fechaEstadoPago,
+          estilistas: prev.estilistas.map((item) =>
+            item.estilista_id === estilistaId
+              ? {
+                  ...item,
+                  estado_pago_dia: estado,
+                  fecha_estado_pago: fechaEstadoPago,
+                }
+              : item
+          ),
+        };
+      });
+
+      toast.success(`Estado actualizado a ${estado === 'cancelado' ? 'Cancelado' : 'Pendiente'}`);
+    } catch (error) {
+      toast.error(error?.response?.data?.error || 'No se pudo actualizar el estado del día');
+    } finally {
+      setSavingEstadoByEstilista((prev) => ({ ...prev, [estilistaId]: false }));
+    }
+  };
+
   return (
     <div className="space-y-6 fade-in">
       <section className="rounded-[28px] bg-[radial-gradient(circle_at_top_left,_rgba(59,130,246,0.18),_transparent_34%),linear-gradient(135deg,#0f172a_0%,#111827_35%,#1f2937_100%)] p-6 text-white shadow-2xl">
@@ -261,6 +311,10 @@ const Reportes = () => {
             <div>
               <label className="block text-sm text-gray-600 mb-1">Fecha fin</label>
               <input type="date" className="input-field" value={fechaFin} onChange={(e) => setFechaFin(e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-600 mb-1">Fecha estado pago</label>
+              <input type="date" className="input-field" value={fechaEstadoPago} onChange={(e) => setFechaEstadoPago(e.target.value)} />
             </div>
             <div>
               <label className="block text-sm text-gray-600 mb-1">Medio de pago</label>
@@ -419,6 +473,7 @@ const Reportes = () => {
           <div>
             <h2 className="card-header mb-0">Liquidación por estilista</h2>
             <p className="text-sm text-gray-500">Lectura simple: cuánto facturó, cuánto realmente cuenta para pagarle, qué deducciones tiene y cuánto neto recibe.</p>
+            <p className="text-xs text-slate-500 mt-1">Estado por día aplicado para: {stats?.fecha_estado_pago || fechaEstadoPago}</p>
           </div>
           <div className="rounded-2xl bg-slate-100 px-4 py-2 text-sm text-slate-700">
             {estilistaFiltro === 'todos' ? 'Mostrando todos los estilistas' : `Mostrando: ${estilistaFiltro}`}
@@ -452,7 +507,8 @@ const Reportes = () => {
                 <th className="px-6 py-3 text-left">Cobro por espacio</th>
                 <th className="px-6 py-3 text-left">Días trabajados</th>
                 <th className="px-6 py-3 text-left">Neto</th>
-                <th className="px-6 py-3 text-left">Estado</th>
+                <th className="px-6 py-3 text-left">Estado saldo</th>
+                <th className="px-6 py-3 text-left">Estado pago día</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
@@ -463,7 +519,12 @@ const Reportes = () => {
                     <div className="font-medium text-slate-900">{formatMoney(s.ganancias_servicios)}</div>
                     <div className="text-xs text-slate-500">Base del servicio para liquidar</div>
                   </td>
-                  <td className="table-cell">{formatMoney(s.comision_ventas_producto)}</td>
+                  <td className="table-cell">
+                    <div className="font-medium text-slate-900">{formatMoney(s.comision_ventas_producto)}</div>
+                    <div className="text-xs text-slate-500">
+                      Caja: {formatMoney(s.comision_ventas_producto_caja)} | Servicios: {formatMoney(s.comision_ventas_producto_servicios)}
+                    </div>
+                  </td>
                   <td className="table-cell">
                     <div className="font-medium text-slate-900 capitalize">{s.tipo_cobro_espacio || 'sin_cobro'}</div>
                     <div className="text-xs text-slate-500">
@@ -484,6 +545,22 @@ const Reportes = () => {
                     {Number(s.pago_neto_estilista || 0) > 0 && <span className="text-emerald-700 font-medium">A pagar</span>}
                     {Number(s.pago_neto_estilista || 0) < 0 && <span className="text-red-700 font-medium">Debe al establecimiento</span>}
                     {Number(s.pago_neto_estilista || 0) === 0 && <span className="text-slate-600 font-medium">En cero</span>}
+                  </td>
+                  <td className="table-cell">
+                    <select
+                      className="input-field !py-2 !min-h-0"
+                      value={s.estado_pago_dia || 'pendiente'}
+                      onChange={(e) => cambiarEstadoPagoDia(s.estilista_id, e.target.value)}
+                      disabled={!!savingEstadoByEstilista[s.estilista_id]}
+                    >
+                      <option value="pendiente">Pendiente</option>
+                      <option value="cancelado">Cancelado</option>
+                    </select>
+                    <div className="text-xs text-slate-500 mt-1">
+                      {savingEstadoByEstilista[s.estilista_id]
+                        ? 'Guardando...'
+                        : `Fecha: ${s.fecha_estado_pago || fechaEstadoPago}`}
+                    </div>
                   </td>
                 </tr>
               ))}

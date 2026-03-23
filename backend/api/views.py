@@ -14,7 +14,7 @@ import io
 
 from .models import (
     Usuario, Estilista, Servicio, Cliente, Producto,
-    ServicioRealizado, VentaProducto, MovimientoInventario
+    ServicioRealizado, VentaProducto, MovimientoInventario, EstadoPagoEstilistaDia
 )
 from .serializers import (
     UsuarioSerializer, EstilistaSerializer, ServicioSerializer, ClienteSerializer,
@@ -594,6 +594,12 @@ def _calcular_datos_bi(request):
     """Función helper que calcula todos los datos de BI y retorna un diccionario"""
     fecha_inicio, fecha_fin = _resolver_rango_fechas(request)
     medio_pago = (request.query_params.get('medio_pago') or '').strip().lower()
+    fecha_estado_pago_raw = (request.query_params.get('fecha_estado_pago') or fecha_fin).strip()
+
+    try:
+        fecha_estado_pago = datetime.strptime(fecha_estado_pago_raw, '%Y-%m-%d').date()
+    except Exception:
+        fecha_estado_pago = datetime.strptime(fecha_fin, '%Y-%m-%d').date()
 
     ventas_qs = VentaProducto.objects.select_related('producto', 'estilista').filter(
         fecha_hora__date__gte=fecha_inicio,
@@ -614,6 +620,7 @@ def _calcular_datos_bi(request):
     costo_productos = Decimal(0)
     costo_productos_en_servicios = Decimal(0)
     comision_producto_estilistas = Decimal(0)
+    comision_producto_estilistas_en_servicios = Decimal(0)
 
     top_productos_mapa = {}
     for venta in ventas_qs:
@@ -640,7 +647,7 @@ def _calcular_datos_bi(request):
 
     # Productos vendidos como adicional dentro de servicios finalizados.
     # Se valorizan por precio de venta del producto * cantidad registrada.
-    for srv in servicios_qs.select_related('adicional_otro_producto'):
+    for srv in servicios_qs.select_related('adicional_otro_producto', 'estilista'):
         if srv.adicional_otro_producto_id:
             cantidad_ad = Decimal(srv.adicional_otro_cantidad or 1)
             precio_venta_ad = Decimal(srv.adicional_otro_producto.precio_venta or 0)
@@ -648,11 +655,16 @@ def _calcular_datos_bi(request):
             ingresos_productos_en_servicios += precio_venta_ad * cantidad_ad
             costo_productos_en_servicios += precio_compra_ad * cantidad_ad
 
+            pct = Decimal(srv.estilista.comision_ventas_productos or 0)
+            comision_producto_estilistas_en_servicios += ((precio_venta_ad * cantidad_ad) * pct) / Decimal(100)
+
+    comision_producto_estilistas_total = comision_producto_estilistas + comision_producto_estilistas_en_servicios
+
     ingresos_productos_totales = ingresos_productos + ingresos_productos_en_servicios
     costo_productos_totales = costo_productos + costo_productos_en_servicios
     utilidad_productos_total = ingresos_productos_totales - costo_productos_totales
 
-    ganancia_establecimiento_productos = utilidad_productos_total - comision_producto_estilistas
+    ganancia_establecimiento_productos = utilidad_productos_total - comision_producto_estilistas_total
     ingresos_servicios = Decimal(servicios_qs.aggregate(total=Sum('precio_cobrado'))['total'] or 0)
 
     estilistas_data = []
@@ -661,6 +673,11 @@ def _calcular_datos_bi(request):
     total_pago_estilistas_positivo = Decimal(0)
     total_deuda_estilistas = Decimal(0)
     total_servicios_adicionales_establecimiento = Decimal(0)
+
+    estados_pago_map = {
+        ep.estilista_id: ep.estado
+        for ep in EstadoPagoEstilistaDia.objects.filter(fecha=fecha_estado_pago)
+    }
 
     for estilista in Estilista.objects.filter(activo=True):
         servicios_est = servicios_qs.filter(estilista=estilista)
@@ -682,10 +699,20 @@ def _calcular_datos_bi(request):
             *ventas_est.values_list('fecha_hora__date', flat=True).distinct(),
         }
         
-        comision_ventas_producto_est = Decimal(0)
+        comision_ventas_producto_caja_est = Decimal(0)
         for v in ventas_est:
             pct = Decimal(estilista.comision_ventas_productos or 0)
-            comision_ventas_producto_est += (Decimal(v.total) * pct) / Decimal(100)
+            comision_ventas_producto_caja_est += (Decimal(v.total) * pct) / Decimal(100)
+
+        comision_ventas_producto_servicios_est = Decimal(0)
+        for srv in servicios_est.select_related('adicional_otro_producto'):
+            if not srv.adicional_otro_producto_id:
+                continue
+            pct = Decimal(estilista.comision_ventas_productos or 0)
+            base = Decimal(srv.adicional_otro_producto.precio_venta or 0) * Decimal(srv.adicional_otro_cantidad or 1)
+            comision_ventas_producto_servicios_est += (base * pct) / Decimal(100)
+
+        comision_ventas_producto_est = comision_ventas_producto_caja_est + comision_ventas_producto_servicios_est
 
         subtotal_ingresos_est = ganancia_servicios_est + comision_ventas_producto_est
 
@@ -726,10 +753,14 @@ def _calcular_datos_bi(request):
                 'deduccion_servicios_adicionales': float(total_adicionales_est),
                 'ganancias_servicios': float(ganancia_servicios_est),
                 'comision_ventas_producto': float(comision_ventas_producto_est),
+                'comision_ventas_producto_caja': float(comision_ventas_producto_caja_est),
+                'comision_ventas_producto_servicios': float(comision_ventas_producto_servicios_est),
                 'ganancias_totales_brutas': float(subtotal_ingresos_est),
                 'total_deducciones': float(descuento_espacio),
                 'descuento_espacio': float(descuento_espacio),
                 'pago_neto_estilista': float(pago_neto),
+                'estado_pago_dia': estados_pago_map.get(estilista.id, 'pendiente'),
+                'fecha_estado_pago': fecha_estado_pago.strftime('%Y-%m-%d'),
             }
         )
 
@@ -782,6 +813,7 @@ def _calcular_datos_bi(request):
     return {
         'fecha_inicio': fecha_inicio,
         'fecha_fin': fecha_fin,
+        'fecha_estado_pago': fecha_estado_pago.strftime('%Y-%m-%d'),
         'kpis': {
             'venta_neta_total': float(venta_neta_total),
             'total_ganancias_negocio': float(total_ganancias_negocio),
@@ -798,7 +830,9 @@ def _calcular_datos_bi(request):
             'utilidad_productos': float(utilidad_productos),
             'utilidad_neta_productos': float(utilidad_productos_total),
             'otros_servicios_no_producto': float(otros_servicios_no_producto),
-            'comision_producto_estilistas': float(comision_producto_estilistas),
+            'comision_producto_estilistas': float(comision_producto_estilistas_total),
+            'comision_producto_estilistas_caja': float(comision_producto_estilistas),
+            'comision_producto_estilistas_servicios': float(comision_producto_estilistas_en_servicios),
             'comision_servicios_establecimiento': float(comision_servicios_establecimiento),
             'ingresos_servicios_adicionales': float(total_servicios_adicionales_establecimiento),
             'ganancia_establecimiento_productos': float(ganancia_establecimiento_productos),
@@ -834,6 +868,64 @@ def _calcular_datos_bi(request):
         ],
         'serie_diaria': series_diaria,
     }
+
+
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
+def estado_pago_estilista_dia(request):
+    if request.method == 'GET':
+        fecha_raw = (request.query_params.get('fecha') or timezone.localdate().strftime('%Y-%m-%d')).strip()
+        try:
+            fecha = datetime.strptime(fecha_raw, '%Y-%m-%d').date()
+        except Exception:
+            return Response({'error': 'Formato de fecha inválido. Usa YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        items = [
+            {
+                'estilista_id': x.estilista_id,
+                'fecha': fecha.strftime('%Y-%m-%d'),
+                'estado': x.estado,
+                'notas': x.notas,
+            }
+            for x in EstadoPagoEstilistaDia.objects.filter(fecha=fecha)
+        ]
+        return Response({'fecha': fecha.strftime('%Y-%m-%d'), 'items': items})
+
+    estilista_id = request.data.get('estilista_id')
+    fecha_raw = request.data.get('fecha')
+    estado = (request.data.get('estado') or '').strip().lower()
+    notas = request.data.get('notas')
+
+    if not estilista_id or not fecha_raw or estado not in {'pendiente', 'cancelado'}:
+        return Response(
+            {'error': 'Debes enviar estilista_id, fecha (YYYY-MM-DD) y estado (pendiente|cancelado).'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        fecha = datetime.strptime(str(fecha_raw), '%Y-%m-%d').date()
+    except Exception:
+        return Response({'error': 'Formato de fecha inválido. Usa YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        estilista = Estilista.objects.get(id=int(estilista_id))
+    except Exception:
+        return Response({'error': 'Estilista no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+
+    obj, _ = EstadoPagoEstilistaDia.objects.update_or_create(
+        estilista=estilista,
+        fecha=fecha,
+        defaults={'estado': estado, 'notas': notas},
+    )
+
+    return Response(
+        {
+            'estilista_id': obj.estilista_id,
+            'fecha': obj.fecha.strftime('%Y-%m-%d'),
+            'estado': obj.estado,
+            'notas': obj.notas,
+        }
+    )
 
 
 @api_view(['GET'])
