@@ -63,6 +63,7 @@ const Reportes = () => {
   const [loadingHistorial, setLoadingHistorial] = useState(false);
   const [resumenDiario, setResumenDiario] = useState(null);
   const [mostrarDetalleAvanzado, setMostrarDetalleAvanzado] = useState(false);
+  const [mostrarResumenDetalle, setMostrarResumenDetalle] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const resolveEstilistaIdFiltro = (dataStats) => {
@@ -379,21 +380,53 @@ const Reportes = () => {
       </div>
 
       <div className="card border border-slate-200 bg-slate-50">
-        <h2 className="text-base font-semibold text-slate-900">Resumen rápido del período</h2>
-        <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
-            <p className="text-slate-500">Entró</p>
-            <p className="font-bold text-slate-900 text-lg">{formatMoney(recibeHoy)}</p>
+            <h2 className="text-base font-semibold text-slate-900">Resumen rápido del período</h2>
+            <p className="text-sm text-slate-600 mt-1">Vista corta para operación diaria.</p>
           </div>
-          <div>
-            <p className="text-slate-500">Se pagó</p>
-            <p className="font-bold text-sky-900 text-lg">{formatMoney(pagaHoy)}</p>
-          </div>
-          <div>
-            <p className="text-slate-500">Quedó</p>
-            <p className="font-bold text-emerald-700 text-lg">{formatMoney(leQuedaHoy)}</p>
-          </div>
+          <button className="btn-secondary" onClick={() => setMostrarResumenDetalle((prev) => !prev)}>
+            {mostrarResumenDetalle ? 'Ocultar detalles' : 'Mostrar detalles'}
+          </button>
         </div>
+
+        {mostrarResumenDetalle && (
+          <>
+            <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+              <div>
+                <p className="text-slate-500">Entró</p>
+                <p className="font-bold text-slate-900 text-lg">{formatMoney(recibeHoy)}</p>
+              </div>
+              <div>
+                <p className="text-slate-500">Se pagó</p>
+                <p className="font-bold text-sky-900 text-lg">{formatMoney(pagaHoy)}</p>
+              </div>
+              <div>
+                <p className="text-slate-500">Quedó</p>
+                <p className="font-bold text-emerald-700 text-lg">{formatMoney(leQuedaHoy)}</p>
+              </div>
+            </div>
+
+            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+              <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                <p className="text-sm text-slate-500">Productos total vendido</p>
+                <p className="mt-2 text-xl font-bold text-slate-900">{formatMoney(kpis.ingresos_productos_totales)}</p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                <p className="text-sm text-slate-500">Reserva reabastecimiento</p>
+                <p className="mt-2 text-xl font-bold text-slate-900">{formatMoney(kpis.reserva_reabastecimiento_productos)}</p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                <p className="text-sm text-slate-500">Utilidad neta productos</p>
+                <p className="mt-2 text-xl font-bold text-slate-900">{formatMoney(kpis.utilidad_neta_productos)}</p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                <p className="text-sm text-slate-500">Servicios sin productos</p>
+                <p className="mt-2 text-xl font-bold text-slate-900">{formatMoney(kpis.ingresos_servicios_no_producto)}</p>
+              </div>
+            </div>
+          </>
+        )}
       </div>
 
       {mostrarDetalleAvanzado && (
