@@ -661,15 +661,19 @@ const Ventas = () => {
                       <p className="font-bold text-gray-900 capitalize">{servicioVisualizar.medio_pago || '-'}</p>
                     </div>
                     <div>
-                      <p className="text-sm text-gray-600">Precio servicio base</p>
+                      <p className="text-sm text-gray-600">Valor servicio base</p>
                       <p className="font-bold text-gray-900">${Number(servicioVisualizar.precio_cobrado || 0).toFixed(2)}</p>
                     </div>
                     <div>
                       <p className="text-sm text-gray-600">Valor adicionales</p>
                       <p className="font-bold text-gray-900">${Number(servicioVisualizar.valor_adicionales || 0).toFixed(2)}</p>
                     </div>
+                    <div>
+                      <p className="text-sm text-gray-600">Neto del servicio</p>
+                      <p className="font-bold text-gray-900">${Number(servicioVisualizar.neto_servicio ?? servicioVisualizar.precio_cobrado || 0).toFixed(2)}</p>
+                    </div>
                     <div className="col-span-2">
-                      <p className="text-sm text-gray-600">Total cobrado</p>
+                      <p className="text-sm text-gray-600">Total cobrado al cliente</p>
                       <p className="font-bold text-lg text-green-600">${(Number(servicioVisualizar.precio_cobrado || 0) + Number(servicioVisualizar.valor_adicionales || 0)).toFixed(2)}</p>
                     </div>
                     {servicioVisualizar.notas && (
