@@ -25,6 +25,22 @@ const extractRows = (payload) => {
   return [];
 };
 
+const fetchAllRows = async (getAllFn, params = {}) => {
+  let page = 1;
+  const all = [];
+
+  while (true) {
+    const payload = await getAllFn({ ...params, page });
+    const rows = extractRows(payload);
+    all.push(...rows);
+
+    if (!payload?.next || rows.length === 0) break;
+    page += 1;
+  }
+
+  return all;
+};
+
 const productMatchesSearch = (producto, query) => {
   const q = query.trim().toLowerCase();
   return (
@@ -66,11 +82,11 @@ const Productos = () => {
     try {
       setLoading(true);
       const [payloadProductos, payloadServicios] = await Promise.all([
-        productosService.getAll(),
-        serviciosService.getAll(),
+        fetchAllRows(productosService.getAll),
+        fetchAllRows(serviciosService.getAll),
       ]);
-      setProductos(extractRows(payloadProductos));
-      setServiciosCatalogo(extractRows(payloadServicios));
+      setProductos(payloadProductos);
+      setServiciosCatalogo(payloadServicios);
     } catch (error) {
       toast.error('No se pudo cargar inventario');
       setProductos([]);
@@ -92,7 +108,6 @@ const Productos = () => {
     setSugerenciasProducto(
       productos
         .filter((p) => productMatchesSearch(p, q))
-        .slice(0, 8)
     );
   }, [codigoBusqueda, productos]);
 
@@ -230,18 +245,13 @@ const Productos = () => {
       return;
     }
 
-    try {
-      const payload = await productosService.getAll({ search: codigoBusqueda.trim() });
-      const encontrados = extractRows(payload);
-      const exacto = encontrados.find((p) => p.codigo_barras === codigoBusqueda.trim());
-      const producto = exacto || encontrados[0] || null;
-      setProductoEncontrado(producto);
-      if (!producto) {
-        toast.info('No se encontró producto con ese código');
-      }
-    } catch (error) {
-      toast.error('Error buscando por código de barras');
-      setProductoEncontrado(null);
+    const q = codigoBusqueda.trim();
+    const encontrados = productos.filter((p) => productMatchesSearch(p, q));
+    const exacto = encontrados.find((p) => String(p.codigo_barras || '').trim() === q);
+    const producto = exacto || encontrados[0] || null;
+    setProductoEncontrado(producto);
+    if (!producto) {
+      toast.info('No se encontró producto con ese código o texto');
     }
   };
 

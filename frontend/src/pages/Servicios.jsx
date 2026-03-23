@@ -30,6 +30,22 @@ const extractRows = (payload) => {
   return [];
 };
 
+const fetchAllRows = async (getAllFn, params = {}) => {
+  let page = 1;
+  const all = [];
+
+  while (true) {
+    const payload = await getAllFn({ ...params, page });
+    const rows = extractRows(payload);
+    all.push(...rows);
+
+    if (!payload?.next || rows.length === 0) break;
+    page += 1;
+  }
+
+  return all;
+};
+
 const productMatchesSearch = (producto, query) => {
   const q = query.trim().toLowerCase();
   return (
@@ -139,22 +155,15 @@ const Servicios = () => {
     try {
       setLoading(true);
       const today = new Date().toISOString().slice(0, 10);
-      const [estilistasRes, serviciosRes, clientesRes, serviciosRealizadosRes, estadoRes, productosRes, finalizadosHoyRes] = await Promise.all([
-        estilistasService.getAll({ activo: true }),
-        serviciosService.getAll({ activo: true }),
-        clientesService.getAll(),
-        serviciosRealizadosService.getAll({ estado: 'en_proceso' }),
+      const [listaEstilistas, listaServicios, listaClientes, listaRealizados, estadoRes, listaProductos, listaFinalizadosHoy] = await Promise.all([
+        fetchAllRows(estilistasService.getAll, { activo: true }),
+        fetchAllRows(serviciosService.getAll, { activo: true }),
+        fetchAllRows(clientesService.getAll),
+        fetchAllRows(serviciosRealizadosService.getAll, { estado: 'en_proceso' }),
         serviciosRealizadosService.getEstadoEstilistas(),
-        productosService.getAll({ activo: true }),
-        serviciosRealizadosService.getAll({ estado: 'finalizado', fecha_inicio: today, fecha_fin: today }),
+        fetchAllRows(productosService.getAll, { activo: true }),
+        fetchAllRows(serviciosRealizadosService.getAll, { estado: 'finalizado', fecha_inicio: today, fecha_fin: today }),
       ]);
-
-      const listaEstilistas = extractRows(estilistasRes);
-      const listaServicios = extractRows(serviciosRes);
-      const listaClientes = extractRows(clientesRes);
-      const listaRealizados = extractRows(serviciosRealizadosRes);
-      const listaProductos = extractRows(productosRes);
-      const listaFinalizadosHoy = extractRows(finalizadosHoyRes);
 
       setEstilistas(listaEstilistas);
       setServicios(listaServicios);
@@ -196,7 +205,6 @@ const Servicios = () => {
     setSugerenciasAdicional(
       productos
         .filter((p) => productMatchesSearch(p, q))
-        .slice(0, 8)
     );
   }, [finalizacion.busqueda_adicional, productos]);
 
@@ -209,7 +217,6 @@ const Servicios = () => {
     setVentaSugerencias(
       productos
         .filter((p) => productMatchesSearch(p, q))
-        .slice(0, 8)
     );
   }, [ventaBusqueda, productos]);
 
