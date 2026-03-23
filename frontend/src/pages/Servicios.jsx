@@ -265,12 +265,21 @@ const Servicios = () => {
     [servicios]
   );
 
-  const construirItemAdicional = ({ id = '', estilista_id = '', valor = '', busqueda = '' } = {}) => ({
+  const construirItemAdicional = ({
+    id = '',
+    estilista_id = '',
+    valor = '',
+    busqueda = '',
+    aplica_porcentaje_establecimiento = false,
+    porcentaje_establecimiento = '30',
+  } = {}) => ({
     key: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     id: id ? String(id) : '',
     estilista_id: estilista_id ? String(estilista_id) : '',
     valor: valor ? String(valor) : '',
     busqueda: busqueda || '',
+    aplica_porcentaje_establecimiento: Boolean(aplica_porcentaje_establecimiento),
+    porcentaje_establecimiento: String(porcentaje_establecimiento ?? '30'),
   });
 
   const mapearFlagsLegacyAdicionales = (adicionalesIds) => {
@@ -342,6 +351,8 @@ const Servicios = () => {
             estilista_id: item.estilista_id,
             valor: toPesoInt(item.valor || 0),
             busqueda: item.servicio_nombre || '',
+            aplica_porcentaje_establecimiento: Boolean(item.aplica_porcentaje_establecimiento),
+            porcentaje_establecimiento: String(item.porcentaje_establecimiento ?? '30'),
           })
         )
       : idsLegacy.map((id) => {
@@ -500,6 +511,16 @@ const Servicios = () => {
         toast.warning('Cada adicional debe tener servicio, empleado y valor mayor a 0');
         return;
       }
+
+      const porcentajeInvalido = items.find((item) => {
+        if (!item.aplica_porcentaje_establecimiento) return false;
+        const pct = Number(item.porcentaje_establecimiento || 0);
+        return !Number.isFinite(pct) || pct <= 0 || pct > 100;
+      });
+      if (porcentajeInvalido) {
+        toast.warning('El porcentaje para establecimiento debe ser mayor a 0 y menor o igual a 100');
+        return;
+      }
     }
 
     setShowConfirmacionFinalizar(true);
@@ -516,6 +537,10 @@ const Servicios = () => {
               id: Number(item.id),
               estilista_id: Number(item.estilista_id),
               valor: toPesoInt(item.valor || 0),
+              aplica_porcentaje_establecimiento: Boolean(item.aplica_porcentaje_establecimiento),
+              porcentaje_establecimiento: Boolean(item.aplica_porcentaje_establecimiento)
+                ? Number(item.porcentaje_establecimiento || 0)
+                : 0,
             }))
         : [];
       const flagsLegacy = mapearFlagsLegacyAdicionales(itemsNormalizados.map((x) => x.id));
@@ -1144,6 +1169,42 @@ const Servicios = () => {
                             >
                               <FiTrash2 />
                             </button>
+                          </div>
+
+                          <div className="md:col-span-8">
+                            <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+                              <input
+                                type="checkbox"
+                                checked={Boolean(item.aplica_porcentaje_establecimiento)}
+                                onChange={(e) =>
+                                  actualizarFilaAdicional(item.key, {
+                                    aplica_porcentaje_establecimiento: e.target.checked,
+                                    porcentaje_establecimiento: e.target.checked
+                                      ? (item.porcentaje_establecimiento || '30')
+                                      : '0',
+                                  })
+                                }
+                              />
+                              Este adicional tiene ganancia para establecimiento
+                            </label>
+                          </div>
+
+                          <div className="md:col-span-4">
+                            <input
+                              className="input-field"
+                              type="number"
+                              min="0"
+                              max="100"
+                              step="0.01"
+                              placeholder="% establecimiento"
+                              value={item.porcentaje_establecimiento || ''}
+                              disabled={!item.aplica_porcentaje_establecimiento}
+                              onChange={(e) =>
+                                actualizarFilaAdicional(item.key, {
+                                  porcentaje_establecimiento: e.target.value,
+                                })
+                              }
+                            />
                           </div>
                         </div>
                       </div>

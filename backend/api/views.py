@@ -1061,13 +1061,34 @@ def _calcular_datos_bi(request):
     ingresos_servicios = Decimal(servicios_qs.aggregate(total=Sum('precio_cobrado'))['total'] or 0)
     ingresos_servicios_adicionales_facturados = Decimal(servicios_qs.aggregate(total=Sum('valor_adicionales'))['total'] or 0)
 
+    adicionales_asignados_lista = list(adicionales_asignados_qs)
+    total_adicionales_asignados_bruto_global = Decimal(0)
+    total_adicionales_establecimiento_porcentaje_global = Decimal(0)
+    total_adicionales_liquidos_global = Decimal(0)
+    for ad in adicionales_asignados_lista:
+        valor = Decimal(ad.valor_cobrado or 0)
+        pct = Decimal(ad.porcentaje_establecimiento or 0) if ad.aplica_porcentaje_establecimiento else Decimal(0)
+        if pct < 0:
+            pct = Decimal(0)
+        if pct > 100:
+            pct = Decimal(100)
+        valor_est = (valor * pct) / Decimal(100)
+        valor_emp = valor - valor_est
+        total_adicionales_asignados_bruto_global += valor
+        total_adicionales_establecimiento_porcentaje_global += valor_est
+        total_adicionales_liquidos_global += valor_emp
+
+    adicionales_no_asignados_global = ingresos_servicios_adicionales_facturados - total_adicionales_asignados_bruto_global
+    if adicionales_no_asignados_global < 0:
+        adicionales_no_asignados_global = Decimal(0)
+    total_servicios_adicionales_establecimiento = total_adicionales_establecimiento_porcentaje_global + adicionales_no_asignados_global
+
     estilistas_data = []
     total_descuentos_espacio = Decimal(0)
     total_pago_neto_estilistas = Decimal(0)
     total_pago_neto_estilistas_periodo = Decimal(0)
     total_pago_estilistas_positivo = Decimal(0)
     total_deuda_estilistas = Decimal(0)
-    total_servicios_adicionales_establecimiento = Decimal(0)
 
     try:
         estados_pago_map = {
@@ -1084,16 +1105,28 @@ def _calcular_datos_bi(request):
 
         # Calcular totales de servicios
         total_servicios_precio_cobrado = Decimal(servicios_est.aggregate(total=Sum('precio_cobrado'))['total'] or 0)
-        total_adicionales_est = Decimal(servicios_est.aggregate(total=Sum('valor_adicionales'))['total'] or 0)
-        total_adicionales_asignados_est = Decimal(
-            adicionales_asignados_qs.filter(estilista=estilista).aggregate(total=Sum('valor_cobrado'))['total'] or 0
-        )
+        adicionales_estilista = [ad for ad in adicionales_asignados_lista if ad.estilista_id == estilista.id]
+        total_adicionales_asignados_bruto_est = Decimal(0)
+        total_adicionales_asignados_est = Decimal(0)
+        total_adicionales_deduccion_est = Decimal(0)
+        for ad in adicionales_estilista:
+            valor = Decimal(ad.valor_cobrado or 0)
+            pct = Decimal(ad.porcentaje_establecimiento or 0) if ad.aplica_porcentaje_establecimiento else Decimal(0)
+            if pct < 0:
+                pct = Decimal(0)
+            if pct > 100:
+                pct = Decimal(100)
+            valor_est = (valor * pct) / Decimal(100)
+            valor_emp = valor - valor_est
+            total_adicionales_asignados_bruto_est += valor
+            total_adicionales_asignados_est += valor_emp
+            total_adicionales_deduccion_est += valor_est
         
         # Base para pagar al estilista = servicios principales + servicios adicionales asignados.
         ganancia_servicios_est = total_servicios_precio_cobrado + total_adicionales_asignados_est
         
         # Para liquidación del estilista, facturación atribuida = servicios base + adicionales asignados.
-        total_facturado_cliente = total_servicios_precio_cobrado + total_adicionales_asignados_est
+        total_facturado_cliente = total_servicios_precio_cobrado + total_adicionales_asignados_bruto_est
         
         comision_ventas_producto_caja_est = Decimal(0)
         comision_por_dia = {}
@@ -1117,9 +1150,16 @@ def _calcular_datos_bi(request):
             fecha_srv = _fecha_operativa_desde_dt(srv.fecha_hora)
             servicios_por_dia[fecha_srv] = servicios_por_dia.get(fecha_srv, Decimal(0)) + Decimal(srv.precio_cobrado or 0)
 
-        for ad in adicionales_asignados_qs.filter(estilista=estilista):
+        for ad in adicionales_estilista:
             fecha_ad = _fecha_operativa_desde_dt(ad.servicio_realizado.fecha_hora)
-            servicios_por_dia[fecha_ad] = servicios_por_dia.get(fecha_ad, Decimal(0)) + Decimal(ad.valor_cobrado or 0)
+            valor = Decimal(ad.valor_cobrado or 0)
+            pct = Decimal(ad.porcentaje_establecimiento or 0) if ad.aplica_porcentaje_establecimiento else Decimal(0)
+            if pct < 0:
+                pct = Decimal(0)
+            if pct > 100:
+                pct = Decimal(100)
+            valor_emp = valor - ((valor * pct) / Decimal(100))
+            servicios_por_dia[fecha_ad] = servicios_por_dia.get(fecha_ad, Decimal(0)) + valor_emp
 
         # Días trabajados: usar la misma fecha operativa que los mapas por día.
         dias_trabajados = set(servicios_por_dia.keys()) | set(comision_por_dia.keys())
@@ -1161,11 +1201,6 @@ def _calcular_datos_bi(request):
             total_pago_estilistas_positivo += pago_neto_pendiente
         else:
             total_deuda_estilistas += abs(pago_neto_pendiente)
-        # Lo no asignado a estilistas queda como ingreso adicional del establecimiento.
-        adicionales_establecimiento_est = total_adicionales_est - total_adicionales_asignados_est
-        if adicionales_establecimiento_est < 0:
-            adicionales_establecimiento_est = Decimal(0)
-        total_servicios_adicionales_establecimiento += adicionales_establecimiento_est
 
         total_dias = len(dias_trabajados)
         if total_dias == 0:
@@ -1188,7 +1223,7 @@ def _calcular_datos_bi(request):
                 'total_dias_trabajados': int(len(dias_trabajados)),
                 'facturacion_servicios': float(total_facturado_cliente),
                 'valor_servicios_adicionales': float(total_adicionales_asignados_est),
-                'deduccion_servicios_adicionales': float(0),
+                'deduccion_servicios_adicionales': float(total_adicionales_deduccion_est),
                 'ganancias_servicios': float(ganancia_servicios_est),
                 'comision_ventas_producto': float(comision_ventas_producto_est),
                 'comision_ventas_producto_caja': float(comision_ventas_producto_caja_est),

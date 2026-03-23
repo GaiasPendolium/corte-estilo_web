@@ -157,6 +157,8 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
                 'estilista_id': d.estilista_id,
                 'estilista_nombre': d.estilista.nombre,
                 'valor': float(d.valor_cobrado or 0),
+                'aplica_porcentaje_establecimiento': bool(d.aplica_porcentaje_establecimiento),
+                'porcentaje_establecimiento': float(d.porcentaje_establecimiento or 0),
             }
             for d in detalles
         ]
@@ -202,12 +204,20 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
                     sid = item.get('id')
                     estilista_id = item.get('estilista_id')
                     valor = item.get('valor')
+                    aplica_pct = bool(item.get('aplica_porcentaje_establecimiento', False))
+                    pct_est = item.get('porcentaje_establecimiento', 0)
                     if sid is None:
                         raise serializers.ValidationError({'adicionales_servicio_items': 'Cada item debe incluir id del servicio.'})
                     if estilista_id is None:
                         raise serializers.ValidationError({'adicionales_servicio_items': 'Cada item debe incluir estilista_id.'})
                     if valor is None or float(valor) <= 0:
                         raise serializers.ValidationError({'adicionales_servicio_items': 'Cada servicio adicional debe tener valor mayor a 0.'})
+                    try:
+                        pct_num = float(pct_est or 0)
+                    except Exception:
+                        raise serializers.ValidationError({'adicionales_servicio_items': 'Porcentaje de establecimiento inválido.'})
+                    if aplica_pct and (pct_num <= 0 or pct_num > 100):
+                        raise serializers.ValidationError({'adicionales_servicio_items': 'Si aplica porcentaje, debe estar entre 0.01 y 100.'})
                     ids_items.append(int(sid))
                     estilistas_ids_items.append(int(estilista_id))
 
@@ -278,8 +288,19 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
             sid = item.get('id')
             eid = item.get('estilista_id')
             valor = item.get('valor')
+            aplica_pct = bool(item.get('aplica_porcentaje_establecimiento', False))
+            pct_est = item.get('porcentaje_establecimiento', 0)
             if sid is None or eid is None or valor is None:
                 continue
+
+            try:
+                pct_num = float(pct_est or 0)
+            except Exception:
+                pct_num = 0
+            if pct_num < 0:
+                pct_num = 0
+            if pct_num > 100:
+                pct_num = 100
 
             detalles.append(
                 ServicioRealizadoAdicional(
@@ -287,6 +308,8 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
                     servicio_id=int(sid),
                     estilista_id=int(eid),
                     valor_cobrado=valor,
+                    aplica_porcentaje_establecimiento=aplica_pct,
+                    porcentaje_establecimiento=pct_num if aplica_pct else 0,
                 )
             )
 
@@ -391,12 +414,20 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
                 eid = item.get('estilista_id')
                 estilista_ad = estilistas_mapa.get(int(eid)) if eid is not None else None
                 valor_item = float(item.get('valor') or 0)
+                aplica_pct = bool(item.get('aplica_porcentaje_establecimiento', False))
+                pct_est = float(item.get('porcentaje_establecimiento') or 0)
                 total_adicionales += valor_item
                 nombres_lower.append((srv_ad.nombre or '').lower())
-                if estilista_ad:
-                    adicionales_detalle.append(f"{srv_ad.nombre} ({estilista_ad.nombre}) ${valor_item:.2f}")
+                if aplica_pct and pct_est > 0:
+                    valor_est = (valor_item * pct_est) / 100
+                    valor_emp = valor_item - valor_est
+                    reparto = f" (Emp {valor_emp:.2f} / Est {valor_est:.2f})"
                 else:
-                    adicionales_detalle.append(f"{srv_ad.nombre} ${valor_item:.2f}")
+                    reparto = ''
+                if estilista_ad:
+                    adicionales_detalle.append(f"{srv_ad.nombre} ({estilista_ad.nombre}) ${valor_item:.2f}{reparto}")
+                else:
+                    adicionales_detalle.append(f"{srv_ad.nombre} ${valor_item:.2f}{reparto}")
 
             servicio.adicional_shampoo = any('shampoo' in nombre for nombre in nombres_lower)
             servicio.adicional_guantes = any('guantes' in nombre for nombre in nombres_lower)
@@ -454,6 +485,8 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
                     'id': int(sid),
                     'estilista_id': int(servicio.estilista_id),
                     'valor': float(servicios_legacy[int(sid)].precio or 0),
+                    'aplica_porcentaje_establecimiento': False,
+                    'porcentaje_establecimiento': 0,
                 }
                 for sid in sorted({int(x) for x in adicionales_servicio_ids if x is not None})
                 if int(sid) in servicios_legacy

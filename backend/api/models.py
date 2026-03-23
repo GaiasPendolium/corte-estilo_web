@@ -330,6 +330,8 @@ class ServicioRealizadoAdicional(models.Model):
         verbose_name='Empleado que realiza adicional'
     )
     valor_cobrado = models.DecimalField(max_digits=10, decimal_places=2, verbose_name='Valor cobrado')
+    aplica_porcentaje_establecimiento = models.BooleanField(default=False, verbose_name='Aplica porcentaje establecimiento')
+    porcentaje_establecimiento = models.DecimalField(max_digits=5, decimal_places=2, default=0, verbose_name='Porcentaje establecimiento')
     fecha_creacion = models.DateTimeField(default=timezone.now, verbose_name='Fecha de creación')
 
     class Meta:

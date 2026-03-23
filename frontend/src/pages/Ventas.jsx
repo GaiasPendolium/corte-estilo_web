@@ -469,6 +469,8 @@ const Ventas = () => {
         id: String(item.servicio_id || ''),
         estilista_id: String(item.estilista_id || ''),
         valor: String(item.valor || ''),
+        aplica_porcentaje_establecimiento: Boolean(item.aplica_porcentaje_establecimiento),
+        porcentaje_establecimiento: String(item.porcentaje_establecimiento ?? '30'),
       })),
       notas: servicio.notas || '',
     });
@@ -519,12 +521,26 @@ const Ventas = () => {
         id: Number(it.id),
         estilista_id: Number(it.estilista_id),
         valor: Number(it.valor),
+        aplica_porcentaje_establecimiento: Boolean(it.aplica_porcentaje_establecimiento),
+        porcentaje_establecimiento: Boolean(it.aplica_porcentaje_establecimiento)
+          ? Number(it.porcentaje_establecimiento || 0)
+          : 0,
       }));
 
     const idsAdicionales = adicionalesNormalizados.map((it) => it.id);
 
     if (servicioForm.tiene_adicionales && adicionalesNormalizados.length === 0) {
       toast.warning('Agrega al menos un servicio adicional válido o desmarca adicionales');
+      return;
+    }
+
+    const porcentajeInvalido = (servicioForm.adicionales_servicio_items || []).find((it) => {
+      if (!it.aplica_porcentaje_establecimiento) return false;
+      const pct = Number(it.porcentaje_establecimiento || 0);
+      return !Number.isFinite(pct) || pct <= 0 || pct > 100;
+    });
+    if (porcentajeInvalido) {
+      toast.warning('El porcentaje para establecimiento debe ser mayor a 0 y menor o igual a 100');
       return;
     }
 
@@ -1293,6 +1309,33 @@ const Ventas = () => {
                     <button type="button" className="btn-danger !px-2 !py-2 w-full" onClick={() => quitarAdicionalServicio(idx)}>
                       <FiTrash2 size={14} />
                     </button>
+                  </div>
+
+                  <div className="md:col-span-8">
+                    <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(it.aplica_porcentaje_establecimiento)}
+                        onChange={(e) =>
+                          actualizarAdicionalServicio(idx, 'aplica_porcentaje_establecimiento', e.target.checked)
+                        }
+                      />
+                      Este adicional tiene ganancia para establecimiento
+                    </label>
+                  </div>
+
+                  <div className="md:col-span-4">
+                    <input
+                      className="input-field"
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.01"
+                      placeholder="% establecimiento"
+                      disabled={!it.aplica_porcentaje_establecimiento}
+                      value={it.porcentaje_establecimiento || ''}
+                      onChange={(e) => actualizarAdicionalServicio(idx, 'porcentaje_establecimiento', e.target.value)}
+                    />
                   </div>
                 </div>
               ))}
