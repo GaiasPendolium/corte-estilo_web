@@ -509,7 +509,7 @@ const Reportes = () => {
                 <th className="px-6 py-3 text-left">Comisión ventas</th>
                 <th className="px-6 py-3 text-left">Cobro por espacio</th>
                 <th className="px-6 py-3 text-left">Días trabajados</th>
-                <th className="px-6 py-3 text-left">Neto</th>
+                <th className="px-6 py-3 text-left">Neto pendiente</th>
                 <th className="px-6 py-3 text-left">Estado saldo</th>
                 <th className="px-6 py-3 text-left">Estado pago día</th>
               </tr>
@@ -546,6 +546,9 @@ const Reportes = () => {
                     <div className="text-xs text-slate-500">
                       Periodo completo: {formatMoney(s.pago_neto_periodo)} | Ya cancelado: {formatMoney(s.pago_neto_cancelado)}
                     </div>
+                    {(s.estado_pago_rango || s.estado_pago_dia) === 'cancelado' && (
+                      <div className="text-xs font-medium text-emerald-700 mt-1">Ya liquidado para todo el rango seleccionado</div>
+                    )}
                   </td>
                   <td className="table-cell">
                     {Number(s.pago_neto_pendiente || s.pago_neto_estilista || 0) > 0 && <span className="text-emerald-700 font-medium">A pagar (pendiente)</span>}
