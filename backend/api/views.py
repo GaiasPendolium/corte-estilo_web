@@ -1504,101 +1504,84 @@ def bi_export_csv(request):
     try:
         data = _calcular_datos_bi(request)
 
-        response = HttpResponse(content_type='text/csv')
+        response = HttpResponse(content_type='text/csv; charset=utf-8')
         response['Content-Disposition'] = f'attachment; filename="reporte_bi_{data["fecha_inicio"]}_{data["fecha_fin"]}.csv"'
 
         writer = csv.writer(response)
         kpis = data.get('kpis', {})
         venta_neta_total = Decimal(str(kpis.get('venta_neta_total', 0) or 0))
         ganancia_establecimiento_total = Decimal(str(kpis.get('ganancia_establecimiento_total', 0) or 0))
+        pago_total_estilistas = Decimal(str(kpis.get('pago_total_estilistas', 0) or 0))
         margen_establecimiento_pct = float((ganancia_establecimiento_total / venta_neta_total) * 100) if venta_neta_total > 0 else 0.0
+        participacion_estilistas_pct = float((pago_total_estilistas / venta_neta_total) * 100) if venta_neta_total > 0 else 0.0
 
-        writer.writerow(['INFORME_GERENCIAL_BI'])
-        writer.writerow(['RANGO_DESDE', data['fecha_inicio']])
-        writer.writerow(['RANGO_HASTA', data['fecha_fin']])
-        writer.writerow(['GENERADO_EN', timezone.localtime().strftime('%Y-%m-%d %H:%M:%S')])
+        # Encabezado
+        writer.writerow(['INFORME GERENCIAL - REPORTE BI'])
+        writer.writerow(['Período', f"{data['fecha_inicio']} a {data['fecha_fin']}"])
+        writer.writerow(['Generado', timezone.localtime().strftime('%Y-%m-%d %H:%M:%S')])
         writer.writerow([])
 
-        writer.writerow(['RESUMEN_EJECUTIVO', 'VALOR'])
-        writer.writerow(['Venta neta total', float(venta_neta_total)])
-        writer.writerow(['Ganancia establecimiento total', float(ganancia_establecimiento_total)])
-        writer.writerow(['Margen establecimiento (%)', round(margen_establecimiento_pct, 2)])
-        writer.writerow(['Pago total estilistas', kpis.get('pago_total_estilistas', 0)])
-        writer.writerow(['Ingresos servicios adicionales (establecimiento)', kpis.get('ingresos_servicios_adicionales', 0)])
-        writer.writerow(['Descuentos espacio estilistas', kpis.get('descuentos_espacio_estilistas', 0)])
+        # Resumen Ejecutivo
+        writer.writerow(['=== RESUMEN EJECUTIVO ==='])
+        writer.writerow(['Venta Neta Total', f"${float(venta_neta_total):,.2f}"])
+        writer.writerow(['Ganancia Establecimiento', f"${float(ganancia_establecimiento_total):,.2f}"])
+        writer.writerow(['Margen Establecimiento (%)', f"{margen_establecimiento_pct:.2f}%"])
+        writer.writerow(['Pago Total Estilistas', f"${float(pago_total_estilistas):,.2f}"])
+        writer.writerow(['Participación Estilistas (%)', f"{participacion_estilistas_pct:.2f}%"])
+        writer.writerow(['Ingresos por Servicios Adicionales', f"${float(kpis.get('ingresos_servicios_adicionales', 0)):,.2f}"])
         writer.writerow([])
 
-        writer.writerow(['KPIS_CLAVE', 'VALOR'])
+        # KPIs Clave
+        writer.writerow(['=== KPIs CLAVE ==='])
+        writer.writerow(['Concepto', 'Valor'])
         for k, v in kpis.items():
-            writer.writerow([k, v])
+            writer.writerow([k, f"${float(v):,.2f}" if isinstance(v, (int, float, Decimal)) else v])
         writer.writerow([])
 
+        # Liquidación por Estilista
+        writer.writerow(['=== LIQUIDACION POR ESTILISTA ==='])
         writer.writerow([
-            'LIQUIDACION_ESTILISTAS_RAW',
-            'estilista_id',
-            'estilista_nombre',
-            'tipo_cobro_espacio',
-            'valor_cobro_espacio',
-            'total_dias_trabajados',
-            'dias_cobrados_alquiler',
-            'facturacion_servicios',
-            'valor_servicios_adicionales',
-            'deduccion_servicios_adicionales',
-            'ganancias_servicios',
-            'comision_ventas_producto',
-            'ganancias_totales_brutas',
-            'descuento_espacio',
-            'total_deducciones',
-            'pago_neto_estilista',
+            'Estilista',
+            'Facturación Servicios',
+            'Servicios Adicionales',
+            'Base para Pagar',
+            'Comisión Producto',
+            'Cobro Espacio',
+            'Neto a Pagar'
         ])
         for est in data.get('estilistas', []):
             writer.writerow([
-                'fila',
-                est.get('estilista_id'),
-                est['estilista_nombre'],
-                est.get('tipo_cobro_espacio'),
-                est.get('valor_cobro_espacio', 0),
-                est.get('total_dias_trabajados', 0),
-                est.get('dias_cobrados_alquiler', 0),
-                est.get('facturacion_servicios', 0),
-                est.get('valor_servicios_adicionales', 0),
-                est.get('deduccion_servicios_adicionales', 0),
-                est.get('ganancias_servicios', 0),
-                est.get('comision_ventas_producto', 0),
-                est.get('ganancias_totales_brutas', 0),
-                est.get('descuento_espacio', 0),
-                est.get('total_deducciones', 0),
-                est.get('pago_neto_estilista', 0),
+                est.get('estilista_nombre', '-'),
+                f"${float(est.get('facturacion_servicios', 0)):,.2f}",
+                f"${float(est.get('valor_servicios_adicionales', 0)):,.2f}",
+                f"${float(est.get('ganancias_servicios', 0)):,.2f}",
+                f"${float(est.get('comision_ventas_producto', 0)):,.2f}",
+                f"${float(est.get('descuento_espacio', 0)):,.2f}",
+                f"${float(est.get('pago_neto_estilista', 0)):,.2f}",
             ])
         writer.writerow([])
 
-        writer.writerow(['SERIE_DIARIA_RAW', 'fecha', 'ventas_productos', 'ventas_servicios', 'total'])
-        for item in data.get('serie_diaria', []):
-            writer.writerow(['fila', item.get('fecha'), item.get('ventas_productos', 0), item.get('ventas_servicios', 0), item.get('total', 0)])
-        writer.writerow([])
-
-        writer.writerow(['TOP_PRODUCTOS_RAW', 'producto_id', 'producto_nombre', 'producto_marca', 'cantidad', 'total'])
-        for item in data.get('top_ventas_productos', []):
+        # Top Productos
+        writer.writerow(['=== TOP PRODUCTOS ==='])
+        writer.writerow(['Producto', 'Cantidad', 'Total Venta'])
+        for item in data.get('top_ventas_productos', [])[:15]:
             writer.writerow([
-                'fila',
-                item.get('producto_id'),
-                item.get('producto_nombre'),
-                item.get('producto_marca'),
+                item.get('producto_nombre', '-'),
                 item.get('cantidad', 0),
-                item.get('total', 0),
+                f"${float(item.get('total', 0)):,.2f}",
             ])
         writer.writerow([])
 
-        writer.writerow(['PRODUCTOS_BAJO_STOCK_RAW', 'id', 'nombre', 'marca', 'precio_venta', 'stock', 'stock_minimo'])
+        # Productos Bajo Stock
+        writer.writerow(['=== PRODUCTOS BAJO STOCK ==='])
+        writer.writerow(['Producto', 'Marca', 'Stock Actual', 'Stock Mínimo', 'Precio'])
         for p in data.get('productos_bajo_stock', []):
             writer.writerow([
-                'fila',
-                p.get('id'),
-                p.get('nombre'),
-                p.get('marca'),
-                p.get('precio_venta', 0),
+                p.get('nombre', '-'),
+                p.get('marca', '-'),
                 p.get('stock', 0),
                 p.get('stock_minimo', 0),
+                f"${float(p.get('precio_venta', 0)):,.2f}",
             ])
 
         return response
@@ -1634,18 +1617,35 @@ def bi_export_pdf(request):
         pdf = canvas.Canvas(buffer, pagesize=letter)
         width, height = letter
 
-        def ensure_space(y_pos, needed=18):
-            if y_pos < 60 + needed:
-                pdf.showPage()
-                return height - 40
-            return y_pos
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def bi_export_pdf(request):
+    try:
+        data = _calcular_datos_bi(request)
+    except Exception as e:
+        return Response(
+            {'error': f'Error obteniendo datos para PDF: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
 
-        def draw_line(label, value, y_pos, bold=False):
-            y_pos = ensure_space(y_pos)
-            pdf.setFont('Helvetica-Bold' if bold else 'Helvetica', 9)
-            pdf.drawString(50, y_pos, f"{label}: {value}")
-            return y_pos - 12
+    try:
+        from reportlab.lib.pagesizes import letter, A4
+        from reportlab.lib import colors
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import inch
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
+        from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+    except Exception:
+        return Response(
+            {'error': 'La exportación PDF requiere instalar reportlab.'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
 
+    try:
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=letter, topMargin=0.5*inch, bottomMargin=0.5*inch)
+        story = []
+        
         kpis = data.get('kpis', {})
         venta_neta_total = Decimal(str(kpis.get('venta_neta_total', 0) or 0))
         ganancia_establecimiento_total = Decimal(str(kpis.get('ganancia_establecimiento_total', 0) or 0))
@@ -1653,66 +1653,115 @@ def bi_export_pdf(request):
         margen_establecimiento_pct = float((ganancia_establecimiento_total / venta_neta_total) * 100) if venta_neta_total > 0 else 0.0
         participacion_estilistas_pct = float((pago_total_estilistas / venta_neta_total) * 100) if venta_neta_total > 0 else 0.0
 
-        y = height - 40
-        pdf.setFont('Helvetica-Bold', 16)
-        pdf.drawString(40, y, 'Informe Gerencial - Reporte BI')
-        y -= 20
-        pdf.setFont('Helvetica', 10)
-        pdf.drawString(40, y, f"Rango: {data['fecha_inicio']} a {data['fecha_fin']}")
-        y -= 14
-        pdf.drawString(40, y, f"Generado: {timezone.localtime().strftime('%Y-%m-%d %H:%M:%S')}")
-        y -= 25
+        # Estilos
+        styles = getSampleStyleSheet()
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=18,
+            textColor=colors.HexColor('#007bff'),
+            spaceAfter=6,
+            alignment=TA_CENTER,
+        )
+        heading_style = ParagraphStyle(
+            'CustomHeading',
+            parent=styles['Heading2'],
+            fontSize=12,
+            textColor=colors.HexColor('#007bff'),
+            spaceAfter=10,
+            spaceBefore=10,
+        )
 
-        pdf.setFont('Helvetica-Bold', 12)
-        pdf.drawString(40, y, 'Resumen Ejecutivo para Gerencia')
-        y -= 16
-        y = draw_line('Venta neta total', f"${float(venta_neta_total):,.2f}", y)
-        y = draw_line('Ganancia establecimiento total', f"${float(ganancia_establecimiento_total):,.2f}", y)
-        y = draw_line('Margen del establecimiento', f"{margen_establecimiento_pct:.2f}%", y)
-        y = draw_line('Pago total estilistas', f"${float(pago_total_estilistas):,.2f}", y)
-        y = draw_line('Participacion pago estilistas sobre venta neta', f"{participacion_estilistas_pct:.2f}%", y)
-        y = draw_line('Ingresos por servicios adicionales', f"${float(kpis.get('ingresos_servicios_adicionales', 0)):.2f}", y)
+        # Título
+        story.append(Paragraph('Informe Gerencial - Reporte BI', title_style))
+        story.append(Paragraph(f'Período: {data["fecha_inicio"]} a {data["fecha_fin"]} | Generado: {timezone.localtime().strftime("%Y-%m-%d %H:%M:%S")}', styles['Normal']))
+        story.append(Spacer(1, 0.3*inch))
 
-        y -= 12
-        y = ensure_space(y, 24)
-        pdf.setFont('Helvetica-Bold', 11)
-        pdf.drawString(40, y, 'KPIs Detallados')
-        y -= 15
-        pdf.setFont('Helvetica', 9)
-        for k, v in kpis.items():
-            y = draw_line(k, v, y)
+        # Resumen Ejecutivo - Tabla con métricas principales
+        story.append(Paragraph('Resumen Ejecutivo', heading_style))
+        resumen_data = [
+            ['Venta Neta Total', f"${float(venta_neta_total):,.2f}"],
+            ['Ganancia Establecimiento', f"${float(ganancia_establecimiento_total):,.2f}"],
+            ['Margen Establecimiento (%)', f"{margen_establecimiento_pct:.2f}%"],
+            ['Pago Total Estilistas', f"${float(pago_total_estilistas):,.2f}"],
+            ['Participación Estilistas (%)', f"{participacion_estilistas_pct:.2f}%"],
+            ['Ingresos Servicios Adicionales', f"${float(kpis.get('ingresos_servicios_adicionales', 0)):,.2f}"],
+        ]
+        resumen_table = Table(resumen_data, colWidths=[3.5*inch, 2.5*inch])
+        resumen_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#f0f0f0')),
+            ('TEXTCOLOR', (0, 0), (-1, -1), colors.black),
+            ('ALIGN', (0, 0), (0, -1), 'LEFT'),
+            ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+            ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+            ('TOPPADDING', (0, 0), (-1, -1), 8),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e0e0e0')),
+        ]))
+        story.append(resumen_table)
+        story.append(Spacer(1, 0.25*inch))
 
-        y -= 12
-        y = ensure_space(y, 24)
-        pdf.setFont('Helvetica-Bold', 11)
-        pdf.drawString(40, y, 'Liquidacion por Estilista (Detalle)')
-        y -= 15
+        # Liquidación por Estilista
+        story.append(Paragraph('Liquidación por Estilista', heading_style))
+        liquidacion_data = [[
+            'Estilista', 'Facturación', 'Adicionales', 'Base Pago', 'Comisión', 'Cobro Espacio', 'Neto a Pagar'
+        ]]
         for est in data.get('estilistas', []):
-            y = ensure_space(y, 70)
-            pdf.setFont('Helvetica-Bold', 9)
-            pdf.drawString(50, y, f"Estilista: {est.get('estilista_nombre', '-')}")
-            y -= 12
-            pdf.setFont('Helvetica', 9)
-            y = draw_line('Facturacion servicios', f"${float(est.get('facturacion_servicios', 0)):.2f}", y)
-            y = draw_line('Servicios adicionales', f"${float(est.get('valor_servicios_adicionales', 0)):.2f}", y)
-            y = draw_line('Base para pagar', f"${float(est.get('ganancias_servicios', 0)):.2f}", y)
-            y = draw_line('Comision ventas producto', f"${float(est.get('comision_ventas_producto', 0)):.2f}", y)
-            y = draw_line('Cobro espacio', f"${float(est.get('descuento_espacio', 0)):.2f}", y)
-            y = draw_line('Neto a pagar', f"${float(est.get('pago_neto_estilista', 0)):.2f}", y, bold=True)
-            y -= 8
+            liquidacion_data.append([
+                est.get('estilista_nombre', '-'),
+                f"${float(est.get('facturacion_servicios', 0)):,.0f}",
+                f"${float(est.get('valor_servicios_adicionales', 0)):,.0f}",
+                f"${float(est.get('ganancias_servicios', 0)):,.0f}",
+                f"${float(est.get('comision_ventas_producto', 0)):,.0f}",
+                f"${float(est.get('descuento_espacio', 0)):,.0f}",
+                f"${float(est.get('pago_neto_estilista', 0)):,.0f}",
+            ])
+        
+        liquidacion_table = Table(liquidacion_data, colWidths=[1.2*inch, 0.95*inch, 0.9*inch, 0.9*inch, 0.9*inch, 1*inch, 1.05*inch])
+        liquidacion_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#007bff')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 9),
+            ('FONTSIZE', (0, 1), (-1, -1), 8),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+            ('TOPPADDING', (0, 0), (-1, -1), 6),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e0e0e0')),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f9f9f9')]),
+        ]))
+        story.append(liquidacion_table)
+        story.append(Spacer(1, 0.25*inch))
 
-        y = ensure_space(y, 24)
-        pdf.setFont('Helvetica-Bold', 11)
-        pdf.drawString(40, y, 'Top Productos')
-        y -= 15
-        for item in data.get('top_ventas_productos', [])[:10]:
-            y = draw_line(
-                f"{item.get('producto_nombre', '-')}",
-                f"Cant: {item.get('cantidad', 0)} | Total: ${float(item.get('total', 0)):.2f}",
-                y,
-            )
+        # Top Productos
+        story.append(Paragraph('Top Productos', heading_style))
+        productos_data = [['Producto', 'Cantidad', 'Total Venta']]
+        for item in data.get('top_ventas_productos', [])[:12]:
+            productos_data.append([
+                item.get('producto_nombre', '-'),
+                str(item.get('cantidad', 0)),
+                f"${float(item.get('total', 0)):,.0f}",
+            ])
+        
+        productos_table = Table(productos_data, colWidths=[3*inch, 1.5*inch, 1.5*inch])
+        productos_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#28a745')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (0, -1), 'LEFT'),
+            ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 10),
+            ('FONTSIZE', (0, 1), (-1, -1), 9),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+            ('TOPPADDING', (0, 0), (-1, -1), 6),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e0e0e0')),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f9f9f9')]),
+        ]))
+        story.append(productos_table)
 
-        pdf.save()
+        # Construir PDF
+        doc.build(story)
         buffer.seek(0)
 
         response = HttpResponse(buffer.getvalue(), content_type='application/pdf')
@@ -1721,367 +1770,6 @@ def bi_export_pdf(request):
     except Exception as e:
         return Response(
             {'error': f'Error generando PDF: {str(e)}'},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
-
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def bi_export_html(request):
-    """Exporta los datos de BI en HTML formateado"""
-    try:
-        data = _calcular_datos_bi(request)
-        
-        kpis = data.get('kpis', {})
-        venta_neta_total = Decimal(str(kpis.get('venta_neta_total', 0) or 0))
-        ganancia_establecimiento_total = Decimal(str(kpis.get('ganancia_establecimiento_total', 0) or 0))
-        pago_total_estilistas = Decimal(str(kpis.get('pago_total_estilistas', 0) or 0))
-        margen_establecimiento_pct = float((ganancia_establecimiento_total / venta_neta_total) * 100) if venta_neta_total > 0 else 0.0
-        participacion_estilistas_pct = float((pago_total_estilistas / venta_neta_total) * 100) if venta_neta_total > 0 else 0.0
-
-        # Generar filas de estilistas
-        filas_estilistas = ""
-        for est in data.get('estilistas', []):
-            filas_estilistas += f"""
-            <tr>
-                <td>{est.get('estilista_nombre', '-')}</td>
-                <td class="text-right">${float(est.get('facturacion_servicios', 0)):.2f}</td>
-                <td class="text-right">${float(est.get('valor_servicios_adicionales', 0)):.2f}</td>
-                <td class="text-right">${float(est.get('ganancias_servicios', 0)):.2f}</td>
-                <td class="text-right">${float(est.get('comision_ventas_producto', 0)):.2f}</td>
-                <td class="text-right">${float(est.get('descuento_espacio', 0)):.2f}</td>
-                <td class="text-right font-bold">${float(est.get('pago_neto_estilista', 0)):.2f}</td>
-            </tr>
-            """
-        
-        # Generar filas de productos
-        filas_productos = ""
-        for item in data.get('top_ventas_productos', [])[:15]:
-            filas_productos += f"""
-            <tr>
-                <td>{item.get('producto_nombre', '-')}</td>
-                <td class="text-center">{item.get('cantidad', 0)}</td>
-                <td class="text-right">${float(item.get('total', 0)):.2f}</td>
-            </tr>
-            """
-
-        html_content = f"""
-        <!DOCTYPE html>
-        <html lang="es">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Informe Gerencial - Reporte BI</title>
-            <style>
-                * {{
-                    margin: 0;
-                    padding: 0;
-                    box-sizing: border-box;
-                }}
-                body {{
-                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                    background-color: #f5f5f5;
-                    padding: 20px;
-                    color: #333;
-                }}
-                .container {{
-                    max-width: 1000px;
-                    margin: 0 auto;
-                    background: white;
-                    border-radius: 8px;
-                    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-                    padding: 40px;
-                }}
-                .header {{
-                    text-align: center;
-                    margin-bottom: 40px;
-                    border-bottom: 3px solid #007bff;
-                    padding-bottom: 20px;
-                }}
-                .logo {{
-                    margin-bottom: 20px;
-                }}
-                .logo img {{
-                    max-height: 80px;
-                    object-fit: contain;
-                }}
-                .header h1 {{
-                    font-size: 28px;
-                    color: #007bff;
-                    margin-bottom: 10px;
-                }}
-                .header-info {{
-                    display: grid;
-                    grid-template-columns: 1fr 1fr;
-                    gap: 20px;
-                    margin-top: 15px;
-                    font-size: 14px;
-                    color: #666;
-                }}
-                .info-item {{
-                    display: flex;
-                    justify-content: space-between;
-                }}
-                .section {{
-                    margin-bottom: 40px;
-                }}
-                .section-title {{
-                    font-size: 18px;
-                    font-weight: bold;
-                    color: #007bff;
-                    margin-bottom: 15px;
-                    padding-bottom: 8px;
-                    border-bottom: 2px solid #e0e0e0;
-                }}
-                .metrics-grid {{
-                    display: grid;
-                    grid-template-columns: repeat(3, 1fr);
-                    gap: 20px;
-                    margin-bottom: 30px;
-                }}
-                .metric-card {{
-                    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
-                    color: white;
-                    padding: 20px;
-                    border-radius: 6px;
-                    text-align: center;
-                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-                }}
-                .metric-card.secondary {{
-                    background: linear-gradient(135deg, #28a745 0%, #1e7e34 100%);
-                }}
-                .metric-card.tertiary {{
-                    background: linear-gradient(135deg, #ffc107 0%, #e0a800 100%);
-                    color: #333;
-                }}
-                .metric-card.warning {{
-                    background: linear-gradient(135deg, #dc3545 0%, #a02622 100%);
-                }}
-                .metric-label {{
-                    font-size: 12px;
-                    opacity: 0.9;
-                    margin-bottom: 8px;
-                }}
-                .metric-value {{
-                    font-size: 24px;
-                    font-weight: bold;
-                }}
-                .kpis-block {{
-                    background: #f9f9f9;
-                    padding: 20px;
-                    border-radius: 6px;
-                    border-left: 4px solid #007bff;
-                }}
-                .kpi-item {{
-                    display: grid;
-                    grid-template-columns: 40% 60%;
-                    gap: 20px;
-                    margin-bottom: 10px;
-                    padding-bottom: 10px;
-                    border-bottom: 1px solid #e0e0e0;
-                }}
-                .kpi-item:last-child {{
-                    border-bottom: none;
-                    margin-bottom: 0;
-                    padding-bottom: 0;
-                }}
-                .kpi-label {{
-                    font-weight: 500;
-                    color: #555;
-                }}
-                .kpi-value {{
-                    text-align: right;
-                    font-weight: bold;
-                    color: #007bff;
-                }}
-                table {{
-                    width: 100%;
-                    border-collapse: collapse;
-                    margin-top: 15px;
-                }}
-                thead {{
-                    background-color: #007bff;
-                    color: white;
-                }}
-                th {{
-                    padding: 12px;
-                    text-align: left;
-                    font-weight: 600;
-                    font-size: 13px;
-                }}
-                td {{
-                    padding: 12px;
-                    border-bottom: 1px solid #e0e0e0;
-                }}
-                tbody tr:hover {{
-                    background-color: #f5f5f5;
-                }}
-                .text-right {{
-                    text-align: right;
-                }}
-                .text-center {{
-                    text-align: center;
-                }}
-                .font-bold {{
-                    font-weight: bold;
-                }}
-                .footer {{
-                    margin-top: 40px;
-                    padding-top: 20px;
-                    border-top: 1px solid #e0e0e0;
-                    text-align: center;
-                    font-size: 12px;
-                    color: #999;
-                }}
-                @media print {{
-                    body {{
-                        background: white;
-                        padding: 0;
-                    }}
-                    .container {{
-                        max-width: 100%;
-                        box-shadow: none;
-                        padding: 0;
-                    }}
-                }}
-                @media (max-width: 768px) {{
-                    .metrics-grid {{
-                        grid-template-columns: 1fr;
-                    }}
-                    .header-info {{
-                        grid-template-columns: 1fr;
-                    }}
-                }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <div class="header">
-                    <div class="logo">
-                        <img src="/corte_estilo_logo.png" alt="Logo Corte & Estilo" style="max-height: 80px;">
-                    </div>
-                    <h1>Informe Gerencial</h1>
-                    <p style="font-size: 16px; margin-top: 10px; color: #666;">Reporte BI - Análisis de Negocio</p>
-                    <div class="header-info">
-                        <div class="info-item">
-                            <span><strong>Período:</strong></span>
-                            <span>{data['fecha_inicio']} a {data['fecha_fin']}</span>
-                        </div>
-                        <div class="info-item">
-                            <span><strong>Generado:</strong></span>
-                            <span>{timezone.localtime().strftime('%Y-%m-%d %H:%M:%S')}</span>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="section">
-                    <div class="section-title">📊 Resumen Ejecutivo</div>
-                    <div class="metrics-grid">
-                        <div class="metric-card">
-                            <div class="metric-label">Venta Neta Total</div>
-                            <div class="metric-value">${float(venta_neta_total):,.2f}</div>
-                        </div>
-                        <div class="metric-card secondary">
-                            <div class="metric-label">Ganancia Establecimiento</div>
-                            <div class="metric-value">${float(ganancia_establecimiento_total):,.2f}</div>
-                        </div>
-                        <div class="metric-card tertiary">
-                            <div class="metric-label">Margen Establecimiento</div>
-                            <div class="metric-value">{margen_establecimiento_pct:.2f}%</div>
-                        </div>
-                        <div class="metric-card">
-                            <div class="metric-label">Pago Total Estilistas</div>
-                            <div class="metric-value">${float(pago_total_estilistas):,.2f}</div>
-                        </div>
-                        <div class="metric-card secondary">
-                            <div class="metric-label">Participación Estilistas</div>
-                            <div class="metric-value">{participacion_estilistas_pct:.2f}%</div>
-                        </div>
-                        <div class="metric-card tertiary">
-                            <div class="metric-label">Ingresos Adicionales</div>
-                            <div class="metric-value">${float(kpis.get('ingresos_servicios_adicionales', 0)):,.2f}</div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="section">
-                    <div class="section-title">📈 KPIs Clave</div>
-                    <div class="kpis-block">
-                        <div class="kpi-item">
-                            <div class="kpi-label">Ingresos por Productos</div>
-                            <div class="kpi-value">${float(kpis.get('ingresos_productos', 0)):,.2f}</div>
-                        </div>
-                        <div class="kpi-item">
-                            <div class="kpi-label">Ingresos por Servicios</div>
-                            <div class="kpi-value">${float(kpis.get('ingresos_servicios', 0)):,.2f}</div>
-                        </div>
-                        <div class="kpi-item">
-                            <div class="kpi-label">Costo de Productos</div>
-                            <div class="kpi-value" style="color: #dc3545;">${float(kpis.get('costo_productos', 0)):,.2f}</div>
-                        </div>
-                        <div class="kpi-item">
-                            <div class="kpi-label">Utilidad de Productos</div>
-                            <div class="kpi-value" style="color: #28a745;">${float(kpis.get('utilidad_productos', 0)):,.2f}</div>
-                        </div>
-                        <div class="kpi-item">
-                            <div class="kpi-label">Descripción Espacio Estilistas</div>
-                            <div class="kpi-value">${float(kpis.get('descuentos_espacio_estilistas', 0)):,.2f}</div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="section">
-                    <div class="section-title">👥 Liquidación por Estilista</div>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Estilista</th>
-                                <th class="text-right">Facturación Servicios</th>
-                                <th class="text-right">Adicionales</th>
-                                <th class="text-right">Base Pago</th>
-                                <th class="text-right">Comisión Producto</th>
-                                <th class="text-right">Cobro Espacio</th>
-                                <th class="text-right">Neto a Pagar</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {filas_estilistas}
-                        </tbody>
-                    </table>
-                </div>
-
-                <div class="section">
-                    <div class="section-title">🏆 Top Productos</div>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Producto</th>
-                                <th class="text-center">Cantidad</th>
-                                <th class="text-right">Total Venta</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {filas_productos}
-                        </tbody>
-                    </table>
-                </div>
-
-                <div class="footer">
-                    <p>Este reporte fue generado automáticamente por el sistema de BI de Corte & Estilo</p>
-                    <p>© 2026 Corte & Estilo - Todos los derechos reservados</p>
-                </div>
-            </div>
-        </body>
-        </html>
-        """
-
-        response = HttpResponse(html_content, content_type='text/html; charset=utf-8')
-        response['Content-Disposition'] = f'inline; filename="reporte_bi_{data["fecha_inicio"]}_{data["fecha_fin"]}.html"'
-        return response
-
-    except Exception as e:
-        return Response(
-            {'error': f'Error generando HTML: {str(e)}'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 

@@ -164,32 +164,6 @@ const Reportes = () => {
     }
   };
 
-  const exportarHtml = async () => {
-    try {
-      const blob = await reportesService.exportBIHtml({
-        periodo,
-        fecha_inicio: fechaInicio,
-        fecha_fin: fechaFin,
-        ...(medioPagoFiltro !== 'todos' ? { medio_pago: medioPagoFiltro } : {}),
-      });
-      if (!blob || blob.size === 0) {
-        toast.error('El archivo descargado está vacío');
-        return;
-      }
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `reporte_bi_${fechaInicio}_${fechaFin}.html`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      window.URL.revokeObjectURL(url);
-      toast.success('Reporte HTML descargado');
-    } catch (error) {
-      toast.error('No se pudo descargar el HTML');
-    }
-  };
-
   const cargarResumenDiario = async () => {
     try {
       const data = await reportesService.getResumenDiario();
@@ -330,7 +304,6 @@ const Reportes = () => {
           <div className="flex flex-wrap gap-2">
             <button className="btn-secondary !border-white/20 !bg-white/10 !text-white" onClick={exportarCsv}>Descargar CSV</button>
             <button className="btn-secondary !border-white/20 !bg-white/10 !text-white" onClick={exportarPdf}>Descargar PDF</button>
-            <button className="btn-secondary !border-white/20 !bg-white/10 !text-white" onClick={exportarHtml}>Descargar HTML</button>
           </div>
         </div>
       </section>
