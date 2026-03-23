@@ -673,7 +673,7 @@ const Ventas = () => {
                     </div>
                     <div>
                       <p className="text-sm text-gray-600">Neto del servicio</p>
-                      <p className="font-bold text-gray-900">${Number(servicioVisualizar.neto_servicio ?? servicioVisualizar.precio_cobrado || 0).toFixed(2)}</p>
+                      <p className="font-bold text-gray-900">${Number(servicioVisualizar.neto_servicio ?? servicioVisualizar.precio_cobrado ?? 0).toFixed(2)}</p>
                     </div>
                     <div className="col-span-2">
                       <p className="text-sm text-gray-600">Total cobrado al cliente</p>
