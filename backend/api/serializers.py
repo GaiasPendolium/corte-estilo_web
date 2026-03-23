@@ -496,35 +496,68 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
         numero_factura = servicio.numero_factura or f"FS-{timezone.now().strftime('%Y%m%d')}-{servicio.id:06d}"
 
         cliente = servicio.cliente.nombre if servicio.cliente else 'Cliente no registrado'
-        
-        # Obtener detalles de adicionales si existen (durante create())
-        # O construir desglose si tenemos los datos disponibles
-        adicionales = getattr(servicio, '_adicionales_detalle', None) or []
-        
-        # Si tenemos valor de adicionales pero no desglose, construir manualmente
-        if not adicionales and float(servicio.valor_adicionales or 0) > 0:
-            valor_shampoo = self._valor_adicional_rapido('Adicional Shampoo', 4000)
-            valor_guantes = self._valor_adicional_rapido('Adicional Guantes', 1500)
-            
-            if servicio.adicional_shampoo:
-                adicionales.append(f'Shampoo ${valor_shampoo:.2f}')
-            if servicio.adicional_guantes:
-                adicionales.append(f'Guantes ${valor_guantes:.2f}')
-            if servicio.adicional_otro_producto:
-                cantidad = int(servicio.adicional_otro_cantidad or 1)
-                precio_unitario = float(servicio.adicional_otro_producto.precio_venta or 0)
-                adicionales.append(
-                    f"{servicio.adicional_otro_producto.nombre} x{cantidad} = ${(precio_unitario * cantidad):.2f}"
-                )
-            
-            # Si aún así no hay desglose pero valor_adicionales > 0, mostrar genérico
-            if not adicionales:
-                adicionales.append(f'Otros servicios/productos: ${float(servicio.valor_adicionales):.2f}')
-        
-        adicionales_texto = ', '.join(adicionales) if adicionales else 'Sin adicionales'
-        nota_liquidacion = ''
-        if (servicio.estilista.tipo_cobro_espacio or 'sin_cobro') == 'costo_fijo_neto':
-            nota_liquidacion = '\nNota: El cobro fijo de espacio se aplica en liquidación diaria/semanal, no por cada servicio.'
+
+        detalle_servicios = [
+            {
+                'servicio': servicio.servicio.nombre,
+                'estilista': servicio.estilista.nombre,
+                'valor': float(servicio.precio_cobrado or 0),
+            }
+        ]
+
+        adicionales_asignados = list(
+            servicio.adicionales_asignados.select_related('servicio', 'estilista').all()
+        )
+        for adicional in adicionales_asignados:
+            detalle_servicios.append(
+                {
+                    'servicio': adicional.servicio.nombre,
+                    'estilista': adicional.estilista.nombre,
+                    'valor': float(adicional.valor_cobrado or 0),
+                }
+            )
+
+        if len(detalle_servicios) == 1 and float(servicio.valor_adicionales or 0) > 0:
+            # Fallback para facturas antiguas que no tienen detalle por adicional.
+            detalle_servicios.append(
+                {
+                    'servicio': 'Adicionales',
+                    'estilista': servicio.estilista.nombre,
+                    'valor': float(servicio.valor_adicionales or 0),
+                }
+            )
+
+        total_cobrado = sum(item['valor'] for item in detalle_servicios)
+
+        col_servicio = 22
+        col_estilista = 16
+        col_valor = 12
+        tabla_linea = f"+{'-' * col_servicio}+{'-' * col_estilista}+{'-' * col_valor}+"
+
+        def _recortar(texto, ancho):
+            txt = str(texto or '')
+            if len(txt) <= ancho:
+                return txt
+            if ancho <= 3:
+                return txt[:ancho]
+            return f"{txt[:ancho - 3]}..."
+
+        tabla_header = (
+            f"| {_recortar('Servicio', col_servicio - 2).ljust(col_servicio - 2)} "
+            f"| {_recortar('Estilista', col_estilista - 2).ljust(col_estilista - 2)} "
+            f"| {_recortar('Valor', col_valor - 2).rjust(col_valor - 2)} |"
+        )
+
+        tabla_rows = []
+        for item in detalle_servicios:
+            valor_txt = f"${item['valor']:.2f}"
+            tabla_rows.append(
+                f"| {_recortar(item['servicio'], col_servicio - 2).ljust(col_servicio - 2)} "
+                f"| {_recortar(item['estilista'], col_estilista - 2).ljust(col_estilista - 2)} "
+                f"| {valor_txt.rjust(col_valor - 2)} |"
+            )
+
+        tabla_texto = '\n'.join([tabla_linea, tabla_header, tabla_linea, *tabla_rows, tabla_linea])
 
         return (
             f"Factura: {numero_factura}\n"
@@ -532,17 +565,10 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
             f"Fecha: {timezone.localtime(servicio.fecha_hora).strftime('%Y-%m-%d %H:%M')}\n"
             f"Cliente: {cliente}\n"
             f"Facturado por: {(servicio.usuario.username if servicio.usuario else 'No especificado')}\n"
-            f"Estilista: {servicio.estilista.nombre}\n"
-            f"Servicio: {servicio.servicio.nombre}\n"
-            f"Valor servicio base: ${float(servicio.precio_cobrado):.2f}\n"
-            f"Adicionales: {adicionales_texto}\n"
-            f"Valor adicionales: ${float(servicio.valor_adicionales):.2f}\n"
-            f"Total cobrado al cliente: ${(float(servicio.precio_cobrado or 0) + float(servicio.valor_adicionales or 0)):.2f}\n"
-            f"Neto del servicio: ${float(servicio.neto_servicio):.2f}\n"
-            f"Medio de pago: {servicio.get_medio_pago_display() if servicio.medio_pago else '-'}\n"
-            f"Establecimiento: ${float(servicio.monto_establecimiento):.2f}\n"
-            f"Empleado: ${float(servicio.monto_estilista):.2f}"
-            f"{nota_liquidacion}"
+            f"\n"
+            f"{tabla_texto}\n"
+            f"Total: ${total_cobrado:.2f}\n"
+            f"Medio de pago: {servicio.get_medio_pago_display() if servicio.medio_pago else '-'}"
         )
 
     def get_factura_texto(self, obj):

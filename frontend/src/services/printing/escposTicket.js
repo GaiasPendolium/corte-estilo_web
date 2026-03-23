@@ -138,24 +138,51 @@ export const buildProductSaleTicketPayload = (sale) => ({
 });
 
 export const buildServiceSaleTicketPayload = (service) => {
-  const total = Number(service?.precio_cobrado || 0);
+  const items = [
+    {
+      nombre: `${service?.servicio_nombre || 'Servicio'} - ${service?.estilista_nombre || '-'}`,
+      cantidad: 1,
+      precio_unitario: Number(service?.precio_cobrado || 0),
+      total: Number(service?.precio_cobrado || 0),
+    },
+  ];
+
+  const adicionales = Array.isArray(service?.adicionales_asignados)
+    ? service.adicionales_asignados
+    : [];
+
+  adicionales.forEach((item) => {
+    const valor = Number(item?.valor || 0);
+    if (valor <= 0) return;
+    items.push({
+      nombre: `${item?.servicio_nombre || 'Servicio adicional'} - ${item?.estilista_nombre || '-'}`,
+      cantidad: 1,
+      precio_unitario: valor,
+      total: valor,
+    });
+  });
+
+  if (items.length === 1 && Number(service?.valor_adicionales || 0) > 0) {
+    items.push({
+      nombre: `Adicionales - ${service?.estilista_nombre || '-'}`,
+      cantidad: 1,
+      precio_unitario: Number(service?.valor_adicionales || 0),
+      total: Number(service?.valor_adicionales || 0),
+    });
+  }
+
+  const total = items.reduce((acc, item) => acc + Number(item.total || 0), 0);
+
   return {
-    ticketTitle: 'VENTA SERVICIO',
+    ticketTitle: 'SOPORTE SERVICIO',
     numero_factura: service?.numero_factura || service?.id || '-',
     fecha_hora: service?.fecha_hora,
-    cliente_nombre: service?.cliente_nombre,
+    cliente_nombre: service?.cliente_nombre || 'Cliente no registrado',
     empleado_nombre: service?.estilista_nombre,
     usuario_nombre: service?.usuario_nombre,
     medio_pago: service?.medio_pago,
     total,
-    items: [
-      {
-        nombre: service?.servicio_nombre || 'Servicio',
-        cantidad: 1,
-        precio_unitario: total,
-        total,
-      },
-    ],
-    footerLines: service?.notas ? [`Notas: ${service.notas}`] : undefined,
+    items,
+    footerLines: ['Uso interno empleado', ...(service?.notas ? [`Notas: ${service.notas}`] : [])],
   };
 };
