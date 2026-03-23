@@ -168,6 +168,7 @@ const Servicios = () => {
   const [finalizacion, setFinalizacion] = useState({
     precio_cobrado: '',
     medio_pago: 'efectivo',
+    valor_recibido: '',
     tiene_adicionales: false,
     adicionales_servicio_items: [],
     adicional_otro_producto: '',
@@ -183,6 +184,7 @@ const Servicios = () => {
     cliente_nombre: '',
     estilista: '',
     medio_pago: 'efectivo',
+    valor_recibido: '',
     cantidad: '1',
     precio_unitario: '',
   });
@@ -282,6 +284,17 @@ const Servicios = () => {
     [servicios]
   );
 
+  const serviciosAdicionalesMap = useMemo(
+    () => new Map(serviciosAdicionalesConfigurados.map((s) => [Number(s.id), s])),
+    [serviciosAdicionalesConfigurados]
+  );
+
+  const esServicioShampoo = (servicioId) => {
+    const srv = serviciosAdicionalesMap.get(Number(servicioId || 0));
+    const nombre = String(srv?.nombre || '').toLowerCase();
+    return nombre.includes('shampoo');
+  };
+
   const construirItemAdicional = ({
     id = '',
     estilista_id = '',
@@ -318,6 +331,30 @@ const Servicios = () => {
     () => carrito.reduce((acc, item) => acc + item.cantidad * item.precio_unitario, 0),
     [carrito]
   );
+
+  const totalVentaOperacion = useMemo(() => {
+    let total = totalCarrito;
+    if (productoVentaSeleccionado) {
+      const cantidad = toPositiveInt(ventaForm.cantidad || 0);
+      const precio = toPesoInt(ventaForm.precio_unitario || 0);
+      if (cantidad > 0 && precio > 0) {
+        total += cantidad * precio;
+      }
+    }
+    return total;
+  }, [totalCarrito, productoVentaSeleccionado, ventaForm.cantidad, ventaForm.precio_unitario]);
+
+  const devueltaVenta = useMemo(() => {
+    if (ventaForm.medio_pago !== 'efectivo') return 0;
+    const recibido = toPesoInt(ventaForm.valor_recibido || 0);
+    return Math.max(0, recibido - totalVentaOperacion);
+  }, [ventaForm.medio_pago, ventaForm.valor_recibido, totalVentaOperacion]);
+
+  const devueltaServicio = useMemo(() => {
+    if (finalizacion.medio_pago !== 'efectivo') return 0;
+    const recibido = toPesoInt(finalizacion.valor_recibido || 0);
+    return Math.max(0, recibido - totalFinalizacion);
+  }, [finalizacion.medio_pago, finalizacion.valor_recibido, totalFinalizacion]);
 
   const esConsumoEmpleado = modoVista === 'consumo_empleado';
 
@@ -397,6 +434,7 @@ const Servicios = () => {
     setFinalizacion({
       precio_cobrado: srv.precio_cobrado || '',
       medio_pago: srv.medio_pago || 'efectivo',
+      valor_recibido: '',
       tiene_adicionales: Boolean(srv.tiene_adicionales),
       adicionales_servicio_items: itemsIniciales,
       adicional_otro_producto: srv.adicional_otro_producto ? String(srv.adicional_otro_producto) : '',
@@ -455,6 +493,9 @@ const Servicios = () => {
           id: String(servicio.id),
           busqueda: formatServiceSearchLabel(servicio),
           valor: item.valor || String(toPesoInt(servicio.precio || 0)),
+          estilista_id: esServicioShampoo(servicio.id) ? '' : item.estilista_id,
+          aplica_porcentaje_establecimiento: esServicioShampoo(servicio.id) ? false : item.aplica_porcentaje_establecimiento,
+          porcentaje_establecimiento: esServicioShampoo(servicio.id) ? '0' : item.porcentaje_establecimiento,
         };
       }),
     }));
@@ -552,7 +593,11 @@ const Servicios = () => {
 
       if (tieneServicioAdicional) {
         const itemInvalido = itemsConContenido.find(
-          (item) => !item.id || !item.estilista_id || toPesoInt(item.valor || 0) <= 0
+          (item) => {
+            if (!item.id || toPesoInt(item.valor || 0) <= 0) return true;
+            if (esServicioShampoo(item.id)) return false;
+            return !item.estilista_id;
+          }
         );
         if (itemInvalido) {
           toast.warning('Cada servicio adicional debe tener servicio, empleado y valor mayor a 0');
@@ -590,6 +635,18 @@ const Servicios = () => {
       }
     }
 
+    if (finalizacion.medio_pago === 'efectivo') {
+      const valorRecibido = toPesoInt(finalizacion.valor_recibido || 0);
+      if (valorRecibido <= 0) {
+        toast.warning('Ingresa el valor recibido en efectivo');
+        return;
+      }
+      if (valorRecibido < totalFinalizacion) {
+        toast.warning('El valor recibido no puede ser menor al total a cobrar');
+        return;
+      }
+    }
+
     setShowConfirmacionFinalizar(true);
   };
 
@@ -599,13 +656,21 @@ const Servicios = () => {
       setSaving(true);
       const itemsNormalizados = finalizacion.tiene_adicionales
         ? (finalizacion.adicionales_servicio_items || [])
-            .filter((item) => item.id && item.estilista_id)
+            .filter((item) => {
+              if (!item.id || toPesoInt(item.valor || 0) <= 0) return false;
+              if (esServicioShampoo(item.id)) return true;
+              return Boolean(item.estilista_id);
+            })
             .map((item) => ({
               id: Number(item.id),
-              estilista_id: Number(item.estilista_id),
+              estilista_id: esServicioShampoo(item.id) ? null : Number(item.estilista_id),
               valor: toPesoInt(item.valor || 0),
-              aplica_porcentaje_establecimiento: Boolean(item.aplica_porcentaje_establecimiento),
-              porcentaje_establecimiento: Boolean(item.aplica_porcentaje_establecimiento)
+              aplica_porcentaje_establecimiento: esServicioShampoo(item.id)
+                ? false
+                : Boolean(item.aplica_porcentaje_establecimiento),
+              porcentaje_establecimiento: esServicioShampoo(item.id)
+                ? 0
+                : Boolean(item.aplica_porcentaje_establecimiento)
                 ? Number(item.porcentaje_establecimiento || 0)
                 : 0,
             }))
@@ -644,6 +709,10 @@ const Servicios = () => {
             )}`
       );
 
+      if (finalizacion.medio_pago === 'efectivo') {
+        toast.info(`Devueltas al cliente: ${formatCOP(devueltaServicio)}`);
+      }
+
       try {
         await ticketPrintService.printServiceSaleAndOpenDrawer(res);
         toast.success('Ticket de servicio impreso y caja abierta');
@@ -656,6 +725,7 @@ const Servicios = () => {
       setFinalizacion({
         precio_cobrado: '',
         medio_pago: 'efectivo',
+        valor_recibido: '',
         tiene_adicionales: false,
         adicionales_servicio_items: [],
         adicional_otro_producto: '',
@@ -749,6 +819,23 @@ const Servicios = () => {
       return;
     }
 
+    const totalCobroVenta = itemsParaRegistrar.reduce(
+      (acc, item) => acc + (Number(item.cantidad || 0) * Number(item.precio_unitario || 0)),
+      0
+    );
+
+    if (!esConsumoEmpleado && ventaForm.medio_pago === 'efectivo') {
+      const valorRecibido = toPesoInt(ventaForm.valor_recibido || 0);
+      if (valorRecibido <= 0) {
+        toast.warning('Ingresa el valor recibido en efectivo');
+        return;
+      }
+      if (valorRecibido < totalCobroVenta) {
+        toast.warning('El valor recibido no puede ser menor al total de la venta');
+        return;
+      }
+    }
+
     const cantidadPorProducto = new Map();
     for (const item of itemsParaRegistrar) {
       const pid = Number(item.producto?.id || item.producto);
@@ -790,6 +877,10 @@ const Servicios = () => {
         );
       } else {
         toast.success(`Factura ${transaccion?.numero_factura || ''} registrada con ${itemsParaRegistrar.length} producto(s)`);
+        if (ventaForm.medio_pago === 'efectivo') {
+          const devuelta = Math.max(0, toPesoInt(ventaForm.valor_recibido || 0) - totalCobroVenta);
+          toast.info(`Devueltas al cliente: ${formatCOP(devuelta)}`);
+        }
       }
 
       try {
@@ -801,7 +892,7 @@ const Servicios = () => {
         toast.error(printError.message || 'La(s) venta(s) se guardaron, pero no se pudo imprimir el ticket');
       }
 
-      setVentaForm({ cliente_nombre: '', estilista: '', medio_pago: 'efectivo', cantidad: '1', precio_unitario: '' });
+      setVentaForm({ cliente_nombre: '', estilista: '', medio_pago: 'efectivo', valor_recibido: '', cantidad: '1', precio_unitario: '' });
       setVentaBusqueda('');
       setProductoVentaSeleccionado(null);
       setVentaSugerencias([]);
@@ -864,6 +955,8 @@ const Servicios = () => {
               <input
                 className="input-field"
                 placeholder="Ej: L'Oréal, hidratante, shampoo o 770123456"
+                inputMode="search"
+                enterKeyHint="search"
                 value={ventaBusqueda}
                 onChange={(e) => setVentaBusqueda(e.target.value)}
               />
@@ -912,6 +1005,18 @@ const Servicios = () => {
                   <option key={m.value} value={m.value}>{m.label}</option>
                 ))}
               </select>
+            )}
+
+            {!esConsumoEmpleado && ventaForm.medio_pago === 'efectivo' && (
+              <input
+                className="input-field"
+                type="number"
+                min="0"
+                step="1"
+                placeholder="Valor recibido"
+                value={ventaForm.valor_recibido || ''}
+                onChange={(e) => setVentaForm((p) => ({ ...p, valor_recibido: sanitizePesoInput(e.target.value) }))}
+              />
             )}
 
             <input className="input-field" type="number" min="1" placeholder="Cantidad" value={ventaForm.cantidad} onChange={(e) => setVentaForm((p) => ({ ...p, cantidad: e.target.value }))} />
@@ -966,6 +1071,13 @@ const Servicios = () => {
                   <p className="font-medium text-gray-700">Total carrito</p>
                   <p className="font-bold text-lg text-gray-900">{formatCOP(totalCarrito)}</p>
                 </div>
+              </div>
+            )}
+
+            {!esConsumoEmpleado && ventaForm.medio_pago === 'efectivo' && (
+              <div className="md:col-span-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 flex items-center justify-between">
+                <p className="text-sm text-emerald-800">Devueltas al cliente</p>
+                <p className="font-bold text-emerald-900">{formatCOP(devueltaVenta)}</p>
               </div>
             )}
 
@@ -1088,6 +1200,8 @@ const Servicios = () => {
             <input
               className="input-field"
               placeholder="Buscar servicio por descripción o nombre"
+              inputMode="search"
+              enterKeyHint="search"
               value={inicioServicio.servicio_busqueda}
               onChange={(e) => setInicioServicio((p) => ({ ...p, servicio_busqueda: e.target.value, servicio: '' }))}
             />
@@ -1149,6 +1263,18 @@ const Servicios = () => {
             ))}
           </select>
 
+          {finalizacion.medio_pago === 'efectivo' && (
+            <input
+              className="input-field"
+              type="number"
+              min="0"
+              step="1"
+              placeholder="Valor recibido"
+              value={finalizacion.valor_recibido || ''}
+              onChange={(e) => setFinalizacion((p) => ({ ...p, valor_recibido: sanitizePesoInput(e.target.value) }))}
+            />
+          )}
+
           <input className="input-field" placeholder="Notas finales (opcional)" value={finalizacion.notas} onChange={(e) => setFinalizacion((p) => ({ ...p, notas: e.target.value }))} />
 
           <label className="md:col-span-3 inline-flex items-center gap-2 text-sm text-gray-700">
@@ -1196,6 +1322,8 @@ const Servicios = () => {
                             <input
                               className="input-field"
                               placeholder="Buscar servicio adicional"
+                              inputMode="search"
+                              enterKeyHint="search"
                               value={item.busqueda || ''}
                               onFocus={() => setAdicionalActivoKey(item.key)}
                               onBlur={() => setTimeout(() => setAdicionalActivoKey((curr) => (curr === item.key ? null : curr)), 120)}
@@ -1225,9 +1353,10 @@ const Servicios = () => {
                             <select
                               className="input-field"
                               value={item.estilista_id || ''}
+                              disabled={esServicioShampoo(item.id)}
                               onChange={(e) => actualizarFilaAdicional(item.key, { estilista_id: e.target.value })}
                             >
-                              <option value="">Empleado que realiza el adicional</option>
+                              <option value="">{esServicioShampoo(item.id) ? 'No aplica (ganancia establecimiento)' : 'Empleado que realiza el adicional'}</option>
                               {estilistas.map((e) => (
                                 <option key={e.id} value={e.id}>{e.nombre}</option>
                               ))}
@@ -1261,7 +1390,8 @@ const Servicios = () => {
                             <label className="inline-flex items-center gap-2 text-sm text-gray-700">
                               <input
                                 type="checkbox"
-                                checked={Boolean(item.aplica_porcentaje_establecimiento)}
+                                checked={esServicioShampoo(item.id) ? false : Boolean(item.aplica_porcentaje_establecimiento)}
+                                disabled={esServicioShampoo(item.id)}
                                 onChange={(e) =>
                                   actualizarFilaAdicional(item.key, {
                                     aplica_porcentaje_establecimiento: e.target.checked,
@@ -1284,7 +1414,7 @@ const Servicios = () => {
                               step="0.01"
                               placeholder="% establecimiento"
                               value={item.porcentaje_establecimiento || ''}
-                              disabled={!item.aplica_porcentaje_establecimiento}
+                              disabled={esServicioShampoo(item.id) || !item.aplica_porcentaje_establecimiento}
                               onChange={(e) =>
                                 actualizarFilaAdicional(item.key, {
                                   porcentaje_establecimiento: e.target.value,
@@ -1309,6 +1439,8 @@ const Servicios = () => {
                       <input
                         className="input-field"
                         placeholder="Buscar producto por código, marca o nombre"
+                        inputMode="search"
+                        enterKeyHint="search"
                         value={productoAdicionalBusqueda}
                         onChange={(e) => {
                           setProductoAdicionalBusqueda(e.target.value);
@@ -1415,6 +1547,12 @@ const Servicios = () => {
                 <p><strong>Servicio:</strong> {servicioEnProcesoSeleccionado?.servicio_nombre || '-'}</p>
                 <p><strong>Cliente:</strong> {servicioEnProcesoSeleccionado?.cliente_nombre || '-'}</p>
                 <p><strong>Medio de pago:</strong> {finalizacion.medio_pago}</p>
+                {finalizacion.medio_pago === 'efectivo' && (
+                  <>
+                    <p><strong>Valor recibido:</strong> {formatCOP(finalizacion.valor_recibido || 0)}</p>
+                    <p><strong>Devueltas:</strong> {formatCOP(devueltaServicio)}</p>
+                  </>
+                )}
               </div>
               <div className="bg-yellow-50 border border-yellow-200 p-3 rounded text-sm text-yellow-800">
                 <p>¿Deseas proceder con la finalización y cobro del servicio?</p>

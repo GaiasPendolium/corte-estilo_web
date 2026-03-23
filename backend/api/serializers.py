@@ -172,6 +172,10 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
             pct = 100
         return float((total * pct) / 100)
 
+    def _es_servicio_shampoo(self, servicio_obj):
+        nombre = str(getattr(servicio_obj, 'nombre', '') or '').lower()
+        return 'shampoo' in nombre
+
     def get_adicionales_asignados(self, obj):
         detalles = obj.adicionales_asignados.select_related('servicio', 'estilista').all()
 
@@ -225,36 +229,49 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
             adicionales_items = attrs.get('adicionales_servicio_items')
             if adicionales_items is not None:
                 ids_items = []
-                estilistas_ids_items = []
                 for item in adicionales_items:
                     sid = item.get('id')
-                    estilista_id = item.get('estilista_id')
                     valor = item.get('valor')
-                    aplica_pct = bool(item.get('aplica_porcentaje_establecimiento', False))
-                    pct_est = item.get('porcentaje_establecimiento', 0)
                     if sid is None:
                         raise serializers.ValidationError({'adicionales_servicio_items': 'Cada item debe incluir id del servicio.'})
-                    if estilista_id is None:
-                        raise serializers.ValidationError({'adicionales_servicio_items': 'Cada item debe incluir estilista_id.'})
                     if valor is None or float(valor) <= 0:
                         raise serializers.ValidationError({'adicionales_servicio_items': 'Cada servicio adicional debe tener valor mayor a 0.'})
+                    ids_items.append(int(sid))
+
+                servicios_mapa = {}
+                if ids_items:
+                    servicios_validos = list(Servicio.objects.filter(id__in=ids_items, es_adicional=True, activo=True))
+                    validos_set = {int(s.id) for s in servicios_validos}
+                    servicios_mapa = {int(s.id): s for s in servicios_validos}
+                    faltantes = [x for x in ids_items if x not in validos_set]
+                    if faltantes:
+                        raise serializers.ValidationError(
+                            {'adicionales_servicio_items': f'Servicios adicionales no válidos o inactivos: {faltantes}'}
+                        )
+
+                estilistas_ids_items = []
+                for item in adicionales_items:
+                    sid = int(item.get('id'))
+                    estilista_id = item.get('estilista_id')
+                    aplica_pct = bool(item.get('aplica_porcentaje_establecimiento', False))
+                    pct_est = item.get('porcentaje_establecimiento', 0)
+
                     try:
                         pct_num = float(pct_est or 0)
                     except Exception:
                         raise serializers.ValidationError({'adicionales_servicio_items': 'Porcentaje de establecimiento inválido.'})
                     if aplica_pct and (pct_num <= 0 or pct_num > 100):
                         raise serializers.ValidationError({'adicionales_servicio_items': 'Si aplica porcentaje, debe estar entre 0.01 y 100.'})
-                    ids_items.append(int(sid))
-                    estilistas_ids_items.append(int(estilista_id))
 
-                if ids_items:
-                    validos = Servicio.objects.filter(id__in=ids_items, es_adicional=True, activo=True).values_list('id', flat=True)
-                    validos_set = {int(v) for v in validos}
-                    faltantes = [x for x in ids_items if x not in validos_set]
-                    if faltantes:
-                        raise serializers.ValidationError(
-                            {'adicionales_servicio_items': f'Servicios adicionales no válidos o inactivos: {faltantes}'}
-                        )
+                    servicio_item = servicios_mapa.get(sid)
+                    es_shampoo = self._es_servicio_shampoo(servicio_item)
+                    if estilista_id in (None, ''):
+                        if not es_shampoo:
+                            raise serializers.ValidationError(
+                                {'adicionales_servicio_items': 'Cada servicio adicional (excepto shampoo) debe tener empleado asignado.'}
+                            )
+                    else:
+                        estilistas_ids_items.append(int(estilista_id))
 
                 if estilistas_ids_items:
                     estilistas_validos = Estilista.objects.filter(id__in=estilistas_ids_items, activo=True).values_list('id', flat=True)
@@ -467,7 +484,10 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
                 if estilista_ad:
                     adicionales_detalle.append(f"{srv_ad.nombre} ({estilista_ad.nombre}) ${valor_item:.2f}{reparto}")
                 else:
-                    adicionales_detalle.append(f"{srv_ad.nombre} ${valor_item:.2f}{reparto}")
+                    if 'shampoo' in (srv_ad.nombre or '').lower():
+                        adicionales_detalle.append(f"{srv_ad.nombre} (Establecimiento) ${valor_item:.2f}")
+                    else:
+                        adicionales_detalle.append(f"{srv_ad.nombre} ${valor_item:.2f}{reparto}")
 
             servicio.adicional_shampoo = any('shampoo' in nombre for nombre in nombres_lower)
             servicio.adicional_guantes = any('guantes' in nombre for nombre in nombres_lower)
