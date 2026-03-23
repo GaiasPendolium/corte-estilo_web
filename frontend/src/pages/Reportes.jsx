@@ -57,7 +57,6 @@ const Reportes = () => {
   const [medioPagoFiltro, setMedioPagoFiltro] = useState('todos');
   const [marcaFiltro, setMarcaFiltro] = useState('todas');
   const [estilistaFiltro, setEstilistaFiltro] = useState('todos');
-  const [fechaEstadoPago, setFechaEstadoPago] = useState(format(today, 'yyyy-MM-dd'));
   const [savingEstadoByEstilista, setSavingEstadoByEstilista] = useState({});
   const [stats, setStats] = useState(null);
   const [resumenDiario, setResumenDiario] = useState(null);
@@ -70,7 +69,6 @@ const Reportes = () => {
         periodo,
         fecha_inicio: fechaInicio,
         fecha_fin: fechaFin,
-        fecha_estado_pago: fechaEstadoPago,
         ...(medioPagoFiltro !== 'todos' ? { medio_pago: medioPagoFiltro } : {}),
       });
       setStats(data);
@@ -86,19 +84,12 @@ const Reportes = () => {
     loadData();
   }, []);
 
-  useEffect(() => {
-    if (stats?.fecha_estado_pago) {
-      setFechaEstadoPago(stats.fecha_estado_pago);
-    }
-  }, [stats?.fecha_estado_pago]);
-
   const exportarCsv = async () => {
     try {
       const blob = await reportesService.exportBICsv({
         periodo,
         fecha_inicio: fechaInicio,
         fecha_fin: fechaFin,
-        fecha_estado_pago: fechaEstadoPago,
         ...(medioPagoFiltro !== 'todos' ? { medio_pago: medioPagoFiltro } : {}),
       });
       if (!blob || blob.size === 0) {
@@ -125,7 +116,6 @@ const Reportes = () => {
         periodo,
         fecha_inicio: fechaInicio,
         fecha_fin: fechaFin,
-        fecha_estado_pago: fechaEstadoPago,
         ...(medioPagoFiltro !== 'todos' ? { medio_pago: medioPagoFiltro } : {}),
       });
       if (!blob || blob.size === 0) {
@@ -239,37 +229,26 @@ const Reportes = () => {
   const leQuedaHoy = recibeHoy - pagaHoy;
 
   const cambiarEstadoPagoDia = async (estilistaId, estado) => {
-    if (!fechaEstadoPago) {
-      toast.error('Selecciona una fecha para el estado de pago');
-      return;
+    if (estado === 'parcial' || estado === 'sin_movimiento') return;
+
+    if (estado === 'cancelado') {
+      const confirmar = window.confirm(
+        `Se marcarán como CANCELADOS todos los días del rango ${fechaInicio} a ${fechaFin} para este estilista. ¿Deseas continuar?`
+      );
+      if (!confirmar) return;
     }
 
     setSavingEstadoByEstilista((prev) => ({ ...prev, [estilistaId]: true }));
     try {
       await reportesService.setEstadoPagoEstilistaDia({
         estilista_id: estilistaId,
-        fecha: fechaEstadoPago,
+        fecha_inicio: fechaInicio,
+        fecha_fin: fechaFin,
         estado,
       });
 
-      setStats((prev) => {
-        if (!prev?.estilistas) return prev;
-        return {
-          ...prev,
-          fecha_estado_pago: fechaEstadoPago,
-          estilistas: prev.estilistas.map((item) =>
-            item.estilista_id === estilistaId
-              ? {
-                  ...item,
-                  estado_pago_dia: estado,
-                  fecha_estado_pago: fechaEstadoPago,
-                }
-              : item
-          ),
-        };
-      });
-
-      toast.success(`Estado actualizado a ${estado === 'cancelado' ? 'Cancelado' : 'Pendiente'}`);
+      await loadData();
+      toast.success(`Rango actualizado a ${estado === 'cancelado' ? 'Cancelado' : 'Pendiente'}`);
     } catch (error) {
       toast.error(error?.response?.data?.error || 'No se pudo actualizar el estado del día');
     } finally {
@@ -311,10 +290,6 @@ const Reportes = () => {
             <div>
               <label className="block text-sm text-gray-600 mb-1">Fecha fin</label>
               <input type="date" className="input-field" value={fechaFin} onChange={(e) => setFechaFin(e.target.value)} />
-            </div>
-            <div>
-              <label className="block text-sm text-gray-600 mb-1">Fecha estado pago</label>
-              <input type="date" className="input-field" value={fechaEstadoPago} onChange={(e) => setFechaEstadoPago(e.target.value)} />
             </div>
             <div>
               <label className="block text-sm text-gray-600 mb-1">Medio de pago</label>
@@ -473,7 +448,7 @@ const Reportes = () => {
           <div>
             <h2 className="card-header mb-0">Liquidación por estilista</h2>
             <p className="text-sm text-gray-500">Lectura simple: cuánto facturó, cuánto realmente cuenta para pagarle, qué deducciones tiene y cuánto neto recibe.</p>
-            <p className="text-xs text-slate-500 mt-1">Estado por día aplicado para: {stats?.fecha_estado_pago || fechaEstadoPago}</p>
+            <p className="text-xs text-slate-500 mt-1">Estado aplicado al rango: {fechaInicio} a {fechaFin}. Cambiar a Pendiente revierte un error de liquidación.</p>
           </div>
           <div className="rounded-2xl bg-slate-100 px-4 py-2 text-sm text-slate-700">
             {estilistaFiltro === 'todos' ? 'Mostrando todos los estilistas' : `Mostrando: ${estilistaFiltro}`}
@@ -520,9 +495,9 @@ const Reportes = () => {
                     <div className="text-xs text-slate-500">Base del servicio para liquidar</div>
                   </td>
                   <td className="table-cell">
-                    <div className="font-medium text-slate-900">{formatMoney(s.comision_ventas_producto)}</div>
+                    <div className="font-medium text-slate-900">{formatMoney(s.comision_ventas_producto_caja)}</div>
                     <div className="text-xs text-slate-500">
-                      Caja: {formatMoney(s.comision_ventas_producto_caja)} | Servicios: {formatMoney(s.comision_ventas_producto_servicios)}
+                      Solo ventas directas de productos (según % configurado en cada producto)
                     </div>
                   </td>
                   <td className="table-cell">
@@ -537,29 +512,34 @@ const Reportes = () => {
                   </td>
                   <td className="table-cell font-medium text-slate-900">{moneyFormatter.format(s.total_dias_trabajados || 0)}</td>
                   <td className="table-cell">
-                    <div className={`font-semibold ${Number(s.pago_neto_estilista || 0) >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                      {formatMoney(s.pago_neto_estilista)}
+                    <div className={`font-semibold ${Number(s.pago_neto_pendiente || s.pago_neto_estilista || 0) >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                      {formatMoney(s.pago_neto_pendiente ?? s.pago_neto_estilista)}
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      Periodo completo: {formatMoney(s.pago_neto_periodo)} | Ya cancelado: {formatMoney(s.pago_neto_cancelado)}
                     </div>
                   </td>
                   <td className="table-cell">
-                    {Number(s.pago_neto_estilista || 0) > 0 && <span className="text-emerald-700 font-medium">A pagar</span>}
-                    {Number(s.pago_neto_estilista || 0) < 0 && <span className="text-red-700 font-medium">Debe al establecimiento</span>}
-                    {Number(s.pago_neto_estilista || 0) === 0 && <span className="text-slate-600 font-medium">En cero</span>}
+                    {Number(s.pago_neto_pendiente || s.pago_neto_estilista || 0) > 0 && <span className="text-emerald-700 font-medium">A pagar (pendiente)</span>}
+                    {Number(s.pago_neto_pendiente || s.pago_neto_estilista || 0) < 0 && <span className="text-red-700 font-medium">Debe al establecimiento</span>}
+                    {Number(s.pago_neto_pendiente || s.pago_neto_estilista || 0) === 0 && <span className="text-slate-600 font-medium">En cero</span>}
                   </td>
                   <td className="table-cell">
                     <select
                       className="input-field !py-2 !min-h-0"
-                      value={s.estado_pago_dia || 'pendiente'}
+                      value={s.estado_pago_rango || s.estado_pago_dia || 'pendiente'}
                       onChange={(e) => cambiarEstadoPagoDia(s.estilista_id, e.target.value)}
-                      disabled={!!savingEstadoByEstilista[s.estilista_id]}
+                      disabled={!!savingEstadoByEstilista[s.estilista_id] || (s.estado_pago_rango || s.estado_pago_dia) === 'sin_movimiento'}
                     >
                       <option value="pendiente">Pendiente</option>
                       <option value="cancelado">Cancelado</option>
+                      {(s.estado_pago_rango || s.estado_pago_dia) === 'parcial' && <option value="parcial">Parcial</option>}
+                      {(s.estado_pago_rango || s.estado_pago_dia) === 'sin_movimiento' && <option value="sin_movimiento">Sin movimiento</option>}
                     </select>
                     <div className="text-xs text-slate-500 mt-1">
                       {savingEstadoByEstilista[s.estilista_id]
                         ? 'Guardando...'
-                        : `Fecha: ${s.fecha_estado_pago || fechaEstadoPago}`}
+                        : `${s.dias_cancelados_rango || 0} días cancelados / ${s.total_dias_trabajados || 0} trabajados`}
                     </div>
                   </td>
                 </tr>

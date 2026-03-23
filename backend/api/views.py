@@ -595,12 +595,15 @@ def _calcular_datos_bi(request):
     """Función helper que calcula todos los datos de BI y retorna un diccionario"""
     fecha_inicio, fecha_fin = _resolver_rango_fechas(request)
     medio_pago = (request.query_params.get('medio_pago') or '').strip().lower()
-    fecha_estado_pago_raw = (request.query_params.get('fecha_estado_pago') or fecha_fin).strip()
-
     try:
-        fecha_estado_pago = datetime.strptime(fecha_estado_pago_raw, '%Y-%m-%d').date()
+        fecha_inicio_dt = datetime.strptime(fecha_inicio, '%Y-%m-%d').date()
+        fecha_fin_dt = datetime.strptime(fecha_fin, '%Y-%m-%d').date()
     except Exception:
-        fecha_estado_pago = datetime.strptime(fecha_fin, '%Y-%m-%d').date()
+        hoy = timezone.localdate()
+        fecha_inicio_dt = hoy
+        fecha_fin_dt = hoy
+        fecha_inicio = hoy.strftime('%Y-%m-%d')
+        fecha_fin = hoy.strftime('%Y-%m-%d')
 
     ventas_qs = VentaProducto.objects.select_related('producto', 'estilista').filter(
         fecha_hora__date__gte=fecha_inicio,
@@ -629,7 +632,8 @@ def _calcular_datos_bi(request):
         costo_productos += costo_unitario * Decimal(venta.cantidad)
 
         if venta.estilista:
-            pct = Decimal(venta.estilista.comision_ventas_productos or 0)
+            # La comisión de venta se toma del producto vendido, no del estilista.
+            pct = Decimal(venta.producto.comision_estilista or 0)
             comision_producto_estilistas += (Decimal(venta.total) * pct) / Decimal(100)
 
         key = venta.producto_id
@@ -647,7 +651,7 @@ def _calcular_datos_bi(request):
     utilidad_productos = ingresos_productos - costo_productos
 
     # Productos vendidos como adicional dentro de servicios finalizados.
-    # Se valorizan por precio de venta del producto * cantidad registrada.
+    # Se valorizan para ingresos/costos de inventario, pero no generan comisión de venta.
     for srv in servicios_qs.select_related('adicional_otro_producto', 'estilista'):
         if srv.adicional_otro_producto_id:
             cantidad_ad = Decimal(srv.adicional_otro_cantidad or 1)
@@ -655,11 +659,7 @@ def _calcular_datos_bi(request):
             precio_compra_ad = Decimal(srv.adicional_otro_producto.precio_compra or 0)
             ingresos_productos_en_servicios += precio_venta_ad * cantidad_ad
             costo_productos_en_servicios += precio_compra_ad * cantidad_ad
-
-            pct = Decimal(srv.estilista.comision_ventas_productos or 0)
-            comision_producto_estilistas_en_servicios += ((precio_venta_ad * cantidad_ad) * pct) / Decimal(100)
-
-    comision_producto_estilistas_total = comision_producto_estilistas + comision_producto_estilistas_en_servicios
+    comision_producto_estilistas_total = comision_producto_estilistas
 
     ingresos_productos_totales = ingresos_productos + ingresos_productos_en_servicios
     costo_productos_totales = costo_productos + costo_productos_en_servicios
@@ -671,14 +671,15 @@ def _calcular_datos_bi(request):
     estilistas_data = []
     total_descuentos_espacio = Decimal(0)
     total_pago_neto_estilistas = Decimal(0)
+    total_pago_neto_estilistas_periodo = Decimal(0)
     total_pago_estilistas_positivo = Decimal(0)
     total_deuda_estilistas = Decimal(0)
     total_servicios_adicionales_establecimiento = Decimal(0)
 
     try:
         estados_pago_map = {
-            ep.estilista_id: ep.estado
-            for ep in EstadoPagoEstilistaDia.objects.filter(fecha=fecha_estado_pago)
+            (ep.estilista_id, ep.fecha): ep.estado
+            for ep in EstadoPagoEstilistaDia.objects.filter(fecha__gte=fecha_inicio_dt, fecha__lte=fecha_fin_dt)
         }
     except (OperationalError, ProgrammingError):
         # Permite mantener operativo BI mientras se aplica la migración en producción.
@@ -705,44 +706,73 @@ def _calcular_datos_bi(request):
         }
         
         comision_ventas_producto_caja_est = Decimal(0)
+        comision_por_dia = {}
         for v in ventas_est:
-            pct = Decimal(estilista.comision_ventas_productos or 0)
-            comision_ventas_producto_caja_est += (Decimal(v.total) * pct) / Decimal(100)
+            pct = Decimal(v.producto.comision_estilista or 0)
+            valor_comision = (Decimal(v.total) * pct) / Decimal(100)
+            comision_ventas_producto_caja_est += valor_comision
+            fecha_v = v.fecha_hora.date()
+            comision_por_dia[fecha_v] = comision_por_dia.get(fecha_v, Decimal(0)) + valor_comision
 
         comision_ventas_producto_servicios_est = Decimal(0)
-        for srv in servicios_est.select_related('adicional_otro_producto'):
-            if not srv.adicional_otro_producto_id:
-                continue
-            pct = Decimal(estilista.comision_ventas_productos or 0)
-            base = Decimal(srv.adicional_otro_producto.precio_venta or 0) * Decimal(srv.adicional_otro_cantidad or 1)
-            comision_ventas_producto_servicios_est += (base * pct) / Decimal(100)
 
         comision_ventas_producto_est = comision_ventas_producto_caja_est + comision_ventas_producto_servicios_est
 
         subtotal_ingresos_est = ganancia_servicios_est + comision_ventas_producto_est
 
+        servicios_por_dia = {}
+        for srv in servicios_est:
+            fecha_srv = srv.fecha_hora.date()
+            servicios_por_dia[fecha_srv] = servicios_por_dia.get(fecha_srv, Decimal(0)) + Decimal(srv.precio_cobrado or 0)
+
         descuento_espacio = Decimal(0)
-        if estilista.tipo_cobro_espacio == 'porcentaje_neto':
-            descuento_espacio = (ganancia_servicios_est * Decimal(estilista.valor_cobro_espacio or 0)) / Decimal(100)
-        elif estilista.tipo_cobro_espacio == 'costo_fijo_neto':
-            descuento_espacio = Decimal(estilista.valor_cobro_espacio or 0) * Decimal(len(dias_trabajados))
+        pago_neto_periodo = Decimal(0)
+        pago_neto_pendiente = Decimal(0)
+        pago_neto_cancelado = Decimal(0)
+        dias_cancelados = 0
 
-        # Para porcentaje_neto nunca debe superar la base del servicio.
-        # Para costo_fijo_neto se permite que exceda para reflejar saldo pendiente
-        # y que el neto del estilista pueda quedar negativo.
-        if estilista.tipo_cobro_espacio == 'porcentaje_neto' and descuento_espacio > ganancia_servicios_est:
-            descuento_espacio = ganancia_servicios_est
+        for dia in dias_trabajados:
+            base_servicio_dia = servicios_por_dia.get(dia, Decimal(0))
+            comision_dia = comision_por_dia.get(dia, Decimal(0))
 
-        # Pago neto = (ganancias de servicios - descuento por espacio) + comisiones de ventas
-        pago_neto = (ganancia_servicios_est - descuento_espacio) + comision_ventas_producto_est
+            descuento_dia = Decimal(0)
+            if estilista.tipo_cobro_espacio == 'porcentaje_neto':
+                descuento_dia = (base_servicio_dia * Decimal(estilista.valor_cobro_espacio or 0)) / Decimal(100)
+                if descuento_dia > base_servicio_dia:
+                    descuento_dia = base_servicio_dia
+            elif estilista.tipo_cobro_espacio == 'costo_fijo_neto':
+                descuento_dia = Decimal(estilista.valor_cobro_espacio or 0)
+
+            neto_dia = (base_servicio_dia - descuento_dia) + comision_dia
+            estado_dia = estados_pago_map.get((estilista.id, dia), 'pendiente')
+
+            descuento_espacio += descuento_dia
+            pago_neto_periodo += neto_dia
+
+            if estado_dia == 'cancelado':
+                pago_neto_cancelado += neto_dia
+                dias_cancelados += 1
+            else:
+                pago_neto_pendiente += neto_dia
 
         total_descuentos_espacio += descuento_espacio
-        total_pago_neto_estilistas += pago_neto
-        if pago_neto >= 0:
-            total_pago_estilistas_positivo += pago_neto
+        total_pago_neto_estilistas += pago_neto_pendiente
+        total_pago_neto_estilistas_periodo += pago_neto_periodo
+        if pago_neto_pendiente >= 0:
+            total_pago_estilistas_positivo += pago_neto_pendiente
         else:
-            total_deuda_estilistas += abs(pago_neto)
+            total_deuda_estilistas += abs(pago_neto_pendiente)
         total_servicios_adicionales_establecimiento += total_adicionales_est
+
+        total_dias = len(dias_trabajados)
+        if total_dias == 0:
+            estado_pago_rango = 'sin_movimiento'
+        elif dias_cancelados == 0:
+            estado_pago_rango = 'pendiente'
+        elif dias_cancelados == total_dias:
+            estado_pago_rango = 'cancelado'
+        else:
+            estado_pago_rango = 'parcial'
 
         estilistas_data.append(
             {
@@ -763,9 +793,15 @@ def _calcular_datos_bi(request):
                 'ganancias_totales_brutas': float(subtotal_ingresos_est),
                 'total_deducciones': float(descuento_espacio),
                 'descuento_espacio': float(descuento_espacio),
-                'pago_neto_estilista': float(pago_neto),
-                'estado_pago_dia': estados_pago_map.get(estilista.id, 'pendiente'),
-                'fecha_estado_pago': fecha_estado_pago.strftime('%Y-%m-%d'),
+                'pago_neto_estilista': float(pago_neto_pendiente),
+                'pago_neto_pendiente': float(pago_neto_pendiente),
+                'pago_neto_periodo': float(pago_neto_periodo),
+                'pago_neto_cancelado': float(pago_neto_cancelado),
+                'estado_pago_dia': estado_pago_rango,
+                'estado_pago_rango': estado_pago_rango,
+                'dias_cancelados_rango': int(dias_cancelados),
+                'dias_pendientes_rango': int(max(total_dias - dias_cancelados, 0)),
+                'fecha_estado_pago': fecha_fin,
             }
         )
 
@@ -818,7 +854,9 @@ def _calcular_datos_bi(request):
     return {
         'fecha_inicio': fecha_inicio,
         'fecha_fin': fecha_fin,
-        'fecha_estado_pago': fecha_estado_pago.strftime('%Y-%m-%d'),
+        'fecha_estado_pago': fecha_fin,
+        'fecha_estado_pago_inicio': fecha_inicio,
+        'fecha_estado_pago_fin': fecha_fin,
         'kpis': {
             'venta_neta_total': float(venta_neta_total),
             'total_ganancias_negocio': float(total_ganancias_negocio),
@@ -847,6 +885,7 @@ def _calcular_datos_bi(request):
             'pago_total_estilistas': float(total_pago_estilistas_positivo),
             'deudas_estilistas': float(total_deuda_estilistas),
             'pago_total_estilistas_neto': float(total_pago_neto_estilistas),
+            'pago_total_estilistas_neto_periodo': float(total_pago_neto_estilistas_periodo),
             'descuentos_espacio_estilistas': float(total_descuentos_espacio),
             'cantidad_ventas_productos': ventas_qs.count(),
             'cantidad_servicios': servicios_qs.count(),
@@ -904,19 +943,32 @@ def estado_pago_estilista_dia(request):
 
     estilista_id = request.data.get('estilista_id')
     fecha_raw = request.data.get('fecha')
+    fecha_inicio_raw = request.data.get('fecha_inicio')
+    fecha_fin_raw = request.data.get('fecha_fin')
     estado = (request.data.get('estado') or '').strip().lower()
     notas = request.data.get('notas')
 
-    if not estilista_id or not fecha_raw or estado not in {'pendiente', 'cancelado'}:
+    if not estilista_id or estado not in {'pendiente', 'cancelado'}:
         return Response(
-            {'error': 'Debes enviar estilista_id, fecha (YYYY-MM-DD) y estado (pendiente|cancelado).'},
+            {'error': 'Debes enviar estilista_id y estado (pendiente|cancelado).'},
             status=status.HTTP_400_BAD_REQUEST,
         )
 
     try:
-        fecha = datetime.strptime(str(fecha_raw), '%Y-%m-%d').date()
+        if fecha_raw:
+            fecha_inicio_dt = datetime.strptime(str(fecha_raw), '%Y-%m-%d').date()
+            fecha_fin_dt = fecha_inicio_dt
+        else:
+            fecha_inicio_dt = datetime.strptime(str(fecha_inicio_raw), '%Y-%m-%d').date()
+            fecha_fin_dt = datetime.strptime(str(fecha_fin_raw), '%Y-%m-%d').date()
     except Exception:
-        return Response({'error': 'Formato de fecha inválido. Usa YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            {'error': 'Formato de fecha inválido. Usa fecha (YYYY-MM-DD) o fecha_inicio/fecha_fin (YYYY-MM-DD).'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if fecha_inicio_dt > fecha_fin_dt:
+        return Response({'error': 'fecha_inicio no puede ser mayor que fecha_fin.'}, status=status.HTTP_400_BAD_REQUEST)
 
     try:
         estilista = Estilista.objects.get(id=int(estilista_id))
@@ -924,11 +976,20 @@ def estado_pago_estilista_dia(request):
         return Response({'error': 'Estilista no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
 
     try:
-        obj, _ = EstadoPagoEstilistaDia.objects.update_or_create(
-            estilista=estilista,
-            fecha=fecha,
-            defaults={'estado': estado, 'notas': notas},
-        )
+        fechas_procesadas = 0
+        fecha_cursor = fecha_inicio_dt
+        while fecha_cursor <= fecha_fin_dt:
+            if estado == 'pendiente':
+                # Pendiente es el estado por defecto, por lo que eliminamos marca explícita.
+                EstadoPagoEstilistaDia.objects.filter(estilista=estilista, fecha=fecha_cursor).delete()
+            else:
+                EstadoPagoEstilistaDia.objects.update_or_create(
+                    estilista=estilista,
+                    fecha=fecha_cursor,
+                    defaults={'estado': estado, 'notas': notas},
+                )
+            fechas_procesadas += 1
+            fecha_cursor += timedelta(days=1)
     except (OperationalError, ProgrammingError):
         return Response(
             {'error': 'Debes aplicar migraciones del backend para habilitar estado por día.'},
@@ -937,10 +998,12 @@ def estado_pago_estilista_dia(request):
 
     return Response(
         {
-            'estilista_id': obj.estilista_id,
-            'fecha': obj.fecha.strftime('%Y-%m-%d'),
-            'estado': obj.estado,
-            'notas': obj.notas,
+            'estilista_id': estilista.id,
+            'fecha_inicio': fecha_inicio_dt.strftime('%Y-%m-%d'),
+            'fecha_fin': fecha_fin_dt.strftime('%Y-%m-%d'),
+            'estado': estado,
+            'notas': notas,
+            'fechas_procesadas': fechas_procesadas,
         }
     )
 
