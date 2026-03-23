@@ -300,7 +300,10 @@ const Reportes = () => {
           <div>
             <p className="text-xs uppercase tracking-[0.3em] text-slate-300">Centro de inteligencia</p>
             <h1 className="mt-2 text-4xl font-black tracking-tight">Reportes Ejecutivos</h1>
-            <p className="mt-2 max-w-2xl text-slate-300">Vista gerencial con rentabilidad, liquidez, carga operativa y alertas accionables.</p>
+            <p className="mt-2 max-w-2xl text-slate-300">Vista gerencial simplificada para lectura rápida del negocio.</p>
+            <span className="mt-3 inline-flex rounded-full bg-white/15 px-3 py-1 text-xs font-semibold text-white">
+              Modo simple activado
+            </span>
           </div>
           <div className="flex flex-wrap gap-2">
             <button className="btn-secondary !border-white/20 !bg-white/10 !text-white" onClick={exportarCsv}>Descargar CSV</button>
