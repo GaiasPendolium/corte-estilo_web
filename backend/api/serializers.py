@@ -104,6 +104,7 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
     cliente_nombre = serializers.CharField(source='cliente.nombre', read_only=True)
     usuario_nombre = serializers.CharField(source='usuario.username', read_only=True)
     adicional_otro_producto_nombre = serializers.CharField(source='adicional_otro_producto.nombre', read_only=True)
+    factura_texto = serializers.SerializerMethodField(read_only=True)
     adicionales_servicio_ids = serializers.ListField(
         child=serializers.IntegerField(min_value=1),
         write_only=True,
@@ -337,6 +338,11 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
         if not servicio.numero_factura:
             servicio.numero_factura = f"FS-{timezone.now().strftime('%Y%m%d')}-{servicio.id:06d}"
 
+        servicio.factura_texto = self._construir_factura_texto(servicio)
+
+    def _construir_factura_texto(self, servicio):
+        numero_factura = servicio.numero_factura or f"FS-{timezone.now().strftime('%Y%m%d')}-{servicio.id:06d}"
+
         cliente = servicio.cliente.nombre if servicio.cliente else 'Cliente no registrado'
         adicionales = getattr(servicio, '_adicionales_detalle', None)
         if not adicionales:
@@ -356,8 +362,8 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
         if (servicio.estilista.tipo_cobro_espacio or 'sin_cobro') == 'costo_fijo_neto':
             nota_liquidacion = '\nNota: El cobro fijo de espacio se aplica en liquidación diaria/semanal, no por cada servicio.'
 
-        servicio.factura_texto = (
-            f"Factura: {servicio.numero_factura}\n"
+        return (
+            f"Factura: {numero_factura}\n"
             f"Tipo: Servicio\n"
             f"Fecha: {timezone.localtime(servicio.fecha_hora).strftime('%Y-%m-%d %H:%M')}\n"
             f"Cliente: {cliente}\n"
@@ -374,6 +380,11 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
             f"Empleado: ${float(servicio.monto_estilista):.2f}"
             f"{nota_liquidacion}"
         )
+
+    def get_factura_texto(self, obj):
+        self._calcular_adicionales(obj)
+        self._calcular_reparto(obj)
+        return self._construir_factura_texto(obj)
 
     def create(self, validated_data):
         adicionales_servicio_ids = validated_data.pop('adicionales_servicio_ids', None)
