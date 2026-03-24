@@ -40,6 +40,13 @@ const MEDIOS_PAGO_ABONO = [
   { value: 'otros', label: 'Otros' },
 ];
 
+const MEDIOS_PAGO_DETALLE = [
+  { key: 'efectivo', label: 'Efectivo' },
+  { key: 'nequi', label: 'Nequi' },
+  { key: 'daviplata', label: 'Daviplata' },
+  { key: 'otros', label: 'Otros' },
+];
+
 const KpiCard = ({ title, value, hint, tone = 'slate' }) => {
   const tones = {
     slate: 'from-slate-900 via-slate-800 to-slate-700 text-white',
@@ -75,6 +82,7 @@ const Reportes = () => {
   const [mostrarDetalleAvanzado, setMostrarDetalleAvanzado] = useState(false);
   const [mostrarResumenDetalle, setMostrarResumenDetalle] = useState(false);
   const [pagosPorEstilista, setPagosPorEstilista] = useState({});
+  const [ingresosPorMedio, setIngresosPorMedio] = useState({ efectivo: 0, nequi: 0, daviplata: 0, otros: 0 });
   const [loading, setLoading] = useState(true);
 
   const resolveEstilistaIdFiltro = (dataStats) => {
@@ -125,6 +133,31 @@ const Reportes = () => {
     }
   };
 
+  const cargarIngresosPorMedio = async () => {
+    try {
+      const baseParams = {
+        periodo,
+        fecha_inicio: fechaInicio,
+        fecha_fin: fechaFin,
+      };
+      const [efectivoResp, nequiResp, daviplataResp, otrosResp] = await Promise.all([
+        reportesService.getBIResumen({ ...baseParams, medio_pago: 'efectivo' }),
+        reportesService.getBIResumen({ ...baseParams, medio_pago: 'nequi' }),
+        reportesService.getBIResumen({ ...baseParams, medio_pago: 'daviplata' }),
+        reportesService.getBIResumen({ ...baseParams, medio_pago: 'otros' }),
+      ]);
+
+      setIngresosPorMedio({
+        efectivo: Number(efectivoResp?.kpis?.venta_neta_total || 0),
+        nequi: Number(nequiResp?.kpis?.venta_neta_total || 0),
+        daviplata: Number(daviplataResp?.kpis?.venta_neta_total || 0),
+        otros: Number(otrosResp?.kpis?.venta_neta_total || 0),
+      });
+    } catch (error) {
+      setIngresosPorMedio({ efectivo: 0, nequi: 0, daviplata: 0, otros: 0 });
+    }
+  };
+
   const loadData = async () => {
     try {
       setLoading(true);
@@ -148,12 +181,14 @@ const Reportes = () => {
       });
       await cargarHistorialEstados(data);
       await cargarEstadoPagoDia(data);
+      await cargarIngresosPorMedio();
     } catch (error) {
       toast.error('Error al cargar reportes');
       setStats(null);
       setConsumoEmpleado({ resumen: [], deudas: [] });
       setHistorialEstados([]);
       setPagosPorEstilista({});
+      setIngresosPorMedio({ efectivo: 0, nequi: 0, daviplata: 0, otros: 0 });
     } finally {
       setLoading(false);
     }
@@ -370,6 +405,33 @@ const Reportes = () => {
       .reduce((acc, val) => acc + (Number.isFinite(val) ? val : 0), 0);
   };
 
+  const totalPagosPorMedio = useMemo(() => {
+    return Object.values(pagosPorEstilista).reduce(
+      (acc, item) => {
+        acc.efectivo += Number(item?.efectivo || 0);
+        acc.nequi += Number(item?.nequi || 0);
+        acc.daviplata += Number(item?.daviplata || 0);
+        acc.otros += Number(item?.otros || 0);
+        return acc;
+      },
+      { efectivo: 0, nequi: 0, daviplata: 0, otros: 0 }
+    );
+  }, [pagosPorEstilista]);
+
+  const balancePorMedio = useMemo(() => {
+    return MEDIOS_PAGO_DETALLE.map((m) => {
+      const ingreso = Number(ingresosPorMedio[m.key] || 0);
+      const liquidado = Number(totalPagosPorMedio[m.key] || 0);
+      return {
+        key: m.key,
+        label: m.label,
+        ingreso,
+        liquidado,
+        debeHaber: ingreso - liquidado,
+      };
+    });
+  }, [ingresosPorMedio, totalPagosPorMedio]);
+
   const cambiarEstadoPagoDia = async (fila, estado) => {
     const estilistaId = fila.estilista_id;
     if (estado === 'parcial' || estado === 'sin_movimiento') return;
@@ -520,6 +582,32 @@ const Reportes = () => {
           hint="Saldo total pendiente por consumos a crédito"
           tone="amber"
         />
+      </div>
+
+      <div className="card border border-indigo-200 bg-indigo-50">
+        <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h2 className="card-header mb-0">Control por medio de pago</h2>
+            <p className="text-sm text-slate-600">Debe haber = ingresos del medio - pagos liquidados por ese mismo medio.</p>
+          </div>
+          <div className="text-xs text-slate-600 rounded-xl bg-white px-3 py-2 border border-indigo-100">
+            {fechaInicio === fechaFin
+              ? `Día: ${fechaInicio}`
+              : `Rango ${fechaInicio} a ${fechaFin} (liquidado por medio visible solo para un día)`}
+          </div>
+        </div>
+        <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+          {balancePorMedio.map((m) => (
+            <div key={m.key} className="rounded-2xl border border-indigo-100 bg-white p-4">
+              <p className="text-sm font-semibold text-slate-900">{m.label}</p>
+              <p className={`mt-2 text-xl font-black ${m.debeHaber >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                {formatMoney(m.debeHaber)}
+              </p>
+              <p className="mt-2 text-xs text-slate-600">Ingresos: {formatMoney(m.ingreso)}</p>
+              <p className="text-xs text-slate-600">Liquidado: {formatMoney(m.liquidado)}</p>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className="card border border-slate-200 bg-slate-50">
