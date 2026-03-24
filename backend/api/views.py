@@ -1705,6 +1705,7 @@ def estado_pago_estilista_dia(request):
     try:
         fechas_procesadas = 0
         cambios_registrados = 0
+        historial_no_disponible = False
         fecha_cursor = fecha_inicio_dt
         while fecha_cursor <= fecha_fin_dt:
             actual = EstadoPagoEstilistaDia.objects.filter(estilista=estilista, fecha=fecha_cursor).first()
@@ -1719,17 +1720,21 @@ def estado_pago_estilista_dia(request):
             )
 
             if estado_anterior != estado:
-                monto_liquidado = _calcular_neto_dia_estilista(estilista, fecha_cursor)
-                EstadoPagoEstilistaHistorial.objects.create(
-                    estilista=estilista,
-                    fecha=fecha_cursor,
-                    estado_anterior=estado_anterior,
-                    estado_nuevo=estado,
-                    notas=notas,
-                    usuario=usuario_obj,
-                    monto_liquidado=monto_liquidado,
-                )
-                cambios_registrados += 1
+                try:
+                    monto_liquidado = _calcular_neto_dia_estilista(estilista, fecha_cursor)
+                    EstadoPagoEstilistaHistorial.objects.create(
+                        estilista=estilista,
+                        fecha=fecha_cursor,
+                        estado_anterior=estado_anterior,
+                        estado_nuevo=estado,
+                        notas=notas,
+                        usuario=usuario_obj,
+                        monto_liquidado=monto_liquidado,
+                    )
+                    cambios_registrados += 1
+                except (OperationalError, ProgrammingError):
+                    # No bloquear la operación diaria si falla la bitácora.
+                    historial_no_disponible = True
 
             fechas_procesadas += 1
             fecha_cursor += timedelta(days=1)
@@ -1748,6 +1753,7 @@ def estado_pago_estilista_dia(request):
             'notas': notas,
             'fechas_procesadas': fechas_procesadas,
             'cambios_registrados': cambios_registrados,
+            'historial_no_disponible': historial_no_disponible,
         }
     )
 
