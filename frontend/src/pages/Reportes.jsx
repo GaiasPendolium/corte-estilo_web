@@ -775,7 +775,6 @@ const Reportes = () => {
         </div>
       </div>
 
-      {mostrarDetalleAvanzado && (
       <div className="card">
         <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
           <div>
@@ -821,7 +820,6 @@ const Reportes = () => {
           </table>
         </div>
       </div>
-      )}
 
       <div className="card">
         <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
