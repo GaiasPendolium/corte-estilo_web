@@ -1669,6 +1669,10 @@ def estado_pago_estilista_dia(request):
                     'estilista_id': x.estilista_id,
                     'fecha': fecha.strftime('%Y-%m-%d'),
                     'estado': x.estado,
+                    'pago_efectivo': float(x.pago_efectivo or 0),
+                    'pago_nequi': float(x.pago_nequi or 0),
+                    'pago_daviplata': float(x.pago_daviplata or 0),
+                    'pago_otros': float(x.pago_otros or 0),
                     'notas': x.notas,
                 }
                 for x in EstadoPagoEstilistaDia.objects.filter(fecha=fecha)
@@ -1688,6 +1692,10 @@ def estado_pago_estilista_dia(request):
                         'estilista_id': h.estilista_id,
                         'fecha': fecha.strftime('%Y-%m-%d'),
                         'estado': h.estado_nuevo,
+                        'pago_efectivo': 0,
+                        'pago_nequi': 0,
+                        'pago_daviplata': 0,
+                        'pago_otros': 0,
                         'notas': h.notas,
                     }
                 )
@@ -1700,6 +1708,22 @@ def estado_pago_estilista_dia(request):
     fecha_fin_raw = request.data.get('fecha_fin')
     estado = (request.data.get('estado') or '').strip().lower()
     notas = request.data.get('notas')
+    pagos_detalle = request.data.get('pagos_detalle') or {}
+
+    def _to_decimal_non_negative(value):
+        try:
+            dec = Decimal(str(value or 0))
+        except Exception:
+            return Decimal(0)
+        if dec < 0:
+            return Decimal(0)
+        return dec
+
+    pago_efectivo = _to_decimal_non_negative(pagos_detalle.get('efectivo'))
+    pago_nequi = _to_decimal_non_negative(pagos_detalle.get('nequi'))
+    pago_daviplata = _to_decimal_non_negative(pagos_detalle.get('daviplata'))
+    pago_otros = _to_decimal_non_negative(pagos_detalle.get('otros'))
+    total_pagado = pago_efectivo + pago_nequi + pago_daviplata + pago_otros
 
     if not estilista_id or estado not in {'pendiente', 'cancelado'}:
         return Response(
@@ -1722,6 +1746,12 @@ def estado_pago_estilista_dia(request):
 
     if fecha_inicio_dt > fecha_fin_dt:
         return Response({'error': 'fecha_inicio no puede ser mayor que fecha_fin.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if total_pagado > 0 and fecha_inicio_dt != fecha_fin_dt:
+        return Response(
+            {'error': 'El detalle de pago por medio solo se puede registrar para un único día.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
     try:
         estilista = Estilista.objects.get(id=int(estilista_id))
@@ -1761,10 +1791,30 @@ def estado_pago_estilista_dia(request):
             try:
                 # Siempre actualizar/crear el registro, incluso si es 'pendiente'
                 # Así evitamos problemas de sincronización en el BI
+                neto_dia = _calcular_neto_dia_estilista(estilista, fecha_cursor)
+                max_pagable = neto_dia if neto_dia > 0 else Decimal(0)
+                if total_pagado > max_pagable:
+                    return Response(
+                        {
+                            'error': (
+                                f'La suma de pagos por medio (${float(total_pagado):.2f}) '
+                                f'no puede exceder el neto a pagar del día (${float(max_pagable):.2f}).'
+                            )
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
                 EstadoPagoEstilistaDia.objects.update_or_create(
                     estilista=estilista,
                     fecha=fecha_cursor,
-                    defaults={'estado': estado, 'notas': notas},
+                    defaults={
+                        'estado': estado,
+                        'pago_efectivo': pago_efectivo if estado == 'cancelado' else Decimal(0),
+                        'pago_nequi': pago_nequi if estado == 'cancelado' else Decimal(0),
+                        'pago_daviplata': pago_daviplata if estado == 'cancelado' else Decimal(0),
+                        'pago_otros': pago_otros if estado == 'cancelado' else Decimal(0),
+                        'notas': notas,
+                    },
                 )
             except (OperationalError, ProgrammingError):
                 tabla_diaria_no_disponible = True
@@ -1800,6 +1850,13 @@ def estado_pago_estilista_dia(request):
             'cambios_registrados': cambios_registrados,
             'historial_no_disponible': historial_no_disponible,
             'tabla_diaria_no_disponible': tabla_diaria_no_disponible,
+            'pagos_detalle': {
+                'efectivo': float(pago_efectivo),
+                'nequi': float(pago_nequi),
+                'daviplata': float(pago_daviplata),
+                'otros': float(pago_otros),
+                'total': float(total_pagado),
+            },
         }
     )
 

@@ -560,6 +560,10 @@ class EstadoPagoEstilistaDia(models.Model):
     )
     fecha = models.DateField(verbose_name='Fecha')
     estado = models.CharField(max_length=20, choices=ESTADOS, default='pendiente', verbose_name='Estado Pago')
+    pago_efectivo = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Pago efectivo')
+    pago_nequi = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Pago Nequi')
+    pago_daviplata = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Pago Daviplata')
+    pago_otros = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Pago otros')
     notas = models.CharField(max_length=255, blank=True, null=True, verbose_name='Notas')
     actualizado_en = models.DateTimeField(auto_now=True, verbose_name='Actualizado en')
 

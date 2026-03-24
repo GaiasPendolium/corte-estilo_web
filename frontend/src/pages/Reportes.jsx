@@ -74,6 +74,7 @@ const Reportes = () => {
   const [resumenDiario, setResumenDiario] = useState(null);
   const [mostrarDetalleAvanzado, setMostrarDetalleAvanzado] = useState(false);
   const [mostrarResumenDetalle, setMostrarResumenDetalle] = useState(false);
+  const [pagosPorEstilista, setPagosPorEstilista] = useState({});
   const [loading, setLoading] = useState(true);
 
   const resolveEstilistaIdFiltro = (dataStats) => {
@@ -100,6 +101,30 @@ const Reportes = () => {
     }
   };
 
+  const cargarEstadoPagoDia = async (dataStats = stats) => {
+    if (fechaInicio !== fechaFin) {
+      setPagosPorEstilista({});
+      return;
+    }
+
+    try {
+      const resp = await reportesService.getEstadoPagoEstilistaDia(fechaInicio);
+      const items = resp?.items || [];
+      const map = {};
+      items.forEach((x) => {
+        map[x.estilista_id] = {
+          efectivo: String(Number(x.pago_efectivo || 0) || ''),
+          nequi: String(Number(x.pago_nequi || 0) || ''),
+          daviplata: String(Number(x.pago_daviplata || 0) || ''),
+          otros: String(Number(x.pago_otros || 0) || ''),
+        };
+      });
+      setPagosPorEstilista(map);
+    } catch (error) {
+      setPagosPorEstilista({});
+    }
+  };
+
   const loadData = async () => {
     try {
       setLoading(true);
@@ -122,11 +147,13 @@ const Reportes = () => {
         deudas: consumoData?.deudas || [],
       });
       await cargarHistorialEstados(data);
+      await cargarEstadoPagoDia(data);
     } catch (error) {
       toast.error('Error al cargar reportes');
       setStats(null);
       setConsumoEmpleado({ resumen: [], deudas: [] });
       setHistorialEstados([]);
+      setPagosPorEstilista({});
     } finally {
       setLoading(false);
     }
@@ -323,8 +350,49 @@ const Reportes = () => {
   const pagaHoy = Number(kpis.pago_total_estilistas || 0);
   const leQuedaHoy = recibeHoy - pagaHoy;
 
-  const cambiarEstadoPagoDia = async (estilistaId, estado) => {
+  const actualizarPagoMedio = (estilistaId, medio, valor) => {
+    setPagosPorEstilista((prev) => ({
+      ...prev,
+      [estilistaId]: {
+        efectivo: prev[estilistaId]?.efectivo || '',
+        nequi: prev[estilistaId]?.nequi || '',
+        daviplata: prev[estilistaId]?.daviplata || '',
+        otros: prev[estilistaId]?.otros || '',
+        [medio]: String(valor || '').replace(/[^\d.]/g, ''),
+      },
+    }));
+  };
+
+  const totalPagosFila = (estilistaId) => {
+    const pagos = pagosPorEstilista[estilistaId] || {};
+    return ['efectivo', 'nequi', 'daviplata', 'otros']
+      .map((k) => Number(pagos[k] || 0))
+      .reduce((acc, val) => acc + (Number.isFinite(val) ? val : 0), 0);
+  };
+
+  const cambiarEstadoPagoDia = async (fila, estado) => {
+    const estilistaId = fila.estilista_id;
     if (estado === 'parcial' || estado === 'sin_movimiento') return;
+
+    const pagosDetalle = {
+      efectivo: Number(pagosPorEstilista[estilistaId]?.efectivo || 0),
+      nequi: Number(pagosPorEstilista[estilistaId]?.nequi || 0),
+      daviplata: Number(pagosPorEstilista[estilistaId]?.daviplata || 0),
+      otros: Number(pagosPorEstilista[estilistaId]?.otros || 0),
+    };
+    const totalPagos = Object.values(pagosDetalle).reduce((acc, val) => acc + (Number.isFinite(val) ? val : 0), 0);
+    const netoPendiente = Number(fila.pago_neto_pendiente ?? fila.pago_neto_estilista ?? 0);
+    const maxPagable = netoPendiente > 0 ? netoPendiente : 0;
+
+    if (estado === 'cancelado' && fechaInicio !== fechaFin && totalPagos > 0) {
+      toast.warning('Para registrar pagos por medio debes seleccionar un solo día (fecha inicio = fecha fin).');
+      return;
+    }
+
+    if (estado === 'cancelado' && totalPagos > maxPagable) {
+      toast.warning(`La suma por medios no puede exceder el neto a pagar (${formatMoney(maxPagable)}).`);
+      return;
+    }
 
     if (estado === 'cancelado') {
       const confirmar = window.confirm(
@@ -340,6 +408,7 @@ const Reportes = () => {
         fecha_inicio: fechaInicio,
         fecha_fin: fechaFin,
         estado,
+        pagos_detalle: estado === 'cancelado' ? pagosDetalle : { efectivo: 0, nequi: 0, daviplata: 0, otros: 0 },
       });
 
       await loadData();
@@ -351,12 +420,12 @@ const Reportes = () => {
     }
   };
 
-  const deshacerLiquidacionRango = async (estilistaId) => {
+  const deshacerLiquidacionRango = async (fila) => {
     const confirmar = window.confirm(
       `Se revertirá a PENDIENTE todo el rango ${fechaInicio} a ${fechaFin} para este estilista. ¿Deseas continuar?`
     );
     if (!confirmar) return;
-    await cambiarEstadoPagoDia(estilistaId, 'pendiente');
+    await cambiarEstadoPagoDia(fila, 'pendiente');
   };
 
   return (
@@ -603,6 +672,11 @@ const Reportes = () => {
                 <th className="px-6 py-3 text-left">Días trabajados</th>
                 <th className="px-6 py-3 text-left">Neto pendiente</th>
                 <th className="px-6 py-3 text-left">Estado saldo</th>
+                <th className="px-6 py-3 text-left">Pago efectivo</th>
+                <th className="px-6 py-3 text-left">Pago Nequi</th>
+                <th className="px-6 py-3 text-left">Pago Daviplata</th>
+                <th className="px-6 py-3 text-left">Pago otros</th>
+                <th className="px-6 py-3 text-left">Total pago</th>
                 <th className="px-6 py-3 text-left">Estado pago día</th>
               </tr>
             </thead>
@@ -648,10 +722,57 @@ const Reportes = () => {
                     {Number(s.pago_neto_pendiente || s.pago_neto_estilista || 0) === 0 && <span className="text-slate-600 font-medium">En cero</span>}
                   </td>
                   <td className="table-cell">
+                    <input
+                      className="input-field !py-2 !min-h-0"
+                      type="number"
+                      min="0"
+                      step="1"
+                      placeholder="0"
+                      value={pagosPorEstilista[s.estilista_id]?.efectivo || ''}
+                      onChange={(e) => actualizarPagoMedio(s.estilista_id, 'efectivo', e.target.value)}
+                    />
+                  </td>
+                  <td className="table-cell">
+                    <input
+                      className="input-field !py-2 !min-h-0"
+                      type="number"
+                      min="0"
+                      step="1"
+                      placeholder="0"
+                      value={pagosPorEstilista[s.estilista_id]?.nequi || ''}
+                      onChange={(e) => actualizarPagoMedio(s.estilista_id, 'nequi', e.target.value)}
+                    />
+                  </td>
+                  <td className="table-cell">
+                    <input
+                      className="input-field !py-2 !min-h-0"
+                      type="number"
+                      min="0"
+                      step="1"
+                      placeholder="0"
+                      value={pagosPorEstilista[s.estilista_id]?.daviplata || ''}
+                      onChange={(e) => actualizarPagoMedio(s.estilista_id, 'daviplata', e.target.value)}
+                    />
+                  </td>
+                  <td className="table-cell">
+                    <input
+                      className="input-field !py-2 !min-h-0"
+                      type="number"
+                      min="0"
+                      step="1"
+                      placeholder="0"
+                      value={pagosPorEstilista[s.estilista_id]?.otros || ''}
+                      onChange={(e) => actualizarPagoMedio(s.estilista_id, 'otros', e.target.value)}
+                    />
+                  </td>
+                  <td className="table-cell font-semibold text-slate-900">
+                    {formatMoney(totalPagosFila(s.estilista_id))}
+                  </td>
+                  <td className="table-cell">
                     <select
                       className="input-field !py-2 !min-h-0"
                       value={s.estado_pago_rango || s.estado_pago_dia || 'pendiente'}
-                      onChange={(e) => cambiarEstadoPagoDia(s.estilista_id, e.target.value)}
+                      onChange={(e) => cambiarEstadoPagoDia(s, e.target.value)}
                       disabled={!!savingEstadoByEstilista[s.estilista_id] || (s.estado_pago_rango || s.estado_pago_dia) === 'sin_movimiento'}
                     >
                       <option value="pendiente">Pendiente</option>
@@ -667,7 +788,7 @@ const Reportes = () => {
                     {Number(s.dias_cancelados_rango || 0) > 0 && (
                       <button
                         className="mt-2 btn-secondary !px-3 !py-1 text-xs"
-                        onClick={() => deshacerLiquidacionRango(s.estilista_id)}
+                        onClick={() => deshacerLiquidacionRango(s)}
                         disabled={!!savingEstadoByEstilista[s.estilista_id]}
                       >
                         Deshacer liquidación
