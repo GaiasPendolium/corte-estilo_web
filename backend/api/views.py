@@ -47,6 +47,74 @@ def _fecha_operativa_desde_dt(fecha_hora):
     return fecha_hora.date()
 
 
+def _calcular_neto_dia_estilista(estilista, fecha_dia):
+    servicios_dia = ServicioRealizado.objects.filter(
+        estado='finalizado',
+        estilista=estilista,
+        fecha_hora__date=fecha_dia,
+    )
+
+    base_servicio_dia = Decimal(servicios_dia.aggregate(total=Sum('precio_cobrado'))['total'] or 0)
+
+    adicionales_estilista_dia = ServicioRealizadoAdicional.objects.filter(
+        estilista=estilista,
+        servicio_realizado__estado='finalizado',
+        servicio_realizado__fecha_hora__date=fecha_dia,
+    )
+    adicionales_liquidos = Decimal(0)
+    for ad in adicionales_estilista_dia:
+        valor = Decimal(ad.valor_cobrado or 0)
+        pct = Decimal(ad.porcentaje_establecimiento or 0) if ad.aplica_porcentaje_establecimiento else Decimal(0)
+        if pct < 0:
+            pct = Decimal(0)
+        if pct > 100:
+            pct = Decimal(100)
+        adicionales_liquidos += valor - ((valor * pct) / Decimal(100))
+
+    base_servicio_dia += adicionales_liquidos
+
+    comision_producto_caja_dia = Decimal(0)
+    ventas_estilista_dia = VentaProducto.objects.select_related('producto').filter(
+        estilista=estilista,
+        tipo_operacion='venta',
+        fecha_hora__date=fecha_dia,
+    )
+    for v in ventas_estilista_dia:
+        pct = Decimal(v.producto.comision_estilista or 0)
+        if pct < 0:
+            pct = Decimal(0)
+        if pct > 100:
+            pct = Decimal(100)
+        comision_producto_caja_dia += (Decimal(v.total or 0) * pct) / Decimal(100)
+
+    comision_producto_servicio_dia = Decimal(0)
+    servicios_producto_adicional_dia = ServicioRealizado.objects.select_related('adicional_otro_producto').filter(
+        estado='finalizado',
+        adicional_otro_estilista=estilista,
+        fecha_hora__date=fecha_dia,
+        adicional_otro_producto__isnull=False,
+    )
+    for srv in servicios_producto_adicional_dia:
+        qty = Decimal(srv.adicional_otro_cantidad or 1)
+        precio_venta = Decimal(srv.adicional_otro_producto.precio_venta or 0)
+        pct = Decimal(srv.adicional_otro_producto.comision_estilista or 0)
+        if pct < 0:
+            pct = Decimal(0)
+        if pct > 100:
+            pct = Decimal(100)
+        comision_producto_servicio_dia += ((precio_venta * qty) * pct) / Decimal(100)
+
+    descuento_dia = Decimal(0)
+    if estilista.tipo_cobro_espacio == 'porcentaje_neto':
+        descuento_dia = (base_servicio_dia * Decimal(estilista.valor_cobro_espacio or 0)) / Decimal(100)
+        if descuento_dia > base_servicio_dia:
+            descuento_dia = base_servicio_dia
+    elif estilista.tipo_cobro_espacio == 'costo_fijo_neto':
+        descuento_dia = Decimal(estilista.valor_cobro_espacio or 0)
+
+    return (base_servicio_dia - descuento_dia) + comision_producto_caja_dia + comision_producto_servicio_dia
+
+
 class UsuarioViewSet(viewsets.ModelViewSet):
     """ViewSet para el modelo Usuario"""
     
@@ -1651,6 +1719,7 @@ def estado_pago_estilista_dia(request):
             )
 
             if estado_anterior != estado:
+                monto_liquidado = _calcular_neto_dia_estilista(estilista, fecha_cursor)
                 EstadoPagoEstilistaHistorial.objects.create(
                     estilista=estilista,
                     fecha=fecha_cursor,
@@ -1658,6 +1727,7 @@ def estado_pago_estilista_dia(request):
                     estado_nuevo=estado,
                     notas=notas,
                     usuario=usuario_obj,
+                    monto_liquidado=monto_liquidado,
                 )
                 cambios_registrados += 1
 
@@ -1728,6 +1798,7 @@ def estado_pago_estilista_historial(request):
                 'notas': x.notas,
                 'usuario_id': x.usuario_id,
                 'usuario_nombre': x.usuario.nombre_completo if x.usuario else 'Sistema',
+                'monto_liquidado': float(x.monto_liquidado or 0),
                 'fecha_cambio': timezone.localtime(x.fecha_cambio).strftime('%Y-%m-%d %H:%M:%S'),
             }
             for x in qs[:limit]

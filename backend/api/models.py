@@ -600,6 +600,7 @@ class EstadoPagoEstilistaHistorial(models.Model):
         related_name='cambios_estado_pago',
         verbose_name='Usuario'
     )
+    monto_liquidado = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Monto liquidado')
     fecha_cambio = models.DateTimeField(default=timezone.now, verbose_name='Fecha Cambio')
 
     class Meta:

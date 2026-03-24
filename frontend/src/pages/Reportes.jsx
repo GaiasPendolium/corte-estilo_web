@@ -779,8 +779,8 @@ const Reportes = () => {
       <div className="card">
         <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <h2 className="card-header mb-0">Historial de cambios de estado</h2>
-            <p className="text-sm text-gray-500">Auditoría para revisar quién cambió el estado y revertir errores si es necesario.</p>
+            <h2 className="card-header mb-0">Control de liquidaciones</h2>
+            <p className="text-sm text-gray-500">Auditoría para reclamos: estilista, valor liquidado, quién liquidó y fecha/hora.</p>
           </div>
           <button className="btn-secondary" onClick={() => cargarHistorialEstados()} disabled={loadingHistorial}>
             {loadingHistorial ? 'Cargando...' : 'Actualizar historial'}
@@ -793,26 +793,28 @@ const Reportes = () => {
               <tr>
                 <th className="px-6 py-3 text-left">Fecha</th>
                 <th className="px-6 py-3 text-left">Estilista</th>
-                <th className="px-6 py-3 text-left">Cambio</th>
-                <th className="px-6 py-3 text-left">Usuario</th>
-                <th className="px-6 py-3 text-left">Fecha cambio</th>
+                <th className="px-6 py-3 text-left">Valor liquidado</th>
+                <th className="px-6 py-3 text-left">Quién liquidó</th>
+                <th className="px-6 py-3 text-left">Fecha y hora</th>
+                <th className="px-6 py-3 text-left">Cambio estado</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {historialEstados.length === 0 && (
                 <tr>
-                  <td className="table-cell text-slate-500" colSpan={5}>No hay cambios registrados para este rango.</td>
+                  <td className="table-cell text-slate-500" colSpan={6}>No hay liquidaciones registradas para este rango.</td>
                 </tr>
               )}
               {historialEstados.map((h) => (
                 <tr key={h.id} className="hover:bg-gray-50">
                   <td className="table-cell">{h.fecha}</td>
                   <td className="table-cell font-medium text-slate-900">{h.estilista_nombre}</td>
+                  <td className="table-cell font-semibold text-emerald-700">{formatMoney(h.monto_liquidado)}</td>
+                  <td className="table-cell">{h.usuario_nombre || 'Sistema'}</td>
+                  <td className="table-cell">{h.fecha_cambio}</td>
                   <td className="table-cell">
                     <span className="text-slate-600">{h.estado_anterior}</span> {'->'} <span className="font-semibold text-slate-900">{h.estado_nuevo}</span>
                   </td>
-                  <td className="table-cell">{h.usuario_nombre || 'Sistema'}</td>
-                  <td className="table-cell">{h.fecha_cambio}</td>
                 </tr>
               ))}
             </tbody>
