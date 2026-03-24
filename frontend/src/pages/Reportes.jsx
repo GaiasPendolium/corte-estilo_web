@@ -67,7 +67,9 @@ const KpiCard = ({ title, value, hint, tone = 'slate' }) => {
 
 const Reportes = () => {
   const { user } = useAuthStore();
-  const puedeGestionarConsumo = (user?.rol || '').toLowerCase() !== 'recepcionista';
+  const rolActual = String(user?.rol || '').trim().toLowerCase();
+  const esRecepcion = rolActual === 'recepcion' || rolActual === 'recepcionista' || rolActual === 'recepción';
+  const puedeGestionarConsumo = !esRecepcion;
 
   const [periodo, setPeriodo] = useState('mes');
   const [fechaInicio, setFechaInicio] = useState(format(firstDay, 'yyyy-MM-dd'));
