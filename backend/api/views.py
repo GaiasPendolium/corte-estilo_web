@@ -1195,8 +1195,22 @@ def _calcular_datos_bi(request):
             for ep in EstadoPagoEstilistaDia.objects.filter(fecha__gte=fecha_inicio_dt, fecha__lte=fecha_fin_dt)
         }
     except (OperationalError, ProgrammingError):
-        # Permite mantener operativo BI mientras se aplica la migración en producción.
+        # Fallback: si no existe tabla diaria, usar último estado del historial por estilista/fecha.
         estados_pago_map = {}
+        try:
+            historial_qs = EstadoPagoEstilistaHistorial.objects.filter(
+                fecha__gte=fecha_inicio_dt,
+                fecha__lte=fecha_fin_dt,
+            ).order_by('estilista_id', 'fecha', '-fecha_cambio')
+            vistos = set()
+            for h in historial_qs:
+                key = (h.estilista_id, h.fecha)
+                if key in vistos:
+                    continue
+                estados_pago_map[key] = h.estado_nuevo
+                vistos.add(key)
+        except Exception:
+            estados_pago_map = {}
 
     for estilista in Estilista.objects.filter(activo=True):
         servicios_est = servicios_qs.filter(estilista=estilista)
@@ -1660,10 +1674,24 @@ def estado_pago_estilista_dia(request):
                 for x in EstadoPagoEstilistaDia.objects.filter(fecha=fecha)
             ]
         except (OperationalError, ProgrammingError):
-            return Response(
-                {'error': 'Debes aplicar migraciones del backend para habilitar estado por día.'},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
+            # Fallback: reconstruir estado del día usando el último historial por estilista.
+            historial_qs = EstadoPagoEstilistaHistorial.objects.select_related('estilista').filter(
+                fecha=fecha,
+            ).order_by('estilista_id', '-fecha_cambio')
+            items = []
+            vistos = set()
+            for h in historial_qs:
+                if h.estilista_id in vistos:
+                    continue
+                items.append(
+                    {
+                        'estilista_id': h.estilista_id,
+                        'fecha': fecha.strftime('%Y-%m-%d'),
+                        'estado': h.estado_nuevo,
+                        'notas': h.notas,
+                    }
+                )
+                vistos.add(h.estilista_id)
         return Response({'fecha': fecha.strftime('%Y-%m-%d'), 'items': items})
 
     estilista_id = request.data.get('estilista_id')
@@ -1702,47 +1730,64 @@ def estado_pago_estilista_dia(request):
 
     usuario_obj = request.user if isinstance(request.user, Usuario) else None
 
-    try:
-        fechas_procesadas = 0
-        cambios_registrados = 0
-        historial_no_disponible = False
-        fecha_cursor = fecha_inicio_dt
-        while fecha_cursor <= fecha_fin_dt:
-            actual = EstadoPagoEstilistaDia.objects.filter(estilista=estilista, fecha=fecha_cursor).first()
-            estado_anterior = actual.estado if actual else 'pendiente'
+    fechas_procesadas = 0
+    cambios_registrados = 0
+    historial_no_disponible = False
+    tabla_diaria_no_disponible = False
 
-            # Siempre actualizar/crear el registro, incluso si es 'pendiente'
-            # Así evitamos problemas de sincronización en el BI
-            EstadoPagoEstilistaDia.objects.update_or_create(
-                estilista=estilista,
-                fecha=fecha_cursor,
-                defaults={'estado': estado, 'notas': notas},
-            )
+    fecha_cursor = fecha_inicio_dt
+    while fecha_cursor <= fecha_fin_dt:
+        estado_anterior = 'pendiente'
 
-            if estado_anterior != estado:
-                try:
-                    monto_liquidado = _calcular_neto_dia_estilista(estilista, fecha_cursor)
-                    EstadoPagoEstilistaHistorial.objects.create(
-                        estilista=estilista,
-                        fecha=fecha_cursor,
-                        estado_anterior=estado_anterior,
-                        estado_nuevo=estado,
-                        notas=notas,
-                        usuario=usuario_obj,
-                        monto_liquidado=monto_liquidado,
-                    )
-                    cambios_registrados += 1
-                except (OperationalError, ProgrammingError):
-                    # No bloquear la operación diaria si falla la bitácora.
-                    historial_no_disponible = True
+        if not tabla_diaria_no_disponible:
+            try:
+                actual = EstadoPagoEstilistaDia.objects.filter(estilista=estilista, fecha=fecha_cursor).first()
+                estado_anterior = actual.estado if actual else 'pendiente'
+            except (OperationalError, ProgrammingError):
+                tabla_diaria_no_disponible = True
 
-            fechas_procesadas += 1
-            fecha_cursor += timedelta(days=1)
-    except (OperationalError, ProgrammingError):
-        return Response(
-            {'error': 'Debes aplicar migraciones del backend para habilitar estado por día.'},
-            status=status.HTTP_503_SERVICE_UNAVAILABLE,
-        )
+        if tabla_diaria_no_disponible:
+            try:
+                ultimo_hist = EstadoPagoEstilistaHistorial.objects.filter(
+                    estilista=estilista,
+                    fecha=fecha_cursor,
+                ).order_by('-fecha_cambio').first()
+                if ultimo_hist:
+                    estado_anterior = ultimo_hist.estado_nuevo
+            except Exception:
+                estado_anterior = 'pendiente'
+
+        if not tabla_diaria_no_disponible:
+            try:
+                # Siempre actualizar/crear el registro, incluso si es 'pendiente'
+                # Así evitamos problemas de sincronización en el BI
+                EstadoPagoEstilistaDia.objects.update_or_create(
+                    estilista=estilista,
+                    fecha=fecha_cursor,
+                    defaults={'estado': estado, 'notas': notas},
+                )
+            except (OperationalError, ProgrammingError):
+                tabla_diaria_no_disponible = True
+
+        if estado_anterior != estado:
+            try:
+                monto_liquidado = _calcular_neto_dia_estilista(estilista, fecha_cursor)
+                EstadoPagoEstilistaHistorial.objects.create(
+                    estilista=estilista,
+                    fecha=fecha_cursor,
+                    estado_anterior=estado_anterior,
+                    estado_nuevo=estado,
+                    notas=notas,
+                    usuario=usuario_obj,
+                    monto_liquidado=monto_liquidado,
+                )
+                cambios_registrados += 1
+            except (OperationalError, ProgrammingError):
+                # No bloquear la operación diaria si falla la bitácora.
+                historial_no_disponible = True
+
+        fechas_procesadas += 1
+        fecha_cursor += timedelta(days=1)
 
     return Response(
         {
@@ -1754,6 +1799,7 @@ def estado_pago_estilista_dia(request):
             'fechas_procesadas': fechas_procesadas,
             'cambios_registrados': cambios_registrados,
             'historial_no_disponible': historial_no_disponible,
+            'tabla_diaria_no_disponible': tabla_diaria_no_disponible,
         }
     )
 
