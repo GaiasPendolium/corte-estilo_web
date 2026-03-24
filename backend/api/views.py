@@ -1407,6 +1407,155 @@ def _calcular_datos_bi(request):
         )
         cursor += timedelta(days=1)
 
+    medios = ['efectivo', 'nequi', 'daviplata', 'otros']
+    ingresos_por_medio = {m: Decimal(0) for m in medios}
+    salidas_por_medio = {m: Decimal(0) for m in medios}
+
+    for v in ventas_pagadas_qs:
+        medio_v = (v.medio_pago or 'otros').strip().lower()
+        if medio_v not in ingresos_por_medio:
+            medio_v = 'otros'
+        ingresos_por_medio[medio_v] += Decimal(v.total or 0)
+
+    for ab in abonos_consumo_qs:
+        medio_ab = (ab.medio_pago or 'otros').strip().lower()
+        if medio_ab not in ingresos_por_medio:
+            medio_ab = 'otros'
+        ingresos_por_medio[medio_ab] += Decimal(ab.monto or 0)
+
+    for srv in servicios_qs:
+        medio_srv = (srv.medio_pago or 'otros').strip().lower()
+        if medio_srv not in ingresos_por_medio:
+            medio_srv = 'otros'
+        ingresos_por_medio[medio_srv] += Decimal(srv.precio_cobrado or 0) + Decimal(srv.valor_adicionales or 0)
+
+    try:
+        estados_pago_qs = EstadoPagoEstilistaDia.objects.filter(
+            fecha__gte=fecha_inicio_dt,
+            fecha__lte=fecha_fin_dt,
+        )
+        for ep in estados_pago_qs:
+            salidas_por_medio['efectivo'] += Decimal(ep.pago_efectivo or 0)
+            salidas_por_medio['nequi'] += Decimal(ep.pago_nequi or 0)
+            salidas_por_medio['daviplata'] += Decimal(ep.pago_daviplata or 0)
+            salidas_por_medio['otros'] += Decimal(ep.pago_otros or 0)
+    except (OperationalError, ProgrammingError):
+        salidas_por_medio = {m: Decimal(0) for m in medios}
+
+    cierre_medios_detalle = []
+    for m in medios:
+        ingreso_m = ingresos_por_medio.get(m, Decimal(0))
+        salida_m = salidas_por_medio.get(m, Decimal(0))
+        cierre_medios_detalle.append(
+            {
+                'medio_pago': m,
+                'ingresos': float(ingreso_m),
+                'salidas': float(salida_m),
+                'saldo': float(ingreso_m - salida_m),
+            }
+        )
+
+    tot_ingresos_medios = sum(ingresos_por_medio.values(), Decimal(0))
+    tot_salidas_medios = sum(salidas_por_medio.values(), Decimal(0))
+
+    adicionales_por_servicio = {}
+    for ad in adicionales_asignados_lista:
+        sid = int(ad.servicio_realizado_id)
+        valor = Decimal(ad.valor_cobrado or 0)
+        pct = Decimal(ad.porcentaje_establecimiento or 0) if ad.aplica_porcentaje_establecimiento else Decimal(0)
+        if pct < 0:
+            pct = Decimal(0)
+        if pct > 100:
+            pct = Decimal(100)
+        valor_est = (valor * pct) / Decimal(100)
+        valor_emp = valor - valor_est
+
+        if sid not in adicionales_por_servicio:
+            adicionales_por_servicio[sid] = {
+                'bruto': Decimal(0),
+                'empleado': Decimal(0),
+                'establecimiento': Decimal(0),
+                'cantidad': 0,
+            }
+        adicionales_por_servicio[sid]['bruto'] += valor
+        adicionales_por_servicio[sid]['empleado'] += valor_emp
+        adicionales_por_servicio[sid]['establecimiento'] += valor_est
+        adicionales_por_servicio[sid]['cantidad'] += 1
+
+    producto_adicional_por_servicio = {}
+    for srv in servicios_qs:
+        if not srv.adicional_otro_producto_id:
+            continue
+
+        qty = Decimal(srv.adicional_otro_cantidad or 1)
+        precio_venta = Decimal(srv.adicional_otro_producto.precio_venta or 0)
+        valor_bruto = precio_venta * qty
+        comision_emp = Decimal(0)
+        if srv.adicional_otro_estilista_id:
+            pct = Decimal(srv.adicional_otro_producto.comision_estilista or 0)
+            if pct < 0:
+                pct = Decimal(0)
+            if pct > 100:
+                pct = Decimal(100)
+            comision_emp = (valor_bruto * pct) / Decimal(100)
+
+        producto_adicional_por_servicio[int(srv.id)] = {
+            'bruto': valor_bruto,
+            'empleado': comision_emp,
+            'establecimiento': valor_bruto - comision_emp,
+        }
+
+    detalle_servicios_reparto = []
+    for srv in servicios_qs.order_by('-fecha_hora'):
+        sid = int(srv.id)
+        ad_info = adicionales_por_servicio.get(
+            sid,
+            {
+                'bruto': Decimal(0),
+                'empleado': Decimal(0),
+                'establecimiento': Decimal(0),
+                'cantidad': 0,
+            },
+        )
+        prod_info = producto_adicional_por_servicio.get(
+            sid,
+            {
+                'bruto': Decimal(0),
+                'empleado': Decimal(0),
+                'establecimiento': Decimal(0),
+            },
+        )
+
+        base_emp = Decimal(srv.monto_estilista or 0)
+        base_est = Decimal(srv.monto_establecimiento or 0)
+        total_cliente = Decimal(srv.precio_cobrado or 0) + Decimal(srv.valor_adicionales or 0)
+        total_empleado = base_emp + ad_info['empleado'] + prod_info['empleado']
+        total_establecimiento = base_est + ad_info['establecimiento'] + prod_info['establecimiento']
+
+        detalle_servicios_reparto.append(
+            {
+                'servicio_realizado_id': sid,
+                'numero_factura': srv.numero_factura,
+                'fecha_hora': timezone.localtime(srv.fecha_hora).strftime('%Y-%m-%d %H:%M') if srv.fecha_hora else None,
+                'medio_pago': srv.medio_pago or 'otros',
+                'servicio_nombre': srv.servicio.nombre if srv.servicio_id else '',
+                'cliente_nombre': srv.cliente.nombre if srv.cliente_id else '',
+                'estilista_nombre': srv.estilista.nombre if srv.estilista_id else '',
+                'total_cliente': float(total_cliente),
+                'base_empleado': float(base_emp),
+                'base_establecimiento': float(base_est),
+                'adicionales_cantidad': int(ad_info['cantidad']),
+                'adicionales_bruto': float(ad_info['bruto']),
+                'adicionales_empleado': float(ad_info['empleado']),
+                'adicionales_establecimiento': float(ad_info['establecimiento']),
+                'producto_adicional_bruto': float(prod_info['bruto']),
+                'producto_adicional_empleado': float(prod_info['empleado']),
+                'producto_adicional_establecimiento': float(prod_info['establecimiento']),
+                'total_empleado': float(total_empleado),
+                'total_establecimiento': float(total_establecimiento),
+            }
+        )
+
     return {
         'fecha_inicio': fecha_inicio,
         'fecha_fin': fecha_fin,
@@ -1470,6 +1619,15 @@ def _calcular_datos_bi(request):
             for x in top_productos
         ],
         'serie_diaria': series_diaria,
+        'cierre_medios': {
+            'detalle': cierre_medios_detalle,
+            'totales': {
+                'ingresos': float(tot_ingresos_medios),
+                'salidas': float(tot_salidas_medios),
+                'saldo': float(tot_ingresos_medios - tot_salidas_medios),
+            },
+        },
+        'detalle_servicios_reparto': detalle_servicios_reparto,
     }
 
 

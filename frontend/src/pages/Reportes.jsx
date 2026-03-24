@@ -82,7 +82,6 @@ const Reportes = () => {
   const [mostrarDetalleAvanzado, setMostrarDetalleAvanzado] = useState(false);
   const [mostrarResumenDetalle, setMostrarResumenDetalle] = useState(false);
   const [pagosPorEstilista, setPagosPorEstilista] = useState({});
-  const [ingresosPorMedio, setIngresosPorMedio] = useState({ efectivo: 0, nequi: 0, daviplata: 0, otros: 0 });
   const [loading, setLoading] = useState(true);
 
   const resolveEstilistaIdFiltro = (dataStats) => {
@@ -133,31 +132,6 @@ const Reportes = () => {
     }
   };
 
-  const cargarIngresosPorMedio = async () => {
-    try {
-      const baseParams = {
-        periodo,
-        fecha_inicio: fechaInicio,
-        fecha_fin: fechaFin,
-      };
-      const [efectivoResp, nequiResp, daviplataResp, otrosResp] = await Promise.all([
-        reportesService.getBIResumen({ ...baseParams, medio_pago: 'efectivo' }),
-        reportesService.getBIResumen({ ...baseParams, medio_pago: 'nequi' }),
-        reportesService.getBIResumen({ ...baseParams, medio_pago: 'daviplata' }),
-        reportesService.getBIResumen({ ...baseParams, medio_pago: 'otros' }),
-      ]);
-
-      setIngresosPorMedio({
-        efectivo: Number(efectivoResp?.kpis?.venta_neta_total || 0),
-        nequi: Number(nequiResp?.kpis?.venta_neta_total || 0),
-        daviplata: Number(daviplataResp?.kpis?.venta_neta_total || 0),
-        otros: Number(otrosResp?.kpis?.venta_neta_total || 0),
-      });
-    } catch (error) {
-      setIngresosPorMedio({ efectivo: 0, nequi: 0, daviplata: 0, otros: 0 });
-    }
-  };
-
   const loadData = async () => {
     try {
       setLoading(true);
@@ -181,14 +155,12 @@ const Reportes = () => {
       });
       await cargarHistorialEstados(data);
       await cargarEstadoPagoDia(data);
-      await cargarIngresosPorMedio();
     } catch (error) {
       toast.error('Error al cargar reportes');
       setStats(null);
       setConsumoEmpleado({ resumen: [], deudas: [] });
       setHistorialEstados([]);
       setPagosPorEstilista({});
-      setIngresosPorMedio({ efectivo: 0, nequi: 0, daviplata: 0, otros: 0 });
     } finally {
       setLoading(false);
     }
@@ -419,8 +391,26 @@ const Reportes = () => {
   }, [pagosPorEstilista]);
 
   const balancePorMedio = useMemo(() => {
+    const cierreBackend = Array.isArray(stats?.cierre_medios?.detalle) ? stats.cierre_medios.detalle : [];
+    if (cierreBackend.length > 0) {
+      const mapBackend = {};
+      cierreBackend.forEach((item) => {
+        mapBackend[item.medio_pago] = item;
+      });
+      return MEDIOS_PAGO_DETALLE.map((m) => {
+        const row = mapBackend[m.key] || {};
+        return {
+          key: m.key,
+          label: m.label,
+          ingreso: Number(row.ingresos || 0),
+          liquidado: Number(row.salidas || 0),
+          debeHaber: Number(row.saldo || 0),
+        };
+      });
+    }
+
     return MEDIOS_PAGO_DETALLE.map((m) => {
-      const ingreso = Number(ingresosPorMedio[m.key] || 0);
+      const ingreso = 0;
       const liquidado = Number(totalPagosPorMedio[m.key] || 0);
       return {
         key: m.key,
@@ -430,7 +420,25 @@ const Reportes = () => {
         debeHaber: ingreso - liquidado,
       };
     });
-  }, [ingresosPorMedio, totalPagosPorMedio]);
+  }, [stats, totalPagosPorMedio]);
+
+  const totalesBalancePorMedio = useMemo(() => {
+    return balancePorMedio.reduce(
+      (acc, item) => {
+        acc.ingresos += Number(item.ingreso || 0);
+        acc.salidas += Number(item.liquidado || 0);
+        acc.saldo += Number(item.debeHaber || 0);
+        return acc;
+      },
+      { ingresos: 0, salidas: 0, saldo: 0 }
+    );
+  }, [balancePorMedio]);
+
+  const detalleServiciosRepartoFiltrado = useMemo(() => {
+    const base = stats?.detalle_servicios_reparto || [];
+    if (estilistaFiltro === 'todos') return base;
+    return base.filter((item) => item.estilista_nombre === estilistaFiltro);
+  }, [stats, estilistaFiltro]);
 
   const cambiarEstadoPagoDia = async (fila, estado) => {
     const estilistaId = fila.estilista_id;
@@ -591,9 +599,7 @@ const Reportes = () => {
             <p className="text-sm text-slate-600">Debe haber = ingresos del medio - pagos liquidados por ese mismo medio.</p>
           </div>
           <div className="text-xs text-slate-600 rounded-xl bg-white px-3 py-2 border border-indigo-100">
-            {fechaInicio === fechaFin
-              ? `Día: ${fechaInicio}`
-              : `Rango ${fechaInicio} a ${fechaFin} (liquidado por medio visible solo para un día)`}
+            {`Rango ${fechaInicio} a ${fechaFin}`}
           </div>
         </div>
         <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
@@ -607,6 +613,69 @@ const Reportes = () => {
               <p className="text-xs text-slate-600">Liquidado: {formatMoney(m.liquidado)}</p>
             </div>
           ))}
+        </div>
+        <div className="mt-4 rounded-2xl border border-indigo-100 bg-white p-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div>
+            <p className="text-sm text-slate-500">Total ingresos</p>
+            <p className="text-xl font-bold text-slate-900">{formatMoney(totalesBalancePorMedio.ingresos)}</p>
+          </div>
+          <div>
+            <p className="text-sm text-slate-500">Total salidas</p>
+            <p className="text-xl font-bold text-slate-900">{formatMoney(totalesBalancePorMedio.salidas)}</p>
+          </div>
+          <div>
+            <p className="text-sm text-slate-500">Cierre final</p>
+            <p className={`text-xl font-bold ${totalesBalancePorMedio.saldo >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+              {formatMoney(totalesBalancePorMedio.saldo)}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h2 className="card-header mb-0">Detalle por servicio (reparto)</h2>
+            <p className="text-sm text-gray-500">Por cada servicio: cuánto queda para empleado y cuánto para establecimiento.</p>
+          </div>
+          <div className="rounded-2xl bg-slate-100 px-4 py-2 text-sm text-slate-700">
+            {estilistaFiltro === 'todos' ? 'Todos los estilistas' : estilistaFiltro}
+          </div>
+        </div>
+        <div className="mt-4 overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="table-header">
+              <tr>
+                <th className="px-6 py-3 text-left">Factura</th>
+                <th className="px-6 py-3 text-left">Fecha</th>
+                <th className="px-6 py-3 text-left">Servicio</th>
+                <th className="px-6 py-3 text-left">Empleado</th>
+                <th className="px-6 py-3 text-left">Medio pago</th>
+                <th className="px-6 py-3 text-left">Total cliente</th>
+                <th className="px-6 py-3 text-left">Total empleado</th>
+                <th className="px-6 py-3 text-left">Total establecimiento</th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {detalleServiciosRepartoFiltrado.length === 0 && (
+                <tr>
+                  <td className="table-cell text-slate-500" colSpan={8}>No hay servicios en el rango seleccionado.</td>
+                </tr>
+              )}
+              {detalleServiciosRepartoFiltrado.map((srv) => (
+                <tr key={srv.servicio_realizado_id} className="hover:bg-gray-50">
+                  <td className="table-cell">{srv.numero_factura || '-'}</td>
+                  <td className="table-cell">{srv.fecha_hora || '-'}</td>
+                  <td className="table-cell">{srv.servicio_nombre || '-'}</td>
+                  <td className="table-cell">{srv.estilista_nombre || '-'}</td>
+                  <td className="table-cell capitalize">{srv.medio_pago || '-'}</td>
+                  <td className="table-cell font-semibold text-slate-900">{formatMoney(srv.total_cliente)}</td>
+                  <td className="table-cell font-semibold text-blue-700">{formatMoney(srv.total_empleado)}</td>
+                  <td className="table-cell font-semibold text-emerald-700">{formatMoney(srv.total_establecimiento)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
 
