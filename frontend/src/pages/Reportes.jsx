@@ -81,6 +81,7 @@ const Reportes = () => {
   const [resumenDiario, setResumenDiario] = useState(null);
   const [mostrarDetalleAvanzado, setMostrarDetalleAvanzado] = useState(false);
   const [mostrarResumenDetalle, setMostrarResumenDetalle] = useState(false);
+  const [mostrarContenedorReparto, setMostrarContenedorReparto] = useState(false);
   const [pagosPorEstilista, setPagosPorEstilista] = useState({});
   const [loading, setLoading] = useState(true);
 
@@ -567,6 +568,12 @@ const Reportes = () => {
             <button className="btn-secondary" onClick={() => aplicarRangoRapido('mes')}>Mes</button>
             <button
               className="btn-secondary"
+              onClick={() => setMostrarContenedorReparto((prev) => !prev)}
+            >
+              {mostrarContenedorReparto ? 'Ocultar contenedor reparto' : 'Ver contenedor reparto'}
+            </button>
+            <button
+              className="btn-secondary"
               onClick={() => setMostrarDetalleAvanzado((prev) => !prev)}
             >
               {mostrarDetalleAvanzado ? 'Ocultar detalle avanzado' : 'Ver detalle avanzado'}
@@ -629,53 +636,6 @@ const Reportes = () => {
               {formatMoney(totalesBalancePorMedio.saldo)}
             </p>
           </div>
-        </div>
-      </div>
-
-      <div className="card">
-        <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <h2 className="card-header mb-0">Detalle por servicio (reparto)</h2>
-            <p className="text-sm text-gray-500">Por cada servicio: cuánto queda para empleado y cuánto para establecimiento.</p>
-          </div>
-          <div className="rounded-2xl bg-slate-100 px-4 py-2 text-sm text-slate-700">
-            {estilistaFiltro === 'todos' ? 'Todos los estilistas' : estilistaFiltro}
-          </div>
-        </div>
-        <div className="mt-4 overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="table-header">
-              <tr>
-                <th className="px-6 py-3 text-left">Factura</th>
-                <th className="px-6 py-3 text-left">Fecha</th>
-                <th className="px-6 py-3 text-left">Servicio</th>
-                <th className="px-6 py-3 text-left">Empleado</th>
-                <th className="px-6 py-3 text-left">Medio pago</th>
-                <th className="px-6 py-3 text-left">Total cliente</th>
-                <th className="px-6 py-3 text-left">Total empleado</th>
-                <th className="px-6 py-3 text-left">Total establecimiento</th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {detalleServiciosRepartoFiltrado.length === 0 && (
-                <tr>
-                  <td className="table-cell text-slate-500" colSpan={8}>No hay servicios en el rango seleccionado.</td>
-                </tr>
-              )}
-              {detalleServiciosRepartoFiltrado.map((srv) => (
-                <tr key={srv.servicio_realizado_id} className="hover:bg-gray-50">
-                  <td className="table-cell">{srv.numero_factura || '-'}</td>
-                  <td className="table-cell">{srv.fecha_hora || '-'}</td>
-                  <td className="table-cell">{srv.servicio_nombre || '-'}</td>
-                  <td className="table-cell">{srv.estilista_nombre || '-'}</td>
-                  <td className="table-cell capitalize">{srv.medio_pago || '-'}</td>
-                  <td className="table-cell font-semibold text-slate-900">{formatMoney(srv.total_cliente)}</td>
-                  <td className="table-cell font-semibold text-blue-700">{formatMoney(srv.total_empleado)}</td>
-                  <td className="table-cell font-semibold text-emerald-700">{formatMoney(srv.total_establecimiento)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
         </div>
       </div>
 
@@ -958,6 +918,55 @@ const Reportes = () => {
           </table>
         </div>
       </div>
+
+      {mostrarContenedorReparto && (
+        <div className="card border border-cyan-200 bg-cyan-50">
+          <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <h2 className="card-header mb-0">Contenedor detalle por servicio (reparto)</h2>
+              <p className="text-sm text-gray-500">Por cada servicio: cuánto queda para empleado y cuánto para establecimiento.</p>
+            </div>
+            <div className="rounded-2xl bg-white px-4 py-2 text-sm text-slate-700 border border-cyan-100">
+              {estilistaFiltro === 'todos' ? 'Todos los estilistas' : estilistaFiltro}
+            </div>
+          </div>
+          <div className="mt-4 overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="table-header">
+                <tr>
+                  <th className="px-6 py-3 text-left">Factura</th>
+                  <th className="px-6 py-3 text-left">Fecha</th>
+                  <th className="px-6 py-3 text-left">Servicio</th>
+                  <th className="px-6 py-3 text-left">Empleado</th>
+                  <th className="px-6 py-3 text-left">Medio pago</th>
+                  <th className="px-6 py-3 text-left">Total cliente</th>
+                  <th className="px-6 py-3 text-left">Total empleado</th>
+                  <th className="px-6 py-3 text-left">Total establecimiento</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {detalleServiciosRepartoFiltrado.length === 0 && (
+                  <tr>
+                    <td className="table-cell text-slate-500" colSpan={8}>No hay servicios en el rango seleccionado.</td>
+                  </tr>
+                )}
+                {detalleServiciosRepartoFiltrado.map((srv) => (
+                  <tr key={srv.servicio_realizado_id} className="hover:bg-gray-50">
+                    <td className="table-cell">{srv.numero_factura || '-'}</td>
+                    <td className="table-cell">{srv.fecha_hora || '-'}</td>
+                    <td className="table-cell">{srv.servicio_nombre || '-'}</td>
+                    <td className="table-cell">{srv.estilista_nombre || '-'}</td>
+                    <td className="table-cell capitalize">{srv.medio_pago || '-'}</td>
+                    <td className="table-cell font-semibold text-slate-900">{formatMoney(srv.total_cliente)}</td>
+                    <td className="table-cell font-semibold text-blue-700">{formatMoney(srv.total_empleado)}</td>
+                    <td className="table-cell font-semibold text-emerald-700">{formatMoney(srv.total_establecimiento)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       <div className="card">
         <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
