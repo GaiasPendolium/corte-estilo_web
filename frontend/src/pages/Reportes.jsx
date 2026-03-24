@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { format } from 'date-fns';
 import { reportesService } from '../services/api';
 import { toast } from 'react-toastify';
+import useAuthStore from '../store/authStore';
 import {
   Bar,
   BarChart,
@@ -65,6 +66,9 @@ const KpiCard = ({ title, value, hint, tone = 'slate' }) => {
 };
 
 const Reportes = () => {
+  const { user } = useAuthStore();
+  const puedeGestionarConsumo = (user?.rol || '').toLowerCase() !== 'recepcionista';
+
   const [periodo, setPeriodo] = useState('mes');
   const [fechaInicio, setFechaInicio] = useState(format(firstDay, 'yyyy-MM-dd'));
   const [fechaFin, setFechaFin] = useState(format(today, 'yyyy-MM-dd'));
@@ -136,19 +140,22 @@ const Reportes = () => {
   const loadData = async () => {
     try {
       setLoading(true);
-      const [data, consumoData] = await Promise.all([
-        reportesService.getBIResumen({
+      const data = await reportesService.getBIResumen({
+        periodo,
+        fecha_inicio: fechaInicio,
+        fecha_fin: fechaFin,
+        ...(medioPagoFiltro !== 'todos' ? { medio_pago: medioPagoFiltro } : {}),
+      });
+
+      let consumoData = { resumen: [], deudas: [] };
+      if (puedeGestionarConsumo) {
+        consumoData = await reportesService.getConsumoEmpleadoDeudas({
           periodo,
           fecha_inicio: fechaInicio,
           fecha_fin: fechaFin,
-          ...(medioPagoFiltro !== 'todos' ? { medio_pago: medioPagoFiltro } : {}),
-        }),
-        reportesService.getConsumoEmpleadoDeudas({
-          periodo,
-          fecha_inicio: fechaInicio,
-          fecha_fin: fechaFin,
-        }),
-      ]);
+        });
+      }
+
       setStats(data);
       setConsumoEmpleado({
         resumen: consumoData?.resumen || [],
@@ -968,6 +975,7 @@ const Reportes = () => {
         </div>
       )}
 
+      {puedeGestionarConsumo && (
       <div className="card">
         <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
           <div>
@@ -1061,6 +1069,7 @@ const Reportes = () => {
           </table>
         </div>
       </div>
+      )}
 
       <div className="card">
         <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">

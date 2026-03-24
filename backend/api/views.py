@@ -1649,6 +1649,9 @@ def _recalcular_estado_deuda(deuda):
 @permission_classes([IsAuthenticated])
 def reporte_consumo_empleado(request):
     """Resumen de deudas por consumo de empleado en un rango de fechas."""
+    if (getattr(request.user, 'rol', '') or '').lower() == 'recepcionista':
+        raise PermissionDenied('Recepción no tiene acceso a consumo de empleado y cartera.')
+
     fecha_inicio, fecha_fin = _resolver_rango_fechas(request)
     estilista_id = (request.query_params.get('estilista_id') or '').strip()
 
@@ -1729,6 +1732,9 @@ def reporte_consumo_empleado(request):
 @permission_classes([IsAuthenticated])
 def abonar_consumo_empleado(request):
     """Registra un abono y lo distribuye en las deudas pendientes más antiguas."""
+    if (getattr(request.user, 'rol', '') or '').lower() == 'recepcionista':
+        raise PermissionDenied('Recepción no tiene permiso para registrar abonos de cartera.')
+
     estilista_id = request.data.get('estilista_id')
     monto = request.data.get('monto')
     medio_pago = (request.data.get('medio_pago') or 'efectivo').strip().lower()
