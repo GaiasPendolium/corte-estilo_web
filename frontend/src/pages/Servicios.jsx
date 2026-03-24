@@ -389,12 +389,6 @@ const Servicios = () => {
     return Math.max(0, recibido - totalVentaOperacion);
   }, [ventaForm.medio_pago, ventaForm.valor_recibido, totalVentaOperacion]);
 
-  const devueltaServicio = useMemo(() => {
-    if (finalizacion.medio_pago !== 'efectivo') return 0;
-    const recibido = toPesoInt(finalizacion.valor_recibido || 0);
-    return Math.max(0, recibido - totalFinalizacion);
-  }, [finalizacion.medio_pago, finalizacion.valor_recibido, totalFinalizacion]);
-
   const esConsumoEmpleado = modoVista === 'consumo_empleado';
 
   const cantidadReservadaEnCarrito = (productoId) =>
@@ -420,6 +414,12 @@ const Servicios = () => {
 
     return precioBase + adicionalesServicios + totalProductoAdicional;
   }, [finalizacion]);
+
+  const devueltaServicio = useMemo(() => {
+    if (finalizacion.medio_pago !== 'efectivo') return 0;
+    const recibido = toPesoInt(finalizacion.valor_recibido || 0);
+    return Math.max(0, recibido - totalFinalizacion);
+  }, [finalizacion.medio_pago, finalizacion.valor_recibido, totalFinalizacion]);
 
   const validarPrecioMinimoProducto = (producto, precioUnitario) => {
     if (!producto) return true;
