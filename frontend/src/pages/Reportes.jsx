@@ -840,7 +840,7 @@ const Reportes = () => {
                   </td>
                   <td className="table-cell">
                     <input
-                      className="input-field !py-2 !min-h-0"
+                      className="input-field !py-3 !min-h-0 min-w-[130px] text-base font-medium"
                       type="number"
                       min="0"
                       step="1"
@@ -851,7 +851,7 @@ const Reportes = () => {
                   </td>
                   <td className="table-cell">
                     <input
-                      className="input-field !py-2 !min-h-0"
+                      className="input-field !py-3 !min-h-0 min-w-[130px] text-base font-medium"
                       type="number"
                       min="0"
                       step="1"
@@ -862,7 +862,7 @@ const Reportes = () => {
                   </td>
                   <td className="table-cell">
                     <input
-                      className="input-field !py-2 !min-h-0"
+                      className="input-field !py-3 !min-h-0 min-w-[130px] text-base font-medium"
                       type="number"
                       min="0"
                       step="1"
@@ -873,7 +873,7 @@ const Reportes = () => {
                   </td>
                   <td className="table-cell">
                     <input
-                      className="input-field !py-2 !min-h-0"
+                      className="input-field !py-3 !min-h-0 min-w-[130px] text-base font-medium"
                       type="number"
                       min="0"
                       step="1"
