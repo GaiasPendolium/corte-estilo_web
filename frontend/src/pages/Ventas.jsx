@@ -63,6 +63,13 @@ const formatServiceSearchLabel = (servicio) => {
   return [servicio.descripcion, servicio.nombre].filter(Boolean).join(' - ') || servicio.nombre || 'Servicio';
 };
 
+const formatCOP = (valor) =>
+  Number(valor || 0).toLocaleString('es-CO', {
+    style: 'currency',
+    currency: 'COP',
+    maximumFractionDigits: 0,
+  });
+
 const esServicioShampooNombre = (nombre) => String(nombre || '').toLowerCase().includes('shampoo');
 
 const Ventas = () => {
