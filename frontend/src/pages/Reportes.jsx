@@ -510,6 +510,8 @@ const Reportes = () => {
 
   return (
     <div className="space-y-6 fade-in">
+      {!esRecepcion && (
+      <>
       <section className="rounded-[28px] bg-[radial-gradient(circle_at_top_left,_rgba(59,130,246,0.18),_transparent_34%),linear-gradient(135deg,#0f172a_0%,#111827_35%,#1f2937_100%)] p-6 text-white shadow-2xl">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
@@ -757,6 +759,8 @@ const Reportes = () => {
           </div>
         </div>
       </div>
+      </>
+      )}
 
       <div className="card">
         <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
@@ -928,6 +932,8 @@ const Reportes = () => {
         </div>
       </div>
 
+      {!esRecepcion && (
+      <>
       {mostrarContenedorReparto && (
         <div className="card border border-cyan-200 bg-cyan-50">
           <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
@@ -1180,6 +1186,8 @@ const Reportes = () => {
           </div>
         )}
       </div>
+      )}
+      </>
       )}
     </div>
   );
