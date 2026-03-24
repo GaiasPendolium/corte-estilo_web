@@ -465,31 +465,35 @@ const Ventas = () => {
   };
 
   const editarServicio = (servicio) => {
-    const adicionales = Array.isArray(servicio.adicionales_asignados)
-      ? servicio.adicionales_asignados
-      : [];
+    try {
+      const adicionales = Array.isArray(servicio?.adicionales_asignados)
+        ? servicio.adicionales_asignados.filter((item) => item && typeof item === 'object')
+        : [];
 
-    setServicioEditando(servicio);
-    setServicioForm({
-      servicio: servicio.servicio ? String(servicio.servicio) : '',
-      estilista: servicio.estilista ? String(servicio.estilista) : '',
-      precio_cobrado: String(servicio.precio_cobrado || ''),
-      medio_pago: servicio.medio_pago || 'efectivo',
-      tiene_adicionales: Boolean(servicio.tiene_adicionales),
-      adicionales_servicio_items: adicionales.map((item, idx) => ({
-        _key: `${item.id || idx}`,
-        id: String(item.servicio_id || ''),
-        estilista_id: String(item.estilista_id || ''),
-        valor: String(item.valor || ''),
-        aplica_porcentaje_establecimiento: Boolean(item.aplica_porcentaje_establecimiento),
-        porcentaje_establecimiento: String(item.porcentaje_establecimiento ?? '30'),
-      })),
-      adicional_otro_producto: servicio.adicional_otro_producto ? String(servicio.adicional_otro_producto) : '',
-      adicional_otro_cantidad: String(servicio.adicional_otro_cantidad || 1),
-      adicional_otro_estilista: servicio.adicional_otro_estilista ? String(servicio.adicional_otro_estilista) : '',
-      notas: servicio.notas || '',
-    });
-    setShowServicioForm(true);
+      setServicioEditando(servicio);
+      setServicioForm({
+        servicio: servicio?.servicio ? String(servicio.servicio) : '',
+        estilista: servicio?.estilista ? String(servicio.estilista) : '',
+        precio_cobrado: String(servicio?.precio_cobrado || ''),
+        medio_pago: servicio?.medio_pago || 'efectivo',
+        tiene_adicionales: Boolean(servicio?.tiene_adicionales),
+        adicionales_servicio_items: adicionales.map((item, idx) => ({
+          _key: `${item.id || idx}`,
+          id: String(item.servicio_id || ''),
+          estilista_id: String(item.estilista_id || ''),
+          valor: String(item.valor || ''),
+          aplica_porcentaje_establecimiento: Boolean(item.aplica_porcentaje_establecimiento),
+          porcentaje_establecimiento: String(item.porcentaje_establecimiento ?? '30'),
+        })),
+        adicional_otro_producto: servicio?.adicional_otro_producto ? String(servicio.adicional_otro_producto) : '',
+        adicional_otro_cantidad: String(servicio?.adicional_otro_cantidad || 1),
+        adicional_otro_estilista: servicio?.adicional_otro_estilista ? String(servicio.adicional_otro_estilista) : '',
+        notas: servicio?.notas || '',
+      });
+      setShowServicioForm(true);
+    } catch (error) {
+      toast.error('No se pudo abrir la edición de esta factura. Intenta actualizar la lista.');
+    }
   };
 
   const actualizarAdicionalServicio = (idx, campo, valor) => {
