@@ -2363,21 +2363,7 @@ def liquidar_dia_v2(request):
     # Parte del abono que intenta cubrir deuda arrastrada
     abono_puesto_extra = max(abono_puesto - descuento, Decimal(0))
 
-    # 2) Tope combinado para el día actual: liquidación + puesto del día <= ganancias
-    suma_dia = total_pagado + abono_puesto_dia
-    if suma_dia > ganancias:
-        return Response({
-            'error': (
-                f'Liquidación (${float(total_pagado):.2f}) + puesto del día (${float(abono_puesto_dia):.2f}) '
-                f'no puede superar el valor total empleado (${float(ganancias):.2f}).'
-            ),
-            'ganancias_totales': float(ganancias),
-            'liquidacion': float(total_pagado),
-            'abono_puesto_dia': float(abono_puesto_dia),
-            'suma_dia': float(suma_dia),
-        }, status=status.HTTP_400_BAD_REQUEST)
-
-    # 3) El abono extra solo es válido si existe deuda anterior
+    # 2) El abono extra solo es válido si existe deuda anterior
     if abono_puesto_extra > 0 and deuda_anterior_puesto <= 0:
         return Response({
             'error': (
