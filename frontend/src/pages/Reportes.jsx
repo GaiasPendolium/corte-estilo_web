@@ -158,6 +158,15 @@ const Reportes = () => {
       setPeriodo('personalizado');
       return;
     }
+    if (tipo === 'ayer') {
+      const ayer = new Date(base);
+      ayer.setDate(base.getDate() - 1);
+      const value = format(ayer, 'yyyy-MM-dd');
+      setFechaInicio(value);
+      setFechaFin(value);
+      setPeriodo('personalizado');
+      return;
+    }
     if (tipo === '7dias') {
       const inicio = new Date(base);
       inicio.setDate(base.getDate() - 6);
@@ -799,6 +808,7 @@ const Reportes = () => {
             </select>
           </div>
           <div className="flex items-end gap-2 md:col-span-2">
+            <button className="btn-secondary" onClick={() => aplicarRangoRapido('ayer')}>Ayer</button>
             <button className="btn-secondary" onClick={() => aplicarRangoRapido('hoy')}>Hoy</button>
             <button className="btn-secondary" onClick={() => aplicarRangoRapido('7dias')}>7 dias</button>
             <button className="btn-secondary" onClick={() => aplicarRangoRapido('mes')}>Mes</button>
