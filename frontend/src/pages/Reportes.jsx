@@ -512,7 +512,6 @@ const aplicarEstadoLiquidacion = async (fila) => {
                 <th className="px-4 py-3 text-left">Pago otros</th>
                 <th className="px-4 py-3 text-left">Abono puesto</th>
                 <th className="px-4 py-3 text-left">Medio abono puesto</th>
-                <th className="px-4 py-3 text-left">Estado</th>
                 <th className="px-4 py-3 text-left">Acciones</th>
               </tr>
             </thead>
@@ -547,24 +546,6 @@ const aplicarEstadoLiquidacion = async (fila) => {
                   : (item.estado_pago_rango || item.estado_pago_dia || 'pendiente');
                 // Saldo pendiente solo se muestra si el estado es "debe"
                 const saldoPuestePendiente = (estadoActual === 'debe') ? (deudaPuestoRango + descuentoVisible) : 0;
-                const estadoLabel = estadoActual === 'cancelado'
-                  ? 'Liquidado'
-                  : estadoActual === 'debe'
-                    ? 'Debe'
-                    : estadoActual === 'parcial'
-                      ? 'Parcial'
-                      : estadoActual === 'sin_movimiento'
-                        ? 'Sin movimiento'
-                        : 'Pendiente';
-                const estadoClasses = estadoActual === 'cancelado'
-                  ? 'bg-emerald-100 text-emerald-800'
-                  : estadoActual === 'debe'
-                    ? 'bg-rose-100 text-rose-800'
-                    : estadoActual === 'parcial'
-                      ? 'bg-sky-100 text-sky-800'
-                      : estadoActual === 'sin_movimiento'
-                        ? 'bg-slate-100 text-slate-700'
-                        : 'bg-amber-100 text-amber-800';
                 const valorALiquidarVisible = estadoActual === 'cancelado' ? 0 : netoGanado;
                 const descuentoPuestoValidado = estadoActual === 'cancelado' ? 0 : descuentoVisible;
                 const deudaPuestoVisible = deudaPuestoRango;
@@ -661,11 +642,6 @@ const aplicarEstadoLiquidacion = async (fila) => {
                           <option key={m.value} value={m.value}>{m.label}</option>
                         ))}
                       </select>
-                    </td>
-                    <td className="table-cell">
-                      <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${estadoClasses}`}>
-                        {estadoLabel}
-                      </span>
                     </td>
                     <td className="table-cell">
                       <div className="flex flex-wrap gap-2">
