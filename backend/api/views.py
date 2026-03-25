@@ -2695,6 +2695,87 @@ def estado_pago_estilista_historial(request):
     )
 
 
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def eliminar_estado_pago_historial(request, historial_id):
+    # Solo administrador puede eliminar registros del historial.
+    if getattr(request.user, 'rol', None) != 'administrador':
+        return Response(
+            {'error': 'Solo el administrador puede eliminar registros del historial.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    try:
+        historial = EstadoPagoEstilistaHistorial.objects.filter(id=historial_id).first()
+        if not historial:
+            return Response({'error': 'Registro de historial no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+
+        estilista_id = historial.estilista_id
+        fecha = historial.fecha
+
+        with transaction.atomic():
+            eliminado_historial = EstadoPagoEstilistaHistorial.objects.filter(id=historial_id).delete()[0]
+            eliminado_diaria = EstadoPagoEstilistaDia.objects.filter(
+                estilista_id=estilista_id,
+                fecha=fecha,
+            ).delete()[0]
+
+        return Response(
+            {
+                'success': True,
+                'historial_id': historial_id,
+                'estilista_id': estilista_id,
+                'fecha': fecha.strftime('%Y-%m-%d') if hasattr(fecha, 'strftime') else str(fecha),
+                'eliminado_historial': int(eliminado_historial),
+                'eliminado_diaria': int(eliminado_diaria),
+            }
+        )
+    except (OperationalError, ProgrammingError):
+        # Compatibilidad con posibles desfaces de esquema.
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT estilista_id, fecha FROM estado_pago_estilista_historial WHERE id=%s",
+                    [historial_id],
+                )
+                row = cursor.fetchone()
+                if not row:
+                    return Response({'error': 'Registro de historial no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+
+                estilista_id = row[0]
+                fecha = row[1]
+
+                cursor.execute("DELETE FROM estado_pago_estilista_historial WHERE id=%s", [historial_id])
+                eliminado_historial = cursor.rowcount
+
+                cursor.execute(
+                    "DELETE FROM estado_pago_estilista_dia WHERE estilista_id=%s AND fecha=%s",
+                    [estilista_id, fecha],
+                )
+                eliminado_diaria = cursor.rowcount
+
+            return Response(
+                {
+                    'success': True,
+                    'historial_id': historial_id,
+                    'estilista_id': estilista_id,
+                    'fecha': str(fecha),
+                    'eliminado_historial': int(eliminado_historial),
+                    'eliminado_diaria': int(eliminado_diaria),
+                }
+            )
+        except Exception as e:
+            return Response(
+                {'error': f'No se pudo eliminar el registro del historial: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+    except Exception as e:
+        return Response(
+            {'error': f'No se pudo eliminar el registro del historial: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+
 @api_view(['GET'])
 def bi_desglose_estilista_debug(request):
     """

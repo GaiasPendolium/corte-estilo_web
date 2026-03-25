@@ -2,6 +2,7 @@
 import { format } from 'date-fns';
 import { reportesService } from '../services/api';
 import { toast } from 'react-toastify';
+import useAuthStore from '../store/authStore';
 
 const today = new Date();
 const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
@@ -49,6 +50,8 @@ const KpiCard = ({ title, value, hint, tone = 'slate' }) => {
 };
 
 const Reportes = () => {
+  const { user } = useAuthStore();
+  const esAdministrador = String(user?.rol || '').toLowerCase() === 'administrador';
   const [moduloActivo, setModuloActivo] = useState('cierre');
   const [periodo, setPeriodo] = useState('mes');
   const [fechaInicio, setFechaInicio] = useState(format(firstDay, 'yyyy-MM-dd'));
@@ -251,6 +254,27 @@ const aplicarEstadoLiquidacion = async (fila) => {
     setSavingEstadoByEstilista((prev) => ({ ...prev, [estilistaId]: false }));
   }
 };
+
+  const eliminarRegistroHistorial = async (registro) => {
+    if (!esAdministrador) {
+      toast.error('Solo el administrador puede eliminar registros del historial');
+      return;
+    }
+
+    const ok = window.confirm(
+      `Se eliminará el historial de ${registro.estilista_nombre || 'empleado'} del día ${registro.fecha || '-'} y su registro diario asociado. ¿Deseas continuar?`
+    );
+    if (!ok) return;
+
+    try {
+      await reportesService.deleteEstadoPagoHistorial(registro.id);
+      toast.success('Registro eliminado correctamente');
+      await cargarTodo();
+    } catch (err) {
+      const msg = err?.response?.data?.error || 'No se pudo eliminar el registro del historial';
+      toast.error(msg);
+    }
+  };
 
   const renderModuloCierreCaja = () => (
     <div className="space-y-6">
@@ -663,12 +687,13 @@ const aplicarEstadoLiquidacion = async (fila) => {
                 <th className="px-4 py-3 text-left">Abono puesto</th>
                 <th className="px-4 py-3 text-left">Pendiente puesto</th>
                 <th className="px-4 py-3 text-left">Usuario</th>
+                {esAdministrador && <th className="px-4 py-3 text-left">Acciones</th>}
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {historialEstados.length === 0 && (
                 <tr>
-                  <td className="table-cell text-slate-500" colSpan={7}>No hay liquidaciones registradas en el rango.</td>
+                  <td className="table-cell text-slate-500" colSpan={esAdministrador ? 8 : 7}>No hay liquidaciones registradas en el rango.</td>
                 </tr>
               )}
               {historialEstados.map((h) => {
@@ -684,6 +709,17 @@ const aplicarEstadoLiquidacion = async (fila) => {
                     <td className="table-cell text-sky-700 font-semibold">{formatMoney(h.abono_puesto)}</td>
                     <td className="table-cell text-amber-700 font-semibold">{formatMoney(pendientePuesto)}</td>
                     <td className="table-cell">{h.usuario_nombre || 'Sistema'}</td>
+                    {esAdministrador && (
+                      <td className="table-cell">
+                        <button
+                          className="btn-secondary !px-3 !py-1.5 !text-xs"
+                          onClick={() => eliminarRegistroHistorial(h)}
+                          title="Eliminar historial y registro diario"
+                        >
+                          Eliminar
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 );
               })}
