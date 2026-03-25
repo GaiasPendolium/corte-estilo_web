@@ -249,6 +249,13 @@ const aplicarEstadoLiquidacion = async (fila) => {
     
     const msgDeuda = d_ant > 0 ? ` (${formatMoney(d_ant)} anterior + ${formatMoney(d)} hoy)` : '';
     toast.success(`✓ ${resultado.estilista.nombre}: Gan ${formatMoney(g)} - Puesto ${formatMoney(d_tot)}${msgDeuda} - Pagado ${formatMoney(p)} - Saldo ${formatMoney(s)}`);
+    
+    // Actualizar estado localmente de inmediato para UI responsiva
+    setEstadoDiaPorEstilista((prev) => ({
+      ...prev,
+      [estilistaId]: resultado.estado,
+    }));
+    
     await cargarTodo();
   } catch (error) {
     const msg = error?.response?.data?.error || error?.message || 'No se pudo procesar la liquidación.';
