@@ -3294,7 +3294,7 @@ def reporte_cierre_caja(request):
 
     detalle_productos.sort(key=lambda x: x.get('fecha_hora') or '', reverse=True)
 
-    # Detalle de ingresos por espacio (pagos registrados por medio cuando el estilista debe al espacio).
+    # Detalle de ingresos por espacio (abonos realizados por empleados al espacio).
     detalle_espacio = []
     ingresos_espacios = Decimal(0)
     try:
@@ -3304,22 +3304,9 @@ def reporte_cierre_caja(request):
         ).order_by('-fecha', 'estilista__nombre')
 
         for ep in estado_pago_qs:
-            pagos = {
-                'efectivo': Decimal(ep.pago_efectivo or 0),
-                'nequi': Decimal(ep.pago_nequi or 0),
-                'daviplata': Decimal(ep.pago_daviplata or 0),
-                'otros': Decimal(ep.pago_otros or 0),
-            }
-            valor_total = sum(pagos.values(), Decimal(0))
-            if valor_total <= 0:
-                continue
-
-            # Para filtrar por medio de pago específico
-            if medio_pago and medio_pago != 'todos':
-                valor_recibido = Decimal(pagos.get(medio_pago, 0))
-            else:
-                valor_recibido = valor_total
-
+            # El ingreso por espacio es el abono_puesto (lo que el empleado pagó al espacio)
+            valor_recibido = Decimal(ep.abono_puesto or 0)
+            
             if valor_recibido <= 0:
                 continue
 
@@ -3329,11 +3316,6 @@ def reporte_cierre_caja(request):
                     'fecha': ep.fecha.strftime('%Y-%m-%d'),
                     'estilista_id': ep.estilista_id,
                     'estilista_nombre': ep.estilista.nombre if ep.estilista_id else '',
-                    'medio_pago': medio_pago if (medio_pago and medio_pago != 'todos') else 'mixto',
-                    'pago_efectivo': float(pagos['efectivo']),
-                    'pago_nequi': float(pagos['nequi']),
-                    'pago_daviplata': float(pagos['daviplata']),
-                    'pago_otros': float(pagos['otros']),
                     'valor_pagado': float(valor_recibido),
                 }
             )
