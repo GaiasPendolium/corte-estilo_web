@@ -21,6 +21,13 @@ const MEDIOS_PAGO = [
   { value: 'otros', label: 'Otros' },
 ];
 
+const MEDIOS_PAGO_OPERACION = [
+  { value: 'efectivo', label: 'Efectivo' },
+  { value: 'nequi', label: 'Nequi' },
+  { value: 'daviplata', label: 'Daviplata' },
+  { value: 'otros', label: 'Otros' },
+];
+
 const moneyFormatter = new Intl.NumberFormat('es-CO', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 const formatMoney = (value) => `$${moneyFormatter.format(Number(value || 0))}`;
 
@@ -52,6 +59,12 @@ const Reportes = () => {
   const [cierreCaja, setCierreCaja] = useState(null);
   const [biData, setBiData] = useState(null);
   const [carteraData, setCarteraData] = useState({ resumen: [], deudas: [] });
+  const [pagosPorEstilista, setPagosPorEstilista] = useState({});
+  const [abonoPuestoPorEstilista, setAbonoPuestoPorEstilista] = useState({});
+  const [medioAbonoPuestoPorEstilista, setMedioAbonoPuestoPorEstilista] = useState({});
+  const [savingEstadoByEstilista, setSavingEstadoByEstilista] = useState({});
+  const [historialEstados, setHistorialEstados] = useState([]);
+  const [loadingHistorial, setLoadingHistorial] = useState(false);
 
   const paramsBase = useMemo(
     () => ({
@@ -82,6 +95,40 @@ const Reportes = () => {
         resumen: carteraResp?.resumen || [],
         deudas: carteraResp?.deudas || [],
       });
+
+      try {
+        setLoadingHistorial(true);
+        const hist = await reportesService.getEstadoPagoHistorial({
+          fecha_inicio: fechaInicio,
+          fecha_fin: fechaFin,
+          limit: 200,
+        });
+        setHistorialEstados(hist?.items || []);
+      } catch (err) {
+        setHistorialEstados([]);
+      } finally {
+        setLoadingHistorial(false);
+      }
+
+      if (fechaInicio === fechaFin) {
+        try {
+          const estadoDia = await reportesService.getEstadoPagoEstilistaDia(fechaInicio);
+          const map = {};
+          (estadoDia?.items || []).forEach((x) => {
+            map[x.estilista_id] = {
+              efectivo: String(Number(x.pago_efectivo || 0) || ''),
+              nequi: String(Number(x.pago_nequi || 0) || ''),
+              daviplata: String(Number(x.pago_daviplata || 0) || ''),
+              otros: String(Number(x.pago_otros || 0) || ''),
+            };
+          });
+          setPagosPorEstilista(map);
+        } catch (err) {
+          setPagosPorEstilista({});
+        }
+      } else {
+        setPagosPorEstilista({});
+      }
     } catch (error) {
       toast.error('No se pudieron cargar los reportes');
       setCierreCaja(null);
@@ -125,6 +172,84 @@ const Reportes = () => {
   const productos = cierreCaja?.productos || { detalle: [] };
   const espacios = cierreCaja?.espacios || { detalle: [] };
   const serviciosEst = cierreCaja?.servicios_establecimiento || { detalle: [] };
+
+  const actualizarPagoMedio = (estilistaId, medio, valor) => {
+    const limpio = String(valor || '').replace(/[^\d.]/g, '');
+    setPagosPorEstilista((prev) => ({
+      ...prev,
+      [estilistaId]: {
+        efectivo: prev[estilistaId]?.efectivo || '',
+        nequi: prev[estilistaId]?.nequi || '',
+        daviplata: prev[estilistaId]?.daviplata || '',
+        otros: prev[estilistaId]?.otros || '',
+        [medio]: limpio,
+      },
+    }));
+  };
+
+  const totalPagoMedios = (estilistaId) => {
+    const pagos = pagosPorEstilista[estilistaId] || {};
+    return ['efectivo', 'nequi', 'daviplata', 'otros']
+      .map((k) => Number(pagos[k] || 0))
+      .reduce((acc, val) => acc + (Number.isFinite(val) ? val : 0), 0);
+  };
+
+  const aplicarEstadoLiquidacion = async (fila, estado) => {
+    const estilistaId = fila.estilista_id;
+    const netoPendiente = Number(fila.pago_neto_pendiente || 0);
+    const limite = Math.abs(netoPendiente);
+    const esDiaUnico = fechaInicio === fechaFin;
+
+    const pagos = {
+      efectivo: Number(pagosPorEstilista[estilistaId]?.efectivo || 0),
+      nequi: Number(pagosPorEstilista[estilistaId]?.nequi || 0),
+      daviplata: Number(pagosPorEstilista[estilistaId]?.daviplata || 0),
+      otros: Number(pagosPorEstilista[estilistaId]?.otros || 0),
+    };
+    const totalPagos = Object.values(pagos).reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0);
+
+    const abonoPuesto = Number(abonoPuestoPorEstilista[estilistaId] || 0);
+    const medioAbonoPuesto = medioAbonoPuestoPorEstilista[estilistaId] || 'efectivo';
+
+    let pagosDetalle = { efectivo: 0, nequi: 0, daviplata: 0, otros: 0 };
+    if (estado === 'cancelado') {
+      if (!esDiaUnico && (totalPagos > 0 || abonoPuesto > 0)) {
+        toast.warning('Para registrar pago por medio o abono de puesto debes seleccionar un solo día.');
+        return;
+      }
+
+      if (netoPendiente < 0) {
+        const valorAbono = Math.max(0, Math.min(abonoPuesto, limite));
+        pagosDetalle[medioAbonoPuesto] = valorAbono;
+      } else {
+        pagosDetalle = pagos;
+      }
+
+      const totalRegistrado = Object.values(pagosDetalle).reduce((a, b) => a + Number(b || 0), 0);
+      if (totalRegistrado > limite) {
+        toast.warning(`El valor registrado no puede exceder ${formatMoney(limite)}.`);
+        return;
+      }
+    }
+
+    setSavingEstadoByEstilista((prev) => ({ ...prev, [estilistaId]: true }));
+    try {
+      await reportesService.setEstadoPagoEstilistaDia({
+        estilista_id: estilistaId,
+        fecha_inicio: fechaInicio,
+        fecha_fin: fechaFin,
+        estado,
+        pagos_detalle: pagosDetalle,
+      });
+
+      toast.success(estado === 'cancelado' ? 'Liquidacion guardada.' : 'Liquidacion revertida a pendiente.');
+      await cargarTodo();
+    } catch (error) {
+      toast.error(error?.response?.data?.error || 'No se pudo actualizar la liquidacion.');
+    } finally {
+      setSavingEstadoByEstilista((prev) => ({ ...prev, [estilistaId]: false }));
+    }
+  };
 
   const renderModuloCierreCaja = () => (
     <div className="space-y-6">
@@ -326,39 +451,207 @@ const Reportes = () => {
   );
 
   const renderModuloLiquidacion = () => (
-    <div className="card">
-      <h2 className="card-header">Liquidacion Empleado</h2>
-      <p className="text-sm text-slate-600">Base para pagar, comisiones, cobro de espacio y neto pendiente por empleado.</p>
-      <div className="mt-4 overflow-x-auto">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="table-header">
-            <tr>
-              <th className="px-4 py-3 text-left">Empleado</th>
-              <th className="px-4 py-3 text-left">Base servicio</th>
-              <th className="px-4 py-3 text-left">Comision producto</th>
-              <th className="px-4 py-3 text-left">Cobro espacio</th>
-              <th className="px-4 py-3 text-left">Neto pendiente</th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {(biData?.estilistas || []).length === 0 && (
+    <div className="space-y-6">
+      <div className="card">
+        <h2 className="card-header">Liquidacion Empleado</h2>
+        <p className="text-sm text-slate-600">
+          Valor total, comisiones, descuento por puesto, liquidacion por medio, estado y deshacer.
+        </p>
+        <p className="text-xs text-slate-500 mt-1">
+          Para registrar pagos por medio o abono de puesto, usa un unico dia (fecha inicio = fecha fin).
+        </p>
+
+        <div className="mt-4 overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="table-header">
               <tr>
-                <td className="table-cell text-slate-500" colSpan={5}>No hay liquidacion para el rango seleccionado.</td>
+                <th className="px-4 py-3 text-left">Empleado</th>
+                <th className="px-4 py-3 text-left">Valor total empleado</th>
+                <th className="px-4 py-3 text-left">Comisiones</th>
+                <th className="px-4 py-3 text-left">Descuento puesto</th>
+                <th className="px-4 py-3 text-left">Neto pendiente</th>
+                <th className="px-4 py-3 text-left">Deuda puesto (rango)</th>
+                <th className="px-4 py-3 text-left">Pago efectivo</th>
+                <th className="px-4 py-3 text-left">Pago Nequi</th>
+                <th className="px-4 py-3 text-left">Pago Daviplata</th>
+                <th className="px-4 py-3 text-left">Pago otros</th>
+                <th className="px-4 py-3 text-left">Abono puesto</th>
+                <th className="px-4 py-3 text-left">Medio abono puesto</th>
+                <th className="px-4 py-3 text-left">Estado</th>
+                <th className="px-4 py-3 text-left">Acciones</th>
               </tr>
-            )}
-            {(biData?.estilistas || []).map((item) => (
-              <tr key={item.estilista_id}>
-                <td className="table-cell font-medium">{item.estilista_nombre}</td>
-                <td className="table-cell">{formatMoney(item.ganancias_servicios)}</td>
-                <td className="table-cell">{formatMoney(item.comision_ventas_producto_caja)}</td>
-                <td className="table-cell">{formatMoney(item.descuento_espacio)}</td>
-                <td className={`table-cell font-semibold ${Number(item.pago_neto_pendiente || 0) >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                  {formatMoney(item.pago_neto_pendiente)}
-                </td>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {(biData?.estilistas || []).length === 0 && (
+                <tr>
+                  <td className="table-cell text-slate-500" colSpan={14}>No hay liquidacion para el rango seleccionado.</td>
+                </tr>
+              )}
+              {(biData?.estilistas || []).map((item) => {
+                const deudaPuestoRango = Math.max(0, -Number(item.pago_neto_periodo || 0));
+                const estadoActual = item.estado_pago_rango || item.estado_pago_dia || 'pendiente';
+                return (
+                  <tr key={item.estilista_id}>
+                    <td className="table-cell font-medium">{item.estilista_nombre}</td>
+                    <td className="table-cell">{formatMoney(item.facturacion_servicios)}</td>
+                    <td className="table-cell">{formatMoney(item.comision_ventas_producto)}</td>
+                    <td className="table-cell">{formatMoney(item.descuento_espacio)}</td>
+                    <td className={`table-cell font-semibold ${Number(item.pago_neto_pendiente || 0) >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                      {formatMoney(item.pago_neto_pendiente)}
+                    </td>
+                    <td className="table-cell text-amber-700 font-semibold">{formatMoney(deudaPuestoRango)}</td>
+                    <td className="table-cell">
+                      <input
+                        className="input-field !py-2 !min-h-0 min-w-[120px]"
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={pagosPorEstilista[item.estilista_id]?.efectivo || ''}
+                        onChange={(e) => actualizarPagoMedio(item.estilista_id, 'efectivo', e.target.value)}
+                      />
+                    </td>
+                    <td className="table-cell">
+                      <input
+                        className="input-field !py-2 !min-h-0 min-w-[120px]"
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={pagosPorEstilista[item.estilista_id]?.nequi || ''}
+                        onChange={(e) => actualizarPagoMedio(item.estilista_id, 'nequi', e.target.value)}
+                      />
+                    </td>
+                    <td className="table-cell">
+                      <input
+                        className="input-field !py-2 !min-h-0 min-w-[120px]"
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={pagosPorEstilista[item.estilista_id]?.daviplata || ''}
+                        onChange={(e) => actualizarPagoMedio(item.estilista_id, 'daviplata', e.target.value)}
+                      />
+                    </td>
+                    <td className="table-cell">
+                      <input
+                        className="input-field !py-2 !min-h-0 min-w-[120px]"
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={pagosPorEstilista[item.estilista_id]?.otros || ''}
+                        onChange={(e) => actualizarPagoMedio(item.estilista_id, 'otros', e.target.value)}
+                      />
+                      <div className="text-xs text-slate-500 mt-1">Total: {formatMoney(totalPagoMedios(item.estilista_id))}</div>
+                    </td>
+                    <td className="table-cell">
+                      <input
+                        className="input-field !py-2 !min-h-0 min-w-[120px]"
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={abonoPuestoPorEstilista[item.estilista_id] || ''}
+                        onChange={(e) =>
+                          setAbonoPuestoPorEstilista((prev) => ({
+                            ...prev,
+                            [item.estilista_id]: String(e.target.value || '').replace(/[^\d.]/g, ''),
+                          }))
+                        }
+                      />
+                    </td>
+                    <td className="table-cell">
+                      <select
+                        className="input-field !py-2 !min-h-0 min-w-[130px]"
+                        value={medioAbonoPuestoPorEstilista[item.estilista_id] || 'efectivo'}
+                        onChange={(e) =>
+                          setMedioAbonoPuestoPorEstilista((prev) => ({
+                            ...prev,
+                            [item.estilista_id]: e.target.value,
+                          }))
+                        }
+                      >
+                        {MEDIOS_PAGO_OPERACION.map((m) => (
+                          <option key={m.value} value={m.value}>{m.label}</option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="table-cell">
+                      <span
+                        className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
+                          estadoActual === 'cancelado' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                        }`}
+                      >
+                        {estadoActual === 'cancelado' ? 'Liquidado' : 'Pendiente'}
+                      </span>
+                    </td>
+                    <td className="table-cell">
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          className="btn-primary !px-3 !py-2"
+                          onClick={() => aplicarEstadoLiquidacion(item, 'cancelado')}
+                          disabled={!!savingEstadoByEstilista[item.estilista_id]}
+                        >
+                          Liquidar
+                        </button>
+                        <button
+                          className="btn-secondary !px-3 !py-2"
+                          onClick={() => aplicarEstadoLiquidacion(item, 'pendiente')}
+                          disabled={!!savingEstadoByEstilista[item.estilista_id]}
+                        >
+                          Deshacer
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="card-header mb-0">Historial de Liquidacion</h3>
+            <p className="text-sm text-slate-600">Fecha hora, empleado, valor liquidado, pendiente puesto y usuario que liquido.</p>
+          </div>
+          <button className="btn-secondary" onClick={cargarTodo} disabled={loadingHistorial}>
+            {loadingHistorial ? 'Cargando...' : 'Actualizar historial'}
+          </button>
+        </div>
+
+        <div className="mt-4 overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="table-header">
+              <tr>
+                <th className="px-4 py-3 text-left">Fecha hora</th>
+                <th className="px-4 py-3 text-left">Empleado</th>
+                <th className="px-4 py-3 text-left">Valor liquidado</th>
+                <th className="px-4 py-3 text-left">Pendiente puesto</th>
+                <th className="px-4 py-3 text-left">Usuario</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {historialEstados.length === 0 && (
+                <tr>
+                  <td className="table-cell text-slate-500" colSpan={5}>No hay liquidaciones registradas en el rango.</td>
+                </tr>
+              )}
+              {historialEstados.map((h) => {
+                const pendientePuesto = Math.max(0, -Number(h.monto_liquidado || 0));
+                return (
+                  <tr key={h.id}>
+                    <td className="table-cell">{h.fecha_cambio || '-'}</td>
+                    <td className="table-cell font-medium">{h.estilista_nombre || '-'}</td>
+                    <td className={`table-cell font-semibold ${Number(h.monto_liquidado || 0) >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                      {formatMoney(h.monto_liquidado)}
+                    </td>
+                    <td className="table-cell text-amber-700 font-semibold">{formatMoney(pendientePuesto)}</td>
+                    <td className="table-cell">{h.usuario_nombre || 'Sistema'}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
