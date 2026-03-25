@@ -2043,17 +2043,30 @@ def estado_pago_estilista_dia(request):
                 _, descuento_dia_hist, _ = _calcular_totales_dia_estilista(estilista, fecha_cursor)
                 abono_aplicado_hist = min(abono_puesto, max(descuento_dia_hist, Decimal(0))) if estado == 'cancelado' else Decimal(0)
                 pendiente_puesto_hist = max(max(descuento_dia_hist, Decimal(0)) - abono_aplicado_hist, Decimal(0))
-                EstadoPagoEstilistaHistorial.objects.create(
-                    estilista=estilista,
-                    fecha=fecha_cursor,
-                    estado_anterior=estado_anterior,
-                    estado_nuevo=estado,
-                    notas=notas,
-                    usuario=usuario_obj,
-                    monto_liquidado=total_pagado if estado == 'cancelado' else Decimal(0),
-                    abono_puesto=abono_aplicado_hist,
-                    pendiente_puesto=pendiente_puesto_hist,
-                )
+                try:
+                    EstadoPagoEstilistaHistorial.objects.create(
+                        estilista=estilista,
+                        fecha=fecha_cursor,
+                        estado_anterior=estado_anterior,
+                        estado_nuevo=estado,
+                        notas=notas,
+                        usuario=usuario_obj,
+                        monto_liquidado=total_pagado if estado == 'cancelado' else Decimal(0),
+                        abono_puesto=abono_aplicado_hist,
+                        pendiente_puesto=pendiente_puesto_hist,
+                    )
+                except (OperationalError, ProgrammingError):
+                    # Compatibilidad: si producción aún no tiene columnas nuevas,
+                    # guardar historial con el esquema anterior.
+                    EstadoPagoEstilistaHistorial.objects.create(
+                        estilista=estilista,
+                        fecha=fecha_cursor,
+                        estado_anterior=estado_anterior,
+                        estado_nuevo=estado,
+                        notas=notas,
+                        usuario=usuario_obj,
+                        monto_liquidado=total_pagado if estado == 'cancelado' else Decimal(0),
+                    )
                 cambios_registrados += 1
             except (OperationalError, ProgrammingError):
                 # No bloquear la operación diaria si falla la bitácora.
@@ -2140,10 +2153,38 @@ def estado_pago_estilista_historial(request):
             for x in qs[:limit]
         ]
     except (OperationalError, ProgrammingError):
-        return Response(
-            {'error': 'Debes aplicar migraciones del backend para habilitar historial de estados.'},
-            status=status.HTTP_503_SERVICE_UNAVAILABLE,
-        )
+        # Compatibilidad con esquema anterior sin abono_puesto/pendiente_puesto.
+        try:
+            qs = EstadoPagoEstilistaHistorial.objects.select_related('estilista', 'usuario').filter(
+                fecha__gte=fecha_inicio,
+                fecha__lte=fecha_fin,
+            )
+            if estilista_id_raw:
+                qs = qs.filter(estilista_id=int(estilista_id_raw))
+
+            registros = [
+                {
+                    'id': x.id,
+                    'estilista_id': x.estilista_id,
+                    'estilista_nombre': x.estilista.nombre,
+                    'fecha': x.fecha.strftime('%Y-%m-%d'),
+                    'estado_anterior': x.estado_anterior,
+                    'estado_nuevo': x.estado_nuevo,
+                    'notas': x.notas,
+                    'usuario_id': x.usuario_id,
+                    'usuario_nombre': x.usuario.nombre_completo if x.usuario else 'Sistema',
+                    'monto_liquidado': float(x.monto_liquidado or 0),
+                    'abono_puesto': 0,
+                    'pendiente_puesto': float(max(Decimal(0), -Decimal(x.monto_liquidado or 0))),
+                    'fecha_cambio': timezone.localtime(x.fecha_cambio).strftime('%Y-%m-%d %H:%M:%S'),
+                }
+                for x in qs[:limit]
+            ]
+        except (OperationalError, ProgrammingError):
+            return Response(
+                {'error': 'Debes aplicar migraciones del backend para habilitar historial de estados.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
 
     return Response(
         {
