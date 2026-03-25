@@ -2469,6 +2469,9 @@ def liquidar_dia_v2(request):
                             pago_nequi=%s,
                             pago_daviplata=%s,
                             pago_otros=%s,
+                            abono_puesto=%s,
+                            saldo_puesto_pendiente=%s,
+                            pendiente_puesto=%s,
                             notas=%s,
                             actualizado_en=%s
                         WHERE estilista_id=%s AND fecha=%s
@@ -2479,6 +2482,9 @@ def liquidar_dia_v2(request):
                             pago_nequi,
                             pago_daviplata,
                             pago_otros,
+                            abono_puesto,
+                            saldo_puesto,
+                            saldo_puesto,
                             notas,
                             timezone.now(),
                             estilista.id,
