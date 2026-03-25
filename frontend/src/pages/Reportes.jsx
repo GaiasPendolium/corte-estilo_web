@@ -209,67 +209,62 @@ const Reportes = () => {
       .reduce((acc, val) => acc + (Number.isFinite(val) ? val : 0), 0);
   };
 
-  const aplicarEstadoLiquidacion = async (fila, estado) => {
-    const estilistaId = fila.estilista_id;
-    const facturacionServicios = Number(fila.facturacion_servicios || 0);
-    const comisiones = Number(fila.comision_ventas_producto || 0);
-    const descuentoPuesto = Number(fila.descuento_espacio || 0);
-    const gananciasTotales = facturacionServicios + comisiones;
-    const netoGanado = Math.max(gananciasTotales - descuentoPuesto, 0);
-    const esDiaUnico = fechaInicio === fechaFin;
-
-    const pagos = {
-      efectivo: Number(pagosPorEstilista[estilistaId]?.efectivo || 0),
-      nequi: Number(pagosPorEstilista[estilistaId]?.nequi || 0),
-      daviplata: Number(pagosPorEstilista[estilistaId]?.daviplata || 0),
-      otros: Number(pagosPorEstilista[estilistaId]?.otros || 0),
-    };
-    const totalPagos = Object.values(pagos).reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0);
-
-    const abonoPuesto = Number(abonoPuestoPorEstilista[estilistaId] || 0);
-    const medioAbonoPuesto = medioAbonoPuestoPorEstilista[estilistaId] || 'efectivo';
-
-    let pagosDetalle = { efectivo: 0, nequi: 0, daviplata: 0, otros: 0 };
-    if (estado === 'cancelado') {
-      if (!esDiaUnico && (totalPagos > 0 || abonoPuesto > 0)) {
-        toast.warning('Para registrar pago por medio o abono de puesto debes seleccionar un solo día.');
-        return;
-      }
-
-      if (totalPagos > netoGanado) {
-        toast.warning(`El valor a liquidar no puede exceder ${formatMoney(netoGanado)} (neto ganado).`);
-        return;
-      }
-
-      pagosDetalle = pagos;
-
-      const totalRegistrado = Object.values(pagosDetalle).reduce((a, b) => a + Number(b || 0), 0);
-      if (totalRegistrado > Math.max(netoGanado, 0)) {
-        toast.warning(`El valor a liquidar no puede exceder ${formatMoney(Math.max(netoGanado, 0))}.`);
-        return;
-      }
-    }
-
-    setSavingEstadoByEstilista((prev) => ({ ...prev, [estilistaId]: true }));
-    try {
-      await reportesService.setEstadoPagoEstilistaDia({
+const aplicarEstadoLiquidacion = async (fila) => {
+  const estilistaId = fila.estilista_id;
+  const esDiaUnico = fechaInicio === fechaFin;
+  
+  if (!esDiaUnico) {
+    toast.warning('⚠️ Para liquidación debes seleccionar UN SOLO DÍA');
+    return;
+  }
+  
+  const pago_efectivo = Number(pagosPorEstilista[estilistaId]?.efectivo || 0);
+  const pago_nequi = Number(pagosPorEstilista[estilistaId]?.nequi || 0);
+  const pago_daviplata = Number(pagosPorEstilista[estilistaId]?.daviplata || 0);
+  const pago_otros = Number(pagosPorEstilista[estilistaId]?.otros || 0);
+  const abono_puesto = Number(abonoPuestoPorEstilista[estilistaId] || 0);
+  
+  setSavingEstadoByEstilista((prev) => ({ ...prev, [estilistaId]: true }));
+  
+  try {
+    const token = window.localStorage?.getItem('access_token') || '';
+    const res = await fetch('/api/reportes/estilistas/liquidar-dia-v2/', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
         estilista_id: estilistaId,
-        fecha_inicio: fechaInicio,
-        fecha_fin: fechaFin,
-        estado,
-        pagos_detalle: pagosDetalle,
-        abono_puesto: estado === 'cancelado' ? abonoPuesto : 0,
-        medio_abono_puesto: medioAbonoPuesto,
-      });
-
-      toast.success(estado === 'cancelado' ? 'Liquidacion guardada.' : 'Liquidacion revertida a pendiente.');
-      await cargarTodo();
-    } catch (error) {
-      toast.error(error?.response?.data?.error || 'No se pudo actualizar la liquidacion.');
-    } finally {
-      setSavingEstadoByEstilista((prev) => ({ ...prev, [estilistaId]: false }));
+        fecha: fechaInicio,
+        pago_efectivo,
+        pago_nequi,
+        pago_daviplata,
+        pago_otros,
+        abono_puesto,
+        notas: `Liquidación ${fechaInicio}`,
+      }),
+    });
+    
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || `Error ${res.status}`);
     }
-  };
+    
+    const resultado = await res.json();
+    const g = resultado.liquidacion.ganancias_totales;
+    const d = resultado.liquidacion.descuento_puesto;
+    const p = resultado.pagos.total;
+    const s = resultado.puesto.saldo_pendiente;
+    
+    toast.success(`✓ ${resultado.estilista.nombre}: Gan ${formatMoney(g)} - Desc ${formatMoney(d)} - Pagado ${formatMoney(p)} - Saldo ${formatMoney(s)}`);
+    await cargarTodo();
+  } catch (error) {
+    toast.error(`❌ ${error.message}`);
+  } finally {
+    setSavingEstadoByEstilista((prev) => ({ ...prev, [estilistaId]: false }));
+  }
+};
 
   const renderModuloCierreCaja = () => (
     <div className="space-y-6">
@@ -629,17 +624,10 @@ const Reportes = () => {
                       <div className="flex flex-wrap gap-2">
                         <button
                           className="btn-primary !px-3 !py-2"
-                          onClick={() => aplicarEstadoLiquidacion(item, 'cancelado')}
+                          onClick={() => aplicarEstadoLiquidacion(item)}
                           disabled={!!savingEstadoByEstilista[item.estilista_id]}
                         >
                           Liquidar
-                        </button>
-                        <button
-                          className="btn-secondary !px-3 !py-2"
-                          onClick={() => aplicarEstadoLiquidacion(item, 'pendiente')}
-                          disabled={!!savingEstadoByEstilista[item.estilista_id]}
-                        >
-                          Deshacer
                         </button>
                       </div>
                     </td>
