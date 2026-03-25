@@ -1461,26 +1461,47 @@ def _calcular_datos_bi(request):
             estado_pago_rango = 'parcial'
 
         # Deuda acumulada de puesto:
-        # 1) pendiente registrado en historial (último estado cancelado por día hasta fecha_fin)
-        # 2) descuento del rango en días que siguen pendientes.
+        # 1) base = último saldo pendiente real guardado por día (evita doble conteo histórico)
+        # 2) adicional = descuentos de días posteriores al último corte que sigan pendientes.
         deuda_puesto_historial = Decimal(0)
+        ultima_fecha_saldo = None
         try:
-            hist_qs = EstadoPagoEstilistaHistorial.objects.filter(
+            ultimo_estado_saldo = EstadoPagoEstilistaDia.objects.filter(
                 estilista=estilista,
                 fecha__lte=fecha_fin_dt,
-                estado_nuevo='cancelado',
-            ).order_by('fecha', '-fecha_cambio')
-            vistos_hist = set()
-            for hist in hist_qs:
-                if hist.fecha in vistos_hist:
-                    continue
-                deuda_puesto_historial += max(Decimal(hist.pendiente_puesto or 0), Decimal(0))
-                vistos_hist.add(hist.fecha)
+            ).order_by('-fecha', '-actualizado_en').first()
+            if ultimo_estado_saldo:
+                deuda_puesto_historial = max(
+                    Decimal(
+                        getattr(ultimo_estado_saldo, 'saldo_puesto_pendiente', None)
+                        or getattr(ultimo_estado_saldo, 'pendiente_puesto', 0)
+                        or 0
+                    ),
+                    Decimal(0),
+                )
+                ultima_fecha_saldo = ultimo_estado_saldo.fecha
+        except (OperationalError, ProgrammingError):
+            deuda_puesto_historial = Decimal(0)
+            ultima_fecha_saldo = None
+            try:
+                ultimo_hist = EstadoPagoEstilistaHistorial.objects.filter(
+                    estilista=estilista,
+                    fecha__lte=fecha_fin_dt,
+                ).order_by('-fecha', '-fecha_cambio').first()
+                if ultimo_hist:
+                    deuda_puesto_historial = max(Decimal(ultimo_hist.pendiente_puesto or 0), Decimal(0))
+                    ultima_fecha_saldo = ultimo_hist.fecha
+            except Exception:
+                deuda_puesto_historial = Decimal(0)
+                ultima_fecha_saldo = None
         except Exception:
             deuda_puesto_historial = Decimal(0)
+            ultima_fecha_saldo = None
 
         deuda_rango_pendiente = Decimal(0)
         for dia in dias_trabajados:
+            if ultima_fecha_saldo and dia <= ultima_fecha_saldo:
+                continue
             estado_dia = estados_pago_map.get((estilista.id, dia), 'pendiente')
             if estado_dia == 'cancelado':
                 continue
