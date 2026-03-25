@@ -5,7 +5,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.exceptions import PermissionDenied
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Sum, Count, Q, F
-from django.db import transaction
+from django.db import transaction, connection
 from django.db.utils import OperationalError, ProgrammingError
 from django.utils import timezone
 from django.http import HttpResponse
@@ -45,6 +45,101 @@ def _fecha_operativa_desde_dt(fecha_hora):
     if timezone.is_aware(fecha_hora):
         return timezone.localtime(fecha_hora).date()
     return fecha_hora.date()
+
+
+def _insertar_historial_legacy(estilista_id, fecha, estado_anterior, estado_nuevo, notas, usuario_id, monto_liquidado):
+    """Inserta historial en esquema antiguo (sin columnas abono_puesto/pendiente_puesto)."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO estado_pago_estilista_historial
+            (estilista_id, fecha, estado_anterior, estado_nuevo, notas, usuario_id, monto_liquidado, fecha_cambio)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            [
+                estilista_id,
+                fecha,
+                estado_anterior,
+                estado_nuevo,
+                notas,
+                usuario_id,
+                monto_liquidado,
+                timezone.now(),
+            ],
+        )
+
+
+def _listar_historial_legacy(fecha_inicio, fecha_fin, estilista_id=None, limit=100):
+    """Lee historial desde esquema antiguo usando SQL crudo para compatibilidad."""
+    sql = """
+        SELECT
+            h.id,
+            h.estilista_id,
+            e.nombre AS estilista_nombre,
+            h.fecha,
+            h.estado_anterior,
+            h.estado_nuevo,
+            h.notas,
+            h.usuario_id,
+            COALESCE(u.nombre_completo, 'Sistema') AS usuario_nombre,
+            h.monto_liquidado,
+            h.fecha_cambio
+        FROM estado_pago_estilista_historial h
+        INNER JOIN estilistas e ON e.id = h.estilista_id
+        LEFT JOIN usuarios u ON u.id = h.usuario_id
+        WHERE h.fecha >= %s AND h.fecha <= %s
+    """
+    params = [fecha_inicio, fecha_fin]
+
+    if estilista_id:
+        sql += " AND h.estilista_id = %s"
+        params.append(int(estilista_id))
+
+    sql += " ORDER BY h.fecha_cambio DESC, h.fecha DESC LIMIT %s"
+    params.append(int(limit))
+
+    with connection.cursor() as cursor:
+        cursor.execute(sql, params)
+        rows = cursor.fetchall()
+
+    registros = []
+    for row in rows:
+        fecha_val = row[3]
+        fecha_cambio_val = row[10]
+        monto_liquidado = Decimal(str(row[9] or 0))
+
+        if isinstance(fecha_val, datetime):
+            fecha_str = fecha_val.strftime('%Y-%m-%d')
+        else:
+            fecha_str = str(fecha_val)
+
+        if isinstance(fecha_cambio_val, datetime):
+            try:
+                fecha_cambio_str = timezone.localtime(fecha_cambio_val).strftime('%Y-%m-%d %H:%M:%S')
+            except Exception:
+                fecha_cambio_str = fecha_cambio_val.strftime('%Y-%m-%d %H:%M:%S')
+        else:
+            fecha_cambio_str = str(fecha_cambio_val)
+
+        registros.append(
+            {
+                'id': row[0],
+                'estilista_id': row[1],
+                'estilista_nombre': row[2],
+                'fecha': fecha_str,
+                'estado_anterior': row[4],
+                'estado_nuevo': row[5],
+                'notas': row[6],
+                'usuario_id': row[7],
+                'usuario_nombre': row[8],
+                'monto_liquidado': float(monto_liquidado),
+                'abono_puesto': 0,
+                'pendiente_puesto': float(max(Decimal(0), -monto_liquidado)),
+                'fecha_cambio': fecha_cambio_str,
+            }
+        )
+
+    return registros
 
 
 def _calcular_totales_dia_estilista(estilista, fecha_dia):
@@ -2058,14 +2153,14 @@ def estado_pago_estilista_dia(request):
                 except (OperationalError, ProgrammingError):
                     # Compatibilidad: si producción aún no tiene columnas nuevas,
                     # guardar historial con el esquema anterior.
-                    EstadoPagoEstilistaHistorial.objects.create(
-                        estilista=estilista,
+                    _insertar_historial_legacy(
+                        estilista_id=estilista.id,
                         fecha=fecha_cursor,
                         estado_anterior=estado_anterior,
                         estado_nuevo=estado,
                         notas=notas,
-                        usuario=usuario_obj,
-                        monto_liquidado=total_pagado if estado == 'cancelado' else Decimal(0),
+                        usuario_id=(usuario_obj.id if usuario_obj else None),
+                        monto_liquidado=(total_pagado if estado == 'cancelado' else Decimal(0)),
                     )
                 cambios_registrados += 1
             except (OperationalError, ProgrammingError):
@@ -2155,32 +2250,13 @@ def estado_pago_estilista_historial(request):
     except (OperationalError, ProgrammingError):
         # Compatibilidad con esquema anterior sin abono_puesto/pendiente_puesto.
         try:
-            qs = EstadoPagoEstilistaHistorial.objects.select_related('estilista', 'usuario').filter(
-                fecha__gte=fecha_inicio,
-                fecha__lte=fecha_fin,
+            registros = _listar_historial_legacy(
+                fecha_inicio=fecha_inicio,
+                fecha_fin=fecha_fin,
+                estilista_id=estilista_id_raw or None,
+                limit=limit,
             )
-            if estilista_id_raw:
-                qs = qs.filter(estilista_id=int(estilista_id_raw))
-
-            registros = [
-                {
-                    'id': x.id,
-                    'estilista_id': x.estilista_id,
-                    'estilista_nombre': x.estilista.nombre,
-                    'fecha': x.fecha.strftime('%Y-%m-%d'),
-                    'estado_anterior': x.estado_anterior,
-                    'estado_nuevo': x.estado_nuevo,
-                    'notas': x.notas,
-                    'usuario_id': x.usuario_id,
-                    'usuario_nombre': x.usuario.nombre_completo if x.usuario else 'Sistema',
-                    'monto_liquidado': float(x.monto_liquidado or 0),
-                    'abono_puesto': 0,
-                    'pendiente_puesto': float(max(Decimal(0), -Decimal(x.monto_liquidado or 0))),
-                    'fecha_cambio': timezone.localtime(x.fecha_cambio).strftime('%Y-%m-%d %H:%M:%S'),
-                }
-                for x in qs[:limit]
-            ]
-        except (OperationalError, ProgrammingError):
+        except Exception:
             return Response(
                 {'error': 'Debes aplicar migraciones del backend para habilitar historial de estados.'},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
