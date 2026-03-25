@@ -2554,13 +2554,14 @@ def liquidar_dia_v2(request):
         return Response({'error': f'Error procesando liquidación: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
     
     # ============ [5] HISTORIAL ============
+    hubo_movimiento_liquidacion = (total_pagado > 0) or (abono_puesto > 0)
     try:
-        if estado_resultante == 'cancelado' and estado_anterior == 'pendiente':
+        if hubo_movimiento_liquidacion:
             EstadoPagoEstilistaHistorial.objects.create(
                 estilista=estilista,
                 fecha=fecha,
                 estado_anterior=estado_anterior,
-                estado_nuevo='cancelado',
+                estado_nuevo=estado_resultante,
                 notas=notas,
                 usuario=request.user,
                 monto_liquidado=total_pagado,
@@ -2570,12 +2571,12 @@ def liquidar_dia_v2(request):
     except (OperationalError, ProgrammingError):
         # Historial en esquema legacy (sin columnas nuevas)
         try:
-            if estado_resultante == 'cancelado' and estado_anterior == 'pendiente':
+            if hubo_movimiento_liquidacion:
                 _insertar_historial_legacy(
                     estilista_id=estilista.id,
                     fecha=fecha,
                     estado_anterior=estado_anterior,
-                    estado_nuevo='cancelado',
+                    estado_nuevo=estado_resultante,
                     notas=notas,
                     usuario_id=(request.user.id if request.user else None),
                     monto_liquidado=total_pagado,

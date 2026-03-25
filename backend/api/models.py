@@ -647,6 +647,7 @@ class EstadoPagoEstilistaHistorial(models.Model):
 
     ESTADOS = [
         ('pendiente', 'Pendiente'),
+        ('debe', 'Debe'),
         ('cancelado', 'Cancelado'),
     ]
 
