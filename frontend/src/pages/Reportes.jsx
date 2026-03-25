@@ -387,6 +387,23 @@ const Reportes = () => {
       .reduce((acc, val) => acc + (Number.isFinite(val) ? val : 0), 0);
   };
 
+  const obtenerResumenPagoFila = (fila) => {
+    const netoPendiente = Number(fila.pago_neto_pendiente ?? fila.pago_neto_estilista ?? 0);
+    const limite = Math.abs(netoPendiente);
+    const totalRegistrado = totalPagosFila(fila.estilista_id);
+    const abonado = Math.min(totalRegistrado, limite);
+    const restante = Math.max(limite - abonado, 0);
+    return {
+      netoPendiente,
+      limite,
+      totalRegistrado,
+      abonado,
+      restante,
+      esDeudaEspacio: netoPendiente < 0,
+      esPagoEstilista: netoPendiente > 0,
+    };
+  };
+
   const totalPagosPorMedio = useMemo(() => {
     return Object.values(pagosPorEstilista).reduce(
       (acc, item) => {
@@ -462,7 +479,7 @@ const Reportes = () => {
     };
     const totalPagos = Object.values(pagosDetalle).reduce((acc, val) => acc + (Number.isFinite(val) ? val : 0), 0);
     const netoPendiente = Number(fila.pago_neto_pendiente ?? fila.pago_neto_estilista ?? 0);
-    const maxPagable = netoPendiente > 0 ? netoPendiente : 0;
+    const maxPagable = Math.abs(netoPendiente);
 
     if (estado === 'cancelado' && fechaInicio !== fechaFin && totalPagos > 0) {
       toast.warning('Para registrar pagos por medio debes seleccionar un solo día (fecha inicio = fecha fin).');
@@ -470,7 +487,7 @@ const Reportes = () => {
     }
 
     if (estado === 'cancelado' && totalPagos > maxPagable) {
-      toast.warning(`La suma por medios no puede exceder el neto a pagar (${formatMoney(maxPagable)}).`);
+      toast.warning(`La suma por medios no puede exceder el neto absoluto (${formatMoney(maxPagable)}).`);
       return;
     }
 
@@ -806,12 +823,14 @@ const Reportes = () => {
                 <th className="px-6 py-3 text-left">Pago Nequi</th>
                 <th className="px-6 py-3 text-left">Pago Daviplata</th>
                 <th className="px-6 py-3 text-left">Pago otros</th>
-                <th className="px-6 py-3 text-left">Total pago</th>
+                <th className="px-6 py-3 text-left">Total registrado</th>
                 <th className="px-6 py-3 text-left">Estado pago día</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {liquidacionFiltrada.map((s) => (
+              {liquidacionFiltrada.map((s) => {
+                const resumenPago = obtenerResumenPagoFila(s);
+                return (
                 <tr key={s.estilista_id} className="hover:bg-gray-50">
                   <td className="table-cell font-medium">{s.estilista_nombre}</td>
                   <td className="table-cell">
@@ -896,7 +915,19 @@ const Reportes = () => {
                     />
                   </td>
                   <td className="table-cell font-semibold text-slate-900">
-                    {formatMoney(totalPagosFila(s.estilista_id))}
+                    <div>{formatMoney(resumenPago.totalRegistrado)}</div>
+                    {resumenPago.esPagoEstilista && (
+                      <>
+                        <div className="text-xs text-slate-500 mt-1">Pagado a estilista: {formatMoney(resumenPago.abonado)}</div>
+                        <div className="text-xs font-medium text-amber-700">Pendiente por pagar: {formatMoney(resumenPago.restante)}</div>
+                      </>
+                    )}
+                    {resumenPago.esDeudaEspacio && (
+                      <>
+                        <div className="text-xs text-slate-500 mt-1">Abonado al espacio: {formatMoney(resumenPago.abonado)}</div>
+                        <div className="text-xs font-medium text-red-700">Saldo pendiente espacio: {formatMoney(resumenPago.restante)}</div>
+                      </>
+                    )}
                   </td>
                   <td className="table-cell">
                     <select
@@ -926,7 +957,8 @@ const Reportes = () => {
                     )}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

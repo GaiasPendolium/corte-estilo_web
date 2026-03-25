@@ -1435,10 +1435,14 @@ def _calcular_datos_bi(request):
             fecha__lte=fecha_fin_dt,
         )
         for ep in estados_pago_qs:
-            salidas_por_medio['efectivo'] += Decimal(ep.pago_efectivo or 0)
-            salidas_por_medio['nequi'] += Decimal(ep.pago_nequi or 0)
-            salidas_por_medio['daviplata'] += Decimal(ep.pago_daviplata or 0)
-            salidas_por_medio['otros'] += Decimal(ep.pago_otros or 0)
+            # Si el neto del estilista es negativo, el pago por medio representa
+            # ingreso al establecimiento (abono de deuda de espacio).
+            neto_dia_ep = _calcular_neto_dia_estilista(ep.estilista, ep.fecha)
+            bucket = ingresos_por_medio if neto_dia_ep < 0 else salidas_por_medio
+            bucket['efectivo'] += Decimal(ep.pago_efectivo or 0)
+            bucket['nequi'] += Decimal(ep.pago_nequi or 0)
+            bucket['daviplata'] += Decimal(ep.pago_daviplata or 0)
+            bucket['otros'] += Decimal(ep.pago_otros or 0)
     except (OperationalError, ProgrammingError):
         salidas_por_medio = {m: Decimal(0) for m in medios}
 
@@ -1958,13 +1962,13 @@ def estado_pago_estilista_dia(request):
                 # Siempre actualizar/crear el registro, incluso si es 'pendiente'
                 # Así evitamos problemas de sincronización en el BI
                 neto_dia = _calcular_neto_dia_estilista(estilista, fecha_cursor)
-                max_pagable = neto_dia if neto_dia > 0 else Decimal(0)
+                max_pagable = abs(neto_dia)
                 if total_pagado > max_pagable:
                     return Response(
                         {
                             'error': (
                                 f'La suma de pagos por medio (${float(total_pagado):.2f}) '
-                                f'no puede exceder el neto a pagar del día (${float(max_pagable):.2f}).'
+                                f'no puede exceder el neto absoluto del día (${float(max_pagable):.2f}).'
                             )
                         },
                         status=status.HTTP_400_BAD_REQUEST,
