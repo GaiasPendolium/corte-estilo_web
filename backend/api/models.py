@@ -560,6 +560,7 @@ class EstadoPagoEstilistaDia(models.Model):
 
     ESTADOS = [
         ('pendiente', 'Pendiente de pago'),
+        ('debe', 'Con deuda del puesto'),
         ('cancelado', 'Pagado/Cancelado'),
     ]
 
