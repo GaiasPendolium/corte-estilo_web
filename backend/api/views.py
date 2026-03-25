@@ -807,11 +807,6 @@ class VentaProductoViewSet(viewsets.ModelViewSet):
             for venta in ventas:
                 self.perform_destroy(venta)
 
-            if tipo_operacion == 'consumo_empleado' and deuda_obj:
-                deuda_obj.total_cargo = Decimal(0)
-                _recalcular_estado_deuda(deuda_obj)
-                deuda_obj.save(update_fields=['total_cargo', 'saldo_pendiente', 'estado'])
-
         return Response(
             {
                 'ok': True,
@@ -983,7 +978,11 @@ class VentaProductoViewSet(viewsets.ModelViewSet):
             descripcion=f'Reverso por eliminación factura {instance.numero_factura or instance.id}',
             usuario=self.request.user,
         )
+        deuda = instance.deuda_consumo
         instance.delete()
+
+        if deuda:
+            _sincronizar_deuda_desde_items(deuda)
 
     @action(detail=True, methods=['get'])
     def factura(self, request, pk=None):
@@ -1220,10 +1219,29 @@ def _calcular_datos_bi(request):
     comision_producto_estilistas = Decimal(0)
     comision_producto_estilistas_en_servicios = Decimal(0)
 
+    detalle_ganancia_productos_mapa = {}
+
     top_productos_mapa = {}
     for venta in ventas_pagadas_qs:
         costo_unitario = Decimal(venta.producto.precio_compra or 0)
         costo_productos += costo_unitario * Decimal(venta.cantidad)
+
+        key_producto = int(venta.producto_id)
+        if key_producto not in detalle_ganancia_productos_mapa:
+            detalle_ganancia_productos_mapa[key_producto] = {
+                'producto_id': key_producto,
+                'producto_nombre': venta.producto.nombre,
+                'producto_marca': venta.producto.marca,
+                'cantidad': 0,
+                'valor_vendido': Decimal(0),
+                'valor_costo': Decimal(0),
+                'valor_vendido_caja': Decimal(0),
+                'valor_vendido_servicios': Decimal(0),
+            }
+        detalle_ganancia_productos_mapa[key_producto]['cantidad'] += int(venta.cantidad or 0)
+        detalle_ganancia_productos_mapa[key_producto]['valor_vendido'] += Decimal(venta.total or 0)
+        detalle_ganancia_productos_mapa[key_producto]['valor_costo'] += costo_unitario * Decimal(venta.cantidad or 0)
+        detalle_ganancia_productos_mapa[key_producto]['valor_vendido_caja'] += Decimal(venta.total or 0)
 
         if venta.estilista and venta.tipo_operacion != 'consumo_empleado':
             # La comisión de venta se toma del producto vendido, no del estilista.
@@ -1257,6 +1275,23 @@ def _calcular_datos_bi(request):
             ingresos_productos_en_servicios += precio_venta_ad * cantidad_ad
             costo_productos_en_servicios += precio_compra_ad * cantidad_ad
 
+            key_producto_ad = int(srv.adicional_otro_producto_id)
+            if key_producto_ad not in detalle_ganancia_productos_mapa:
+                detalle_ganancia_productos_mapa[key_producto_ad] = {
+                    'producto_id': key_producto_ad,
+                    'producto_nombre': srv.adicional_otro_producto.nombre,
+                    'producto_marca': srv.adicional_otro_producto.marca,
+                    'cantidad': 0,
+                    'valor_vendido': Decimal(0),
+                    'valor_costo': Decimal(0),
+                    'valor_vendido_caja': Decimal(0),
+                    'valor_vendido_servicios': Decimal(0),
+                }
+            detalle_ganancia_productos_mapa[key_producto_ad]['cantidad'] += int(cantidad_ad)
+            detalle_ganancia_productos_mapa[key_producto_ad]['valor_vendido'] += precio_venta_ad * cantidad_ad
+            detalle_ganancia_productos_mapa[key_producto_ad]['valor_costo'] += precio_compra_ad * cantidad_ad
+            detalle_ganancia_productos_mapa[key_producto_ad]['valor_vendido_servicios'] += precio_venta_ad * cantidad_ad
+
             if srv.adicional_otro_estilista_id:
                 pct_srv = Decimal(srv.adicional_otro_producto.comision_estilista or 0)
                 if pct_srv < 0:
@@ -1284,6 +1319,24 @@ def _calcular_datos_bi(request):
     ingresos_productos_totales = ingresos_productos + ingresos_productos_en_servicios
     costo_productos_totales = costo_productos + costo_productos_en_servicios
     utilidad_productos_total = ingresos_productos_totales - costo_productos_totales
+
+    detalle_ganancia_productos = []
+    for item in detalle_ganancia_productos_mapa.values():
+        ganancia_item = item['valor_vendido'] - item['valor_costo']
+        detalle_ganancia_productos.append(
+            {
+                'producto_id': item['producto_id'],
+                'producto_nombre': item['producto_nombre'],
+                'producto_marca': item['producto_marca'],
+                'cantidad': int(item['cantidad']),
+                'valor_vendido': float(item['valor_vendido']),
+                'valor_costo': float(item['valor_costo']),
+                'valor_ganancia': float(ganancia_item),
+                'valor_vendido_caja': float(item['valor_vendido_caja']),
+                'valor_vendido_servicios': float(item['valor_vendido_servicios']),
+            }
+        )
+    detalle_ganancia_productos = sorted(detalle_ganancia_productos, key=lambda x: x['valor_ganancia'], reverse=True)
 
     ganancia_establecimiento_productos = utilidad_productos_total - comision_producto_estilistas_total
     ingresos_servicios = Decimal(servicios_qs.aggregate(total=Sum('precio_cobrado'))['total'] or 0)
@@ -1750,6 +1803,184 @@ def _calcular_datos_bi(request):
             }
         )
 
+    # Resumen diario de productos (venta directa + producto adicional en servicio)
+    # y recaudo por abonos de consumo de empleado.
+    productos_diario_map = {}
+
+    for venta in ventas_pagadas_qs:
+        fecha_venta = _fecha_operativa_desde_dt(venta.fecha_hora)
+        key = fecha_venta.strftime('%Y-%m-%d')
+        if key not in productos_diario_map:
+            productos_diario_map[key] = {
+                'fecha': key,
+                'monto_vendido_producto': Decimal(0),
+                'valor_reserva': Decimal(0),
+                'abonos_consumo_empleado': Decimal(0),
+            }
+
+        productos_diario_map[key]['monto_vendido_producto'] += Decimal(venta.total or 0)
+        productos_diario_map[key]['valor_reserva'] += Decimal(venta.producto.precio_compra or 0) * Decimal(venta.cantidad or 0)
+
+    for srv in servicios_qs:
+        if not srv.adicional_otro_producto_id:
+            continue
+
+        fecha_srv = _fecha_operativa_desde_dt(srv.fecha_hora)
+        key = fecha_srv.strftime('%Y-%m-%d')
+        if key not in productos_diario_map:
+            productos_diario_map[key] = {
+                'fecha': key,
+                'monto_vendido_producto': Decimal(0),
+                'valor_reserva': Decimal(0),
+                'abonos_consumo_empleado': Decimal(0),
+            }
+
+        cantidad_ad = Decimal(srv.adicional_otro_cantidad or 1)
+        precio_venta_ad = Decimal(srv.adicional_otro_producto.precio_venta or 0)
+        precio_compra_ad = Decimal(srv.adicional_otro_producto.precio_compra or 0)
+
+        productos_diario_map[key]['monto_vendido_producto'] += precio_venta_ad * cantidad_ad
+        productos_diario_map[key]['valor_reserva'] += precio_compra_ad * cantidad_ad
+
+    # Consumo de empleado: se reconoce por abonos (no por el valor del cargo).
+    for ab in abonos_consumo_qs:
+        fecha_ab = _fecha_operativa_desde_dt(ab.fecha_hora)
+        key = fecha_ab.strftime('%Y-%m-%d')
+        if key not in productos_diario_map:
+            productos_diario_map[key] = {
+                'fecha': key,
+                'monto_vendido_producto': Decimal(0),
+                'valor_reserva': Decimal(0),
+                'abonos_consumo_empleado': Decimal(0),
+            }
+        productos_diario_map[key]['abonos_consumo_empleado'] += Decimal(ab.monto or 0)
+
+    productos_diario = []
+    for item in sorted(productos_diario_map.values(), key=lambda x: x['fecha']):
+        ingreso_reconocido = item['monto_vendido_producto'] + item['abonos_consumo_empleado']
+        valor_ganancia = ingreso_reconocido - item['valor_reserva']
+        productos_diario.append(
+            {
+                'fecha': item['fecha'],
+                'monto_vendido_producto': float(item['monto_vendido_producto']),
+                'abonos_consumo_empleado': float(item['abonos_consumo_empleado']),
+                'ingreso_total_reconocido': float(ingreso_reconocido),
+                'valor_reserva': float(item['valor_reserva']),
+                'valor_ganancia': float(valor_ganancia),
+            }
+        )
+
+    # Fallback: si no hay detalle por día pero sí hay totales en el rango,
+    # devolver una fila resumen para evitar tablas en cero.
+    if not productos_diario and (
+        ingresos_productos_totales > 0
+        or costo_productos_totales > 0
+        or ingresos_abonos_consumo > 0
+    ):
+        productos_diario.append(
+            {
+                'fecha': f'{fecha_inicio} a {fecha_fin}',
+                'monto_vendido_producto': float(ingresos_productos_totales),
+                'abonos_consumo_empleado': float(ingresos_abonos_consumo),
+                'ingreso_total_reconocido': float(ingresos_productos_totales + ingresos_abonos_consumo),
+                'valor_reserva': float(costo_productos_totales),
+                'valor_ganancia': float((ingresos_productos_totales + ingresos_abonos_consumo) - costo_productos_totales),
+            }
+        )
+
+    # Otros servicios por fecha y tipo (valor original vs valor recibido por el establecimiento).
+    otros_servicios_map = {}
+    for ad in adicionales_asignados_lista:
+        fecha_ad = _fecha_operativa_desde_dt(ad.servicio_realizado.fecha_hora).strftime('%Y-%m-%d')
+        tipo_servicio = ad.servicio.nombre if ad.servicio_id else 'Servicio adicional'
+        key = (fecha_ad, tipo_servicio)
+
+        if key not in otros_servicios_map:
+            otros_servicios_map[key] = {
+                'fecha': fecha_ad,
+                'tipo_servicio': tipo_servicio,
+                'valor_original': Decimal(0),
+                'valor_recibido': Decimal(0),
+            }
+
+        valor = Decimal(ad.valor_cobrado or 0)
+        pct = Decimal(ad.porcentaje_establecimiento or 0) if ad.aplica_porcentaje_establecimiento else Decimal(0)
+        if pct < 0:
+            pct = Decimal(0)
+        if pct > 100:
+            pct = Decimal(100)
+
+        valor_recibido = (valor * pct) / Decimal(100)
+        otros_servicios_map[key]['valor_original'] += valor
+        otros_servicios_map[key]['valor_recibido'] += valor_recibido
+
+    # Capturar adicionales no asignados por servicio (si existen en valor_adicionales)
+    # restando lo ya asignado y el valor de producto adicional del servicio.
+    asignado_por_servicio = {}
+    for ad in adicionales_asignados_lista:
+        sid = int(ad.servicio_realizado_id)
+        asignado_por_servicio[sid] = asignado_por_servicio.get(sid, Decimal(0)) + Decimal(ad.valor_cobrado or 0)
+
+    for srv in servicios_qs:
+        sid = int(srv.id)
+        valor_adicionales_srv = Decimal(srv.valor_adicionales or 0)
+        valor_producto_srv = Decimal(0)
+        if srv.adicional_otro_producto_id:
+            valor_producto_srv = Decimal(srv.adicional_otro_producto.precio_venta or 0) * Decimal(srv.adicional_otro_cantidad or 1)
+
+        asignado_srv = asignado_por_servicio.get(sid, Decimal(0))
+        restante_srv = valor_adicionales_srv - asignado_srv - valor_producto_srv
+        if restante_srv <= 0:
+            continue
+
+        fecha_srv = _fecha_operativa_desde_dt(srv.fecha_hora).strftime('%Y-%m-%d')
+        key = (fecha_srv, 'Otros adicionales sin detalle')
+        if key not in otros_servicios_map:
+            otros_servicios_map[key] = {
+                'fecha': fecha_srv,
+                'tipo_servicio': 'Otros adicionales sin detalle',
+                'valor_original': Decimal(0),
+                'valor_recibido': Decimal(0),
+            }
+        # Lo no asignado se considera ingreso del establecimiento.
+        otros_servicios_map[key]['valor_original'] += restante_srv
+        otros_servicios_map[key]['valor_recibido'] += restante_srv
+
+    otros_servicios_detalle = [
+        {
+            'fecha': item['fecha'],
+            'tipo_servicio': item['tipo_servicio'],
+            'valor_original': float(item['valor_original']),
+            'valor_recibido': float(item['valor_recibido']),
+        }
+        for item in sorted(otros_servicios_map.values(), key=lambda x: (x['fecha'], x['tipo_servicio']))
+    ]
+
+    if not otros_servicios_detalle and otros_servicios_no_producto > 0:
+        otros_servicios_detalle.append(
+            {
+                'fecha': f'{fecha_inicio} a {fecha_fin}',
+                'tipo_servicio': 'Resumen otros servicios',
+                'valor_original': float(otros_servicios_no_producto),
+                'valor_recibido': float(otros_servicios_no_producto),
+            }
+        )
+
+    detalle_cobro_espacio = [
+        {
+            'estilista_id': item.get('estilista_id'),
+            'estilista_nombre': item.get('estilista_nombre'),
+            'tipo_cobro_espacio': item.get('tipo_cobro_espacio') or 'sin_cobro',
+            'valor_cobro_espacio': float(item.get('valor_cobro_espacio') or 0),
+            'base_cobro_espacio': float(item.get('base_cobro_espacio') or 0),
+            'dias_cobrados_alquiler': int(item.get('dias_cobrados_alquiler') or 0),
+            'total_dias_trabajados': int(item.get('total_dias_trabajados') or 0),
+            'descuento_espacio': float(item.get('descuento_espacio') or 0),
+        }
+        for item in estilistas_data
+    ]
+    detalle_cobro_espacio = sorted(detalle_cobro_espacio, key=lambda x: x['descuento_espacio'], reverse=True)
+
     return {
         'fecha_inicio': fecha_inicio,
         'fecha_fin': fecha_fin,
@@ -1821,6 +2052,10 @@ def _calcular_datos_bi(request):
                 'saldo': float(tot_ingresos_medios - tot_salidas_medios),
             },
         },
+        'detalle_ganancia_productos': detalle_ganancia_productos,
+        'detalle_cobro_espacio': detalle_cobro_espacio,
+        'productos_diario': productos_diario,
+        'otros_servicios_detalle': otros_servicios_detalle,
         'detalle_servicios_reparto': detalle_servicios_reparto,
     }
 
@@ -1837,6 +2072,32 @@ def _recalcular_estado_deuda(deuda):
     else:
         deuda.saldo_pendiente = saldo
         deuda.estado = 'pendiente'
+
+
+def _sincronizar_deuda_desde_items(deuda):
+    """Sincroniza total_cargo/estado según los items de consumo aún existentes."""
+    if not deuda:
+        return
+
+    items_consumo_qs = deuda.ventas_items.filter(tipo_operacion='consumo_empleado')
+    total_cargo_real = Decimal(items_consumo_qs.aggregate(total=Sum('total'))['total'] or 0)
+    total_abonado = Decimal(deuda.total_abonado or 0)
+
+    # Si ya no existen items de la factura, la deuda no debe seguir en cartera.
+    # Si no tuvo abonos se elimina; si tuvo abonos se marca cancelada en cero para auditoria.
+    if total_cargo_real <= 0:
+        if total_abonado <= 0:
+            deuda.delete()
+            return
+        deuda.total_cargo = Decimal(0)
+        deuda.saldo_pendiente = Decimal(0)
+        deuda.estado = 'cancelado'
+        deuda.save(update_fields=['total_cargo', 'saldo_pendiente', 'estado'])
+        return
+
+    deuda.total_cargo = total_cargo_real
+    _recalcular_estado_deuda(deuda)
+    deuda.save(update_fields=['total_cargo', 'saldo_pendiente', 'estado'])
 
 
 @api_view(['GET'])
@@ -1858,9 +2119,31 @@ def reporte_consumo_empleado(request):
     if estilista_id:
         qs = qs.filter(estilista_id=int(estilista_id))
 
+    # Limpia inconsistencias por facturas de consumo eliminadas.
+    for deuda in list(qs):
+        _sincronizar_deuda_desde_items(deuda)
+
+    qs = DeudaConsumoEmpleado.objects.select_related('estilista').filter(
+        fecha_hora__date__gte=fecha_inicio,
+        fecha_hora__date__lte=fecha_fin,
+    )
+    if estilista_id:
+        qs = qs.filter(estilista_id=int(estilista_id))
+
+    # Cartera principal: solo saldos pendientes reales y con items vigentes.
+    qs_pendientes = []
+    for deuda in qs:
+        if Decimal(deuda.saldo_pendiente or 0) <= Decimal('0.5'):
+            continue
+        if deuda.estado == 'cancelado':
+            continue
+        if not deuda.ventas_items.filter(tipo_operacion='consumo_empleado').exists():
+            continue
+        qs_pendientes.append(deuda)
+
     resumen_mapa = {}
     deudas_items = []
-    for deuda in qs.order_by('-fecha_hora'):
+    for deuda in sorted(qs_pendientes, key=lambda x: x.fecha_hora or timezone.now(), reverse=True):
         est_id = int(deuda.estilista_id)
         if est_id not in resumen_mapa:
             resumen_mapa[est_id] = {
@@ -1891,6 +2174,46 @@ def reporte_consumo_empleado(request):
             }
         )
 
+    # Detalle: se arma desde las mismas deudas pendientes del resumen,
+    # para que no haya filas en resumen sin detalle abajo.
+    deuda_ids = [int(d.id) for d in qs_pendientes]
+    abono_map = {}
+    if deuda_ids:
+        abonos_qs = AbonoDeudaEmpleado.objects.filter(deuda_id__in=deuda_ids).order_by('deuda_id', '-fecha_hora')
+        vistos = set()
+        for ab in abonos_qs:
+            if ab.deuda_id in vistos:
+                continue
+            abono_map[int(ab.deuda_id)] = ab
+            vistos.add(ab.deuda_id)
+
+    consumos_detalle = []
+    for deuda in qs_pendientes:
+        ultimo_abono = abono_map.get(int(deuda.id))
+        items_qs = deuda.ventas_items.select_related('producto', 'estilista').filter(tipo_operacion='consumo_empleado').order_by('-fecha_hora', '-id')
+        for venta in items_qs:
+            consumos_detalle.append(
+                {
+                    'venta_id': venta.id,
+                    'deuda_id': deuda.id,
+                    'numero_factura': deuda.numero_factura,
+                    'fecha_consumo': timezone.localtime(venta.fecha_hora).strftime('%Y-%m-%d %H:%M:%S') if venta.fecha_hora else None,
+                    'estilista_id': deuda.estilista_id,
+                    'estilista_nombre': deuda.estilista.nombre if deuda.estilista_id else None,
+                    'producto_id': venta.producto_id,
+                    'producto_nombre': venta.producto.nombre if venta.producto_id else None,
+                    'cantidad': int(venta.cantidad or 0),
+                    'precio_unitario': float(venta.precio_unitario or 0),
+                    'valor_consumo': float(venta.total or 0),
+                    'estado_pago': deuda.estado,
+                    'pagado': deuda.estado == 'cancelado',
+                    'total_abonado_factura': float(deuda.total_abonado or 0),
+                    'saldo_factura': float(deuda.saldo_pendiente or 0),
+                    'fecha_ultimo_abono': timezone.localtime(ultimo_abono.fecha_hora).strftime('%Y-%m-%d %H:%M:%S') if ultimo_abono and ultimo_abono.fecha_hora else None,
+                    'medio_ultimo_abono': ultimo_abono.medio_pago if ultimo_abono else None,
+                }
+            )
+
     resumen = []
     for item in sorted(resumen_mapa.values(), key=lambda x: x['estilista_nombre'].lower()):
         saldo = Decimal(item['saldo_pendiente'])
@@ -1919,6 +2242,7 @@ def reporte_consumo_empleado(request):
             'fecha_fin': fecha_fin,
             'resumen': resumen,
             'deudas': deudas_items,
+            'consumos_detalle': consumos_detalle,
         }
     )
 
