@@ -213,6 +213,26 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
             if not medio_pago:
                 raise serializers.ValidationError({'medio_pago': 'El medio de pago es obligatorio al finalizar.'})
 
+            tipo_reparto = attrs.get('tipo_reparto_establecimiento')
+            if tipo_reparto is None and self.instance is not None:
+                tipo_reparto = self.instance.tipo_reparto_establecimiento
+            valor_reparto = attrs.get('valor_reparto_establecimiento')
+            if valor_reparto is None and self.instance is not None:
+                valor_reparto = self.instance.valor_reparto_establecimiento
+
+            if tipo_reparto:
+                tipo_reparto_str = str(tipo_reparto).strip().lower()
+                if tipo_reparto_str not in {'porcentaje', 'monto'}:
+                    raise serializers.ValidationError({'tipo_reparto_establecimiento': 'Tipo de reparto inválido.'})
+                try:
+                    valor_num = float(valor_reparto or 0)
+                except Exception:
+                    raise serializers.ValidationError({'valor_reparto_establecimiento': 'Valor de reparto inválido.'})
+                if valor_num <= 0:
+                    raise serializers.ValidationError({'valor_reparto_establecimiento': 'El valor de reparto debe ser mayor a 0.'})
+                if tipo_reparto_str == 'porcentaje' and valor_num > 100:
+                    raise serializers.ValidationError({'valor_reparto_establecimiento': 'El porcentaje no puede ser mayor a 100.'})
+
         tiene_adicionales = attrs.get('tiene_adicionales')
         if tiene_adicionales is None and self.instance is not None:
             tiene_adicionales = self.instance.tiene_adicionales
@@ -610,16 +630,36 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
         # Los adicionales (shampoo/guantes/otros) son ingreso del establecimiento,
         # no un descuento sobre la base del servicio.
         neto = max(precio, 0)
-        tipo_cobro = servicio.estilista.tipo_cobro_espacio or 'sin_cobro'
-        valor_cobro = float(servicio.estilista.valor_cobro_espacio or 0)
+
+        es_shampoo_principal = self._es_servicio_shampoo(servicio.servicio)
+        tipo_reparto = str(servicio.tipo_reparto_establecimiento or '').strip().lower()
+        valor_reparto = float(servicio.valor_reparto_establecimiento or 0)
 
         monto_establecimiento = 0
-        if tipo_cobro == 'porcentaje_neto':
-            monto_establecimiento = (neto * valor_cobro) / 100
-        elif tipo_cobro == 'costo_fijo_neto':
-            # El cobro fijo de espacio se liquida por día trabajado en Reportes BI,
-            # para evitar descontarlo múltiples veces por cada servicio del mismo día.
-            monto_establecimiento = 0
+        if es_shampoo_principal:
+            # Regla de negocio: shampoo principal es 100% para establecimiento.
+            servicio.tipo_reparto_establecimiento = 'porcentaje'
+            servicio.valor_reparto_establecimiento = 100
+            monto_establecimiento = neto
+        elif tipo_reparto == 'porcentaje':
+            if valor_reparto < 0:
+                valor_reparto = 0
+            if valor_reparto > 100:
+                valor_reparto = 100
+            monto_establecimiento = (neto * valor_reparto) / 100
+        elif tipo_reparto == 'monto':
+            if valor_reparto < 0:
+                valor_reparto = 0
+            monto_establecimiento = valor_reparto
+        else:
+            tipo_cobro = servicio.estilista.tipo_cobro_espacio or 'sin_cobro'
+            valor_cobro = float(servicio.estilista.valor_cobro_espacio or 0)
+            if tipo_cobro == 'porcentaje_neto':
+                monto_establecimiento = (neto * valor_cobro) / 100
+            elif tipo_cobro == 'costo_fijo_neto':
+                # El cobro fijo de espacio se liquida por día trabajado en Reportes BI,
+                # para evitar descontarlo múltiples veces por cada servicio del mismo día.
+                monto_establecimiento = 0
 
         if monto_establecimiento < 0:
             monto_establecimiento = 0

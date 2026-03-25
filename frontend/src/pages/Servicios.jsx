@@ -179,6 +179,8 @@ const Servicios = () => {
     precio_cobrado: '',
     medio_pago: 'efectivo',
     valor_recibido: '',
+    tipo_reparto_establecimiento: '',
+    valor_reparto_establecimiento: '30',
     tiene_adicionales: false,
     adicionales_servicio_items: [],
     adicional_otro_producto: '',
@@ -326,6 +328,16 @@ const Servicios = () => {
   const servicioEnProcesoSeleccionado = useMemo(
     () => serviciosEnProceso.find((s) => String(s.id) === String(servicioFinalizarId)),
     [serviciosEnProceso, servicioFinalizarId]
+  );
+
+  const servicioPrincipalEsShampoo = useMemo(
+    () => isShampooServiceName(servicioEnProcesoSeleccionado?.servicio_nombre),
+    [servicioEnProcesoSeleccionado]
+  );
+
+  const servicioPrincipalEsDepilacion = useMemo(
+    () => isDepilationServiceName(servicioEnProcesoSeleccionado?.servicio_nombre),
+    [servicioEnProcesoSeleccionado]
   );
 
   const serviciosAdicionalesConfigurados = useMemo(
@@ -492,6 +504,8 @@ const Servicios = () => {
       precio_cobrado: srv.precio_cobrado || '',
       medio_pago: srv.medio_pago || 'efectivo',
       valor_recibido: '',
+      tipo_reparto_establecimiento: srv.tipo_reparto_establecimiento || '',
+      valor_reparto_establecimiento: String(srv.valor_reparto_establecimiento ?? '30'),
       tiene_adicionales: Boolean(srv.tiene_adicionales),
       adicionales_servicio_items: itemsIniciales,
       adicional_otro_producto: srv.adicional_otro_producto ? String(srv.adicional_otro_producto) : '',
@@ -632,6 +646,14 @@ const Servicios = () => {
       return;
     }
 
+    if (servicioPrincipalEsDepilacion && finalizacion.tipo_reparto_establecimiento === 'porcentaje') {
+      const pct = Number(finalizacion.valor_reparto_establecimiento || 0);
+      if (!Number.isFinite(pct) || pct <= 0 || pct > 100) {
+        toast.warning('Para depilación, el porcentaje de ganancia del establecimiento debe ser mayor a 0 y menor o igual a 100.');
+        return;
+      }
+    }
+
     if (finalizacion.tiene_adicionales) {
       const items = finalizacion.adicionales_servicio_items || [];
       const itemsConContenido = items.filter((item) => {
@@ -741,9 +763,20 @@ const Servicios = () => {
       const productoAdicionalId = finalizacion.tiene_adicionales && finalizacion.adicional_otro_producto
         ? Number(finalizacion.adicional_otro_producto)
         : null;
+      const tipoRepartoPrincipal = servicioPrincipalEsShampoo
+        ? 'porcentaje'
+        : (servicioPrincipalEsDepilacion ? finalizacion.tipo_reparto_establecimiento : '');
+      const valorRepartoPrincipal = servicioPrincipalEsShampoo
+        ? 100
+        : (servicioPrincipalEsDepilacion && finalizacion.tipo_reparto_establecimiento === 'porcentaje'
+          ? Number(finalizacion.valor_reparto_establecimiento || 0)
+          : null);
+
       const res = await serviciosRealizadosService.finalizar(servicioFinalizarId, {
         precio_cobrado: toPesoInt(finalizacion.precio_cobrado),
         medio_pago: finalizacion.medio_pago,
+        tipo_reparto_establecimiento: tipoRepartoPrincipal || null,
+        valor_reparto_establecimiento: valorRepartoPrincipal,
         tiene_adicionales: finalizacion.tiene_adicionales,
         adicionales_servicio_ids: finalizacion.tiene_adicionales ? itemsNormalizados.map((item) => item.id) : [],
         adicionales_servicio_items: itemsNormalizados,
@@ -787,6 +820,8 @@ const Servicios = () => {
         precio_cobrado: '',
         medio_pago: 'efectivo',
         valor_recibido: '',
+        tipo_reparto_establecimiento: '',
+        valor_reparto_establecimiento: '30',
         tiene_adicionales: false,
         adicionales_servicio_items: [],
         adicional_otro_producto: '',
@@ -1340,6 +1375,46 @@ const Servicios = () => {
           )}
 
           <input className="input-field" placeholder="Notas finales (opcional)" value={finalizacion.notas} onChange={(e) => setFinalizacion((p) => ({ ...p, notas: e.target.value }))} />
+
+          {servicioPrincipalEsShampoo && (
+            <div className="md:col-span-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              Shampoo en servicio principal: la ganancia se asigna 100% al establecimiento.
+            </div>
+          )}
+
+          {servicioPrincipalEsDepilacion && !servicioPrincipalEsShampoo && (
+            <>
+              <label className="md:col-span-3 inline-flex items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={finalizacion.tipo_reparto_establecimiento === 'porcentaje'}
+                  onChange={(e) =>
+                    setFinalizacion((p) => ({
+                      ...p,
+                      tipo_reparto_establecimiento: e.target.checked ? 'porcentaje' : '',
+                      valor_reparto_establecimiento: e.target.checked
+                        ? (p.valor_reparto_establecimiento || '30')
+                        : '30',
+                    }))
+                  }
+                />
+                Aplicar ganancia para establecimiento en servicio principal (depilación)
+              </label>
+              <input
+                className="input-field"
+                type="number"
+                min="0"
+                max="100"
+                step="0.01"
+                placeholder="% establecimiento"
+                value={finalizacion.valor_reparto_establecimiento || ''}
+                disabled={finalizacion.tipo_reparto_establecimiento !== 'porcentaje'}
+                onChange={(e) =>
+                  setFinalizacion((p) => ({ ...p, valor_reparto_establecimiento: e.target.value }))
+                }
+              />
+            </>
+          )}
 
           <label className="md:col-span-3 inline-flex items-center gap-2 text-sm text-gray-700">
             <input
