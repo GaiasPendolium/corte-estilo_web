@@ -47,7 +47,7 @@ def _fecha_operativa_desde_dt(fecha_hora):
     return fecha_hora.date()
 
 
-def _calcular_neto_dia_estilista(estilista, fecha_dia):
+def _calcular_totales_dia_estilista(estilista, fecha_dia):
     servicios_dia = ServicioRealizado.objects.filter(
         estado='finalizado',
         estilista=estilista,
@@ -112,7 +112,14 @@ def _calcular_neto_dia_estilista(estilista, fecha_dia):
     elif estilista.tipo_cobro_espacio == 'costo_fijo_neto':
         descuento_dia = Decimal(estilista.valor_cobro_espacio or 0)
 
-    return (base_servicio_dia - descuento_dia) + comision_producto_caja_dia + comision_producto_servicio_dia
+    ganancias_totales_dia = base_servicio_dia + comision_producto_caja_dia + comision_producto_servicio_dia
+    neto_dia = ganancias_totales_dia - descuento_dia
+    return ganancias_totales_dia, descuento_dia, neto_dia
+
+
+def _calcular_neto_dia_estilista(estilista, fecha_dia):
+    _, _, neto_dia = _calcular_totales_dia_estilista(estilista, fecha_dia)
+    return neto_dia
 
 
 class UsuarioViewSet(viewsets.ModelViewSet):
@@ -1977,14 +1984,14 @@ def estado_pago_estilista_dia(request):
             try:
                 # Siempre actualizar/crear el registro, incluso si es 'pendiente'
                 # Así evitamos problemas de sincronización en el BI
-                neto_dia = _calcular_neto_dia_estilista(estilista, fecha_cursor)
-                max_pagable = abs(neto_dia)
+                ganancias_totales_dia, _, neto_dia = _calcular_totales_dia_estilista(estilista, fecha_cursor)
+                max_pagable = max(Decimal(0), ganancias_totales_dia)
                 if total_pagado > max_pagable:
                     return Response(
                         {
                             'error': (
                                 f'La suma de pagos por medio (${float(total_pagado):.2f}) '
-                                f'no puede exceder el neto absoluto del día (${float(max_pagable):.2f}).'
+                                f'no puede exceder las ganancias totales del día (${float(max_pagable):.2f}).'
                             )
                         },
                         status=status.HTTP_400_BAD_REQUEST,

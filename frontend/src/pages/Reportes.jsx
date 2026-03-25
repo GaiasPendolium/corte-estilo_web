@@ -196,8 +196,11 @@ const Reportes = () => {
 
   const aplicarEstadoLiquidacion = async (fila, estado) => {
     const estilistaId = fila.estilista_id;
-    const netoPendiente = Number(fila.pago_neto_pendiente || 0);
-    const limite = Math.abs(netoPendiente);
+    const facturacionServicios = Number(fila.facturacion_servicios || 0);
+    const comisiones = Number(fila.comision_ventas_producto || 0);
+    const descuentoPuesto = Number(fila.descuento_espacio || 0);
+    const gananciasTotales = facturacionServicios + comisiones;
+    const limiteAbonoPuesto = Math.max(descuentoPuesto, 0);
     const esDiaUnico = fechaInicio === fechaFin;
 
     const pagos = {
@@ -218,16 +221,26 @@ const Reportes = () => {
         return;
       }
 
-      if (netoPendiente < 0) {
-        const valorAbono = Math.max(0, Math.min(abonoPuesto, limite));
-        pagosDetalle[medioAbonoPuesto] = valorAbono;
-      } else {
-        pagosDetalle = pagos;
+      if (abonoPuesto > limiteAbonoPuesto) {
+        toast.warning(`El pago del puesto no puede exceder ${formatMoney(limiteAbonoPuesto)}.`);
+        return;
       }
 
+      if ((totalPagos + abonoPuesto) > gananciasTotales) {
+        toast.warning(`La suma de valor a liquidar + pago de puesto no puede exceder ${formatMoney(gananciasTotales)}.`);
+        return;
+      }
+
+      pagosDetalle = {
+        efectivo: Number(pagos.efectivo || 0) + Number(medioAbonoPuesto === 'efectivo' ? abonoPuesto : 0),
+        nequi: Number(pagos.nequi || 0) + Number(medioAbonoPuesto === 'nequi' ? abonoPuesto : 0),
+        daviplata: Number(pagos.daviplata || 0) + Number(medioAbonoPuesto === 'daviplata' ? abonoPuesto : 0),
+        otros: Number(pagos.otros || 0) + Number(medioAbonoPuesto === 'otros' ? abonoPuesto : 0),
+      };
+
       const totalRegistrado = Object.values(pagosDetalle).reduce((a, b) => a + Number(b || 0), 0);
-      if (totalRegistrado > limite) {
-        toast.warning(`El valor registrado no puede exceder ${formatMoney(limite)}.`);
+      if (totalRegistrado > Math.max(gananciasTotales, 0)) {
+        toast.warning(`El valor registrado no puede exceder ${formatMoney(Math.max(gananciasTotales, 0))}.`);
         return;
       }
     }
@@ -469,7 +482,7 @@ const Reportes = () => {
                 <th className="px-4 py-3 text-left">Valor total empleado</th>
                 <th className="px-4 py-3 text-left">Comisiones</th>
                 <th className="px-4 py-3 text-left">Descuento puesto</th>
-                <th className="px-4 py-3 text-left">Neto pendiente</th>
+                <th className="px-4 py-3 text-left">Valor a liquidar</th>
                 <th className="px-4 py-3 text-left">Deuda puesto (rango)</th>
                 <th className="px-4 py-3 text-left">Pago efectivo</th>
                 <th className="px-4 py-3 text-left">Pago Nequi</th>
@@ -489,15 +502,25 @@ const Reportes = () => {
               )}
               {(biData?.estilistas || []).map((item) => {
                 const deudaPuestoRango = Number(item.deuda_total_acumulada || 0);
+                const gananciasTotales = Number(item.facturacion_servicios || 0) + Number(item.comision_ventas_producto || 0);
+                const descuentoPuesto = Number(item.descuento_espacio || 0);
+                const abonoPuestoDigitado = Number(abonoPuestoPorEstilista[item.estilista_id] || 0);
+                const descuentoAplicado = abonoPuestoDigitado > 0
+                  ? Math.min(abonoPuestoDigitado, Math.max(descuentoPuesto, 0))
+                  : descuentoPuesto;
+                const valorALiquidar = gananciasTotales - descuentoAplicado;
                 const estadoActual = item.estado_pago_rango || item.estado_pago_dia || 'pendiente';
                 return (
                   <tr key={item.estilista_id}>
                     <td className="table-cell font-medium">{item.estilista_nombre}</td>
                     <td className="table-cell">{formatMoney(item.facturacion_servicios)}</td>
                     <td className="table-cell">{formatMoney(item.comision_ventas_producto)}</td>
-                    <td className="table-cell">{formatMoney(item.descuento_espacio)}</td>
-                    <td className={`table-cell font-semibold ${Number(item.pago_neto_pendiente || 0) >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                      {formatMoney(item.pago_neto_pendiente)}
+                    <td className="table-cell">
+                      <div>{formatMoney(item.descuento_espacio)}</div>
+                      <div className="text-[11px] leading-tight text-slate-500">Se liquida con abono puesto</div>
+                    </td>
+                    <td className={`table-cell font-semibold ${valorALiquidar >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                      {formatMoney(valorALiquidar)}
                     </td>
                     <td className="table-cell text-amber-700 font-semibold">{formatMoney(deudaPuestoRango)}</td>
                     <td className="table-cell">
