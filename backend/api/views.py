@@ -1446,21 +1446,41 @@ def _calcular_datos_bi(request):
         else:
             estado_pago_rango = 'parcial'
 
-        # Calcular deuda histórica acumulada (días anteriores a fecha_inicio con neto < 0 no pagado)
-        deuda_puesto_historica = Decimal(0)
+        # Deuda acumulada de puesto:
+        # 1) pendiente registrado en historial (último estado cancelado por día hasta fecha_fin)
+        # 2) descuento del rango en días que siguen pendientes.
+        deuda_puesto_historial = Decimal(0)
         try:
-            registros_anteriores = EstadoPagoEstilistaDia.objects.filter(
+            hist_qs = EstadoPagoEstilistaHistorial.objects.filter(
                 estilista=estilista,
-                fecha__lt=fecha_inicio_dt,
-                neto_dia__lt=0,
-                estado='pendiente',
-            ).values_list('neto_dia', flat=True)
-            deuda_puesto_historica = abs(sum(Decimal(x or 0) for x in registros_anteriores))
+                fecha__lte=fecha_fin_dt,
+                estado_nuevo='cancelado',
+            ).order_by('fecha', '-fecha_cambio')
+            vistos_hist = set()
+            for hist in hist_qs:
+                if hist.fecha in vistos_hist:
+                    continue
+                deuda_puesto_historial += max(Decimal(hist.pendiente_puesto or 0), Decimal(0))
+                vistos_hist.add(hist.fecha)
         except Exception:
-            deuda_puesto_historica = Decimal(0)
+            deuda_puesto_historial = Decimal(0)
 
-        deuda_rango_pendiente = max(Decimal(0), -pago_neto_pendiente)
-        deuda_total_acumulada = deuda_puesto_historica + deuda_rango_pendiente
+        deuda_rango_pendiente = Decimal(0)
+        for dia in dias_trabajados:
+            estado_dia = estados_pago_map.get((estilista.id, dia), 'pendiente')
+            if estado_dia == 'cancelado':
+                continue
+            base_servicio_dia = servicios_por_dia.get(dia, Decimal(0))
+            descuento_dia = Decimal(0)
+            if estilista.tipo_cobro_espacio == 'porcentaje_neto':
+                descuento_dia = (base_servicio_dia * Decimal(estilista.valor_cobro_espacio or 0)) / Decimal(100)
+                if descuento_dia > base_servicio_dia:
+                    descuento_dia = base_servicio_dia
+            elif estilista.tipo_cobro_espacio == 'costo_fijo_neto':
+                descuento_dia = Decimal(estilista.valor_cobro_espacio or 0)
+            deuda_rango_pendiente += max(descuento_dia, Decimal(0))
+
+        deuda_total_acumulada = deuda_puesto_historial + deuda_rango_pendiente
 
         estilistas_data.append(
             {
@@ -1485,7 +1505,7 @@ def _calcular_datos_bi(request):
                 'pago_neto_pendiente': float(pago_neto_pendiente),
                 'pago_neto_periodo': float(pago_neto_periodo),
                 'pago_neto_cancelado': float(pago_neto_cancelado),
-                'deuda_puesto_historica': float(deuda_puesto_historica),
+                'deuda_puesto_historica': float(deuda_puesto_historial),
                 'deuda_total_acumulada': float(deuda_total_acumulada),
                 'estado_pago_dia': estado_pago_rango,
                 'estado_pago_rango': estado_pago_rango,
@@ -2116,20 +2136,17 @@ def estado_pago_estilista_dia(request):
                         status=status.HTTP_400_BAD_REQUEST,
                     )
 
-                pago_efectivo_total = pago_efectivo + (abono_aplicado if medio_abono_puesto == 'efectivo' else Decimal(0))
-                pago_nequi_total = pago_nequi + (abono_aplicado if medio_abono_puesto == 'nequi' else Decimal(0))
-                pago_daviplata_total = pago_daviplata + (abono_aplicado if medio_abono_puesto == 'daviplata' else Decimal(0))
-                pago_otros_total = pago_otros + (abono_aplicado if medio_abono_puesto == 'otros' else Decimal(0))
-
+                # El abono de puesto no es pago al empleado; se registra en historial,
+                # pero no debe inflar salidas por medio de liquidación.
                 EstadoPagoEstilistaDia.objects.update_or_create(
                     estilista=estilista,
                     fecha=fecha_cursor,
                     defaults={
                         'estado': estado,
-                        'pago_efectivo': pago_efectivo_total if estado == 'cancelado' else Decimal(0),
-                        'pago_nequi': pago_nequi_total if estado == 'cancelado' else Decimal(0),
-                        'pago_daviplata': pago_daviplata_total if estado == 'cancelado' else Decimal(0),
-                        'pago_otros': pago_otros_total if estado == 'cancelado' else Decimal(0),
+                        'pago_efectivo': pago_efectivo if estado == 'cancelado' else Decimal(0),
+                        'pago_nequi': pago_nequi if estado == 'cancelado' else Decimal(0),
+                        'pago_daviplata': pago_daviplata if estado == 'cancelado' else Decimal(0),
+                        'pago_otros': pago_otros if estado == 'cancelado' else Decimal(0),
                         'neto_dia': neto_dia,
                         'notas': notas,
                     },

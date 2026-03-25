@@ -60,6 +60,7 @@ const Reportes = () => {
   const [biData, setBiData] = useState(null);
   const [carteraData, setCarteraData] = useState({ resumen: [], deudas: [] });
   const [pagosPorEstilista, setPagosPorEstilista] = useState({});
+  const [estadoDiaPorEstilista, setEstadoDiaPorEstilista] = useState({});
   const [abonoPuestoPorEstilista, setAbonoPuestoPorEstilista] = useState({});
   const [medioAbonoPuestoPorEstilista, setMedioAbonoPuestoPorEstilista] = useState({});
   const [savingEstadoByEstilista, setSavingEstadoByEstilista] = useState({});
@@ -113,21 +114,26 @@ const Reportes = () => {
       if (fechaInicio === fechaFin) {
         try {
           const estadoDia = await reportesService.getEstadoPagoEstilistaDia(fechaInicio);
-          const map = {};
+          const mapPagos = {};
+          const mapEstado = {};
           (estadoDia?.items || []).forEach((x) => {
-            map[x.estilista_id] = {
+            mapPagos[x.estilista_id] = {
               efectivo: String(Number(x.pago_efectivo || 0) || ''),
               nequi: String(Number(x.pago_nequi || 0) || ''),
               daviplata: String(Number(x.pago_daviplata || 0) || ''),
               otros: String(Number(x.pago_otros || 0) || ''),
             };
+            mapEstado[x.estilista_id] = x.estado || 'pendiente';
           });
-          setPagosPorEstilista(map);
+          setPagosPorEstilista(mapPagos);
+          setEstadoDiaPorEstilista(mapEstado);
         } catch (err) {
           setPagosPorEstilista({});
+          setEstadoDiaPorEstilista({});
         }
       } else {
         setPagosPorEstilista({});
+        setEstadoDiaPorEstilista({});
       }
     } catch (error) {
       toast.error('No se pudieron cargar los reportes');
@@ -506,18 +512,22 @@ const Reportes = () => {
                     ? `Cobro porcentaje: ${valorCobroCfg}%`
                     : 'Sin cobro de puesto';
                 const pendientePuestoDia = Math.max(descuentoPuesto - abonoPuestoDigitado, 0);
-                const estadoActual = item.estado_pago_rango || item.estado_pago_dia || 'pendiente';
+                const estadoActual = (fechaInicio === fechaFin)
+                  ? (estadoDiaPorEstilista[item.estilista_id] || item.estado_pago_dia || 'pendiente')
+                  : (item.estado_pago_rango || item.estado_pago_dia || 'pendiente');
                 const valorALiquidarVisible = estadoActual === 'cancelado' ? 0 : valorALiquidar;
-                const deudaPuestoVisible = estadoActual === 'cancelado' ? 0 : deudaPuestoRango;
+                const descuentoPuestoVisible = estadoActual === 'cancelado' ? 0 : descuentoPuesto;
+                const deudaPuestoVisible = deudaPuestoRango;
+                const inputsHabilitados = estadoActual !== 'cancelado';
                 return (
                   <tr key={item.estilista_id}>
                     <td className="table-cell font-medium">{item.estilista_nombre}</td>
                     <td className="table-cell">{formatMoney(item.facturacion_servicios)}</td>
                     <td className="table-cell">{formatMoney(item.comision_ventas_producto)}</td>
                     <td className="table-cell">
-                      <div>{formatMoney(item.descuento_espacio)}</div>
+                      <div>{formatMoney(descuentoPuestoVisible)}</div>
                       <div className="text-[11px] leading-tight text-slate-500">{descripcionCobroPuesto}</div>
-                      <div className="text-[11px] leading-tight text-amber-600">Pendiente hoy: {formatMoney(pendientePuestoDia)}</div>
+                      <div className="text-[11px] leading-tight text-amber-600">Pendiente hoy: {formatMoney(inputsHabilitados ? pendientePuestoDia : 0)}</div>
                     </td>
                     <td className={`table-cell font-semibold ${valorALiquidarVisible >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
                       {formatMoney(valorALiquidarVisible)}
@@ -529,7 +539,7 @@ const Reportes = () => {
                         type="number"
                         min="0"
                         step="1"
-                        value={pagosPorEstilista[item.estilista_id]?.efectivo || ''}
+                        value={inputsHabilitados ? (pagosPorEstilista[item.estilista_id]?.efectivo || '') : ''}
                         onChange={(e) => actualizarPagoMedio(item.estilista_id, 'efectivo', e.target.value)}
                       />
                     </td>
@@ -539,7 +549,7 @@ const Reportes = () => {
                         type="number"
                         min="0"
                         step="1"
-                        value={pagosPorEstilista[item.estilista_id]?.nequi || ''}
+                        value={inputsHabilitados ? (pagosPorEstilista[item.estilista_id]?.nequi || '') : ''}
                         onChange={(e) => actualizarPagoMedio(item.estilista_id, 'nequi', e.target.value)}
                       />
                     </td>
@@ -549,7 +559,7 @@ const Reportes = () => {
                         type="number"
                         min="0"
                         step="1"
-                        value={pagosPorEstilista[item.estilista_id]?.daviplata || ''}
+                        value={inputsHabilitados ? (pagosPorEstilista[item.estilista_id]?.daviplata || '') : ''}
                         onChange={(e) => actualizarPagoMedio(item.estilista_id, 'daviplata', e.target.value)}
                       />
                     </td>
@@ -559,10 +569,10 @@ const Reportes = () => {
                         type="number"
                         min="0"
                         step="1"
-                        value={pagosPorEstilista[item.estilista_id]?.otros || ''}
+                        value={inputsHabilitados ? (pagosPorEstilista[item.estilista_id]?.otros || '') : ''}
                         onChange={(e) => actualizarPagoMedio(item.estilista_id, 'otros', e.target.value)}
                       />
-                      <div className="text-xs text-slate-500 mt-1">Total: {formatMoney(totalPagoMedios(item.estilista_id))}</div>
+                      <div className="text-xs text-slate-500 mt-1">Total: {formatMoney(inputsHabilitados ? totalPagoMedios(item.estilista_id) : 0)}</div>
                     </td>
                     <td className="table-cell">
                       <input
@@ -570,7 +580,7 @@ const Reportes = () => {
                         type="number"
                         min="0"
                         step="1"
-                        value={abonoPuestoPorEstilista[item.estilista_id] || ''}
+                        value={inputsHabilitados ? (abonoPuestoPorEstilista[item.estilista_id] || '') : ''}
                         onChange={(e) =>
                           setAbonoPuestoPorEstilista((prev) => ({
                             ...prev,
@@ -648,6 +658,7 @@ const Reportes = () => {
                 <th className="px-4 py-3 text-left">Fecha hora</th>
                 <th className="px-4 py-3 text-left">Empleado</th>
                 <th className="px-4 py-3 text-left">Valor liquidado</th>
+                <th className="px-4 py-3 text-left">Abono puesto</th>
                 <th className="px-4 py-3 text-left">Pendiente puesto</th>
                 <th className="px-4 py-3 text-left">Usuario</th>
               </tr>
@@ -655,7 +666,7 @@ const Reportes = () => {
             <tbody className="bg-white divide-y divide-gray-200">
               {historialEstados.length === 0 && (
                 <tr>
-                  <td className="table-cell text-slate-500" colSpan={5}>No hay liquidaciones registradas en el rango.</td>
+                  <td className="table-cell text-slate-500" colSpan={6}>No hay liquidaciones registradas en el rango.</td>
                 </tr>
               )}
               {historialEstados.map((h) => {
@@ -667,6 +678,7 @@ const Reportes = () => {
                     <td className={`table-cell font-semibold ${Number(h.monto_liquidado || 0) >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
                       {formatMoney(h.monto_liquidado)}
                     </td>
+                    <td className="table-cell text-sky-700 font-semibold">{formatMoney(h.abono_puesto)}</td>
                     <td className="table-cell text-amber-700 font-semibold">{formatMoney(pendientePuesto)}</td>
                     <td className="table-cell">{h.usuario_nombre || 'Sistema'}</td>
                   </tr>
