@@ -2107,6 +2107,7 @@ def estado_pago_estilista_dia(request):
     cambios_registrados = 0
     historial_no_disponible = False
     tabla_diaria_no_disponible = False
+    guardado_legacy_sql = False
 
     fecha_cursor = fecha_inicio_dt
     while fecha_cursor <= fecha_fin_dt:
@@ -2402,9 +2403,123 @@ def liquidar_dia_v2(request):
         estado_resultante = estado_diaria.estado
         
     except (OperationalError, ProgrammingError):
-        # Compatibilidad: no bloquear liquidación por cambios pendientes de schema.
+        # Compatibilidad: intentar persistencia SQL en esquema legacy para no perder datos.
         tabla_diaria_no_disponible = True
         estado_resultante = 'cancelado' if ((total_pagado > 0) or (abono_puesto > 0)) else 'pendiente'
+        try:
+            with connection.cursor() as cursor:
+                # 1) Intentar update de fila existente (set completo).
+                try:
+                    cursor.execute(
+                        """
+                        UPDATE estado_pago_estilista_dia
+                        SET estado=%s,
+                            pago_efectivo=%s,
+                            pago_nequi=%s,
+                            pago_daviplata=%s,
+                            pago_otros=%s,
+                            abono_puesto=%s,
+                            pendiente_puesto=%s,
+                            neto_dia=%s,
+                            notas=%s,
+                            actualizado_en=%s
+                        WHERE estilista_id=%s AND fecha=%s
+                        """,
+                        [
+                            estado_resultante,
+                            pago_efectivo,
+                            pago_nequi,
+                            pago_daviplata,
+                            pago_otros,
+                            abono_puesto,
+                            saldo_puesto,
+                            pagable,
+                            notas,
+                            timezone.now(),
+                            estilista.id,
+                            fecha,
+                        ],
+                    )
+                except Exception:
+                    cursor.execute(
+                        """
+                        UPDATE estado_pago_estilista_dia
+                        SET estado=%s,
+                            pago_efectivo=%s,
+                            pago_nequi=%s,
+                            pago_daviplata=%s,
+                            pago_otros=%s,
+                            neto_dia=%s,
+                            notas=%s,
+                            actualizado_en=%s
+                        WHERE estilista_id=%s AND fecha=%s
+                        """,
+                        [
+                            estado_resultante,
+                            pago_efectivo,
+                            pago_nequi,
+                            pago_daviplata,
+                            pago_otros,
+                            pagable,
+                            notas,
+                            timezone.now(),
+                            estilista.id,
+                            fecha,
+                        ],
+                    )
+
+                # 2) Si no existía, insertar.
+                if cursor.rowcount == 0:
+                    try:
+                        cursor.execute(
+                            """
+                            INSERT INTO estado_pago_estilista_dia
+                            (estilista_id, fecha, estado, pago_efectivo, pago_nequi, pago_daviplata, pago_otros,
+                             abono_puesto, pendiente_puesto, neto_dia, notas, actualizado_en)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            """,
+                            [
+                                estilista.id,
+                                fecha,
+                                estado_resultante,
+                                pago_efectivo,
+                                pago_nequi,
+                                pago_daviplata,
+                                pago_otros,
+                                abono_puesto,
+                                saldo_puesto,
+                                pagable,
+                                notas,
+                                timezone.now(),
+                            ],
+                        )
+                    except Exception:
+                        cursor.execute(
+                            """
+                            INSERT INTO estado_pago_estilista_dia
+                            (estilista_id, fecha, estado, pago_efectivo, pago_nequi, pago_daviplata, pago_otros,
+                             neto_dia, notas, actualizado_en)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            """,
+                            [
+                                estilista.id,
+                                fecha,
+                                estado_resultante,
+                                pago_efectivo,
+                                pago_nequi,
+                                pago_daviplata,
+                                pago_otros,
+                                pagable,
+                                notas,
+                                timezone.now(),
+                            ],
+                        )
+            guardado_legacy_sql = True
+        except Exception as e:
+            return Response(
+                {'error': f'No se pudo guardar la liquidación en tabla diaria: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
     except Exception as e:
         return Response({'error': f'Error procesando liquidación: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
     
@@ -2422,7 +2537,22 @@ def liquidar_dia_v2(request):
                 abono_puesto=abono_puesto,
                 pendiente_puesto=saldo_puesto,
             )
-    except:
+    except (OperationalError, ProgrammingError):
+        # Historial en esquema legacy (sin columnas nuevas)
+        try:
+            if estado_resultante == 'cancelado' and estado_anterior == 'pendiente':
+                _insertar_historial_legacy(
+                    estilista_id=estilista.id,
+                    fecha=fecha,
+                    estado_anterior=estado_anterior,
+                    estado_nuevo='cancelado',
+                    notas=notas,
+                    usuario_id=(request.user.id if request.user else None),
+                    monto_liquidado=total_pagado,
+                )
+        except Exception:
+            pass
+    except Exception:
         pass  # No bloquear
     
     # ============ [6] RESPUESTA ============
@@ -2452,6 +2582,7 @@ def liquidar_dia_v2(request):
         },
         'estado': estado_resultante,
         'tabla_diaria_no_disponible': tabla_diaria_no_disponible,
+        'guardado_legacy_sql': guardado_legacy_sql,
     })
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
