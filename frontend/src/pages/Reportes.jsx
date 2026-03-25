@@ -540,6 +540,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
                     ? `Cobro porcentaje: ${valorCobroCfg}%`
                     : 'Sin cobro de puesto';
                 const pendientePuestoDia = tieneServiciosHoy ? Math.max(descuentoVisible - abonoPuestoDigitado, 0) : 0;
+                const saldoPuestePendiente = tieneServiciosHoy ? deudaPuestoRango + descuentoVisible : deudaPuestoRango;
                 const estadoActual = (fechaInicio === fechaFin)
                   ? (estadoDiaPorEstilista[item.estilista_id] || item.estado_pago_dia || 'pendiente')
                   : (item.estado_pago_rango || item.estado_pago_dia || 'pendiente');
@@ -573,7 +574,14 @@ const aplicarEstadoLiquidacion = async (fila) => {
                     <td className="table-cell">
                       <div>{formatMoney(descuentoPuestoValidado)}</div>
                       <div className="text-[11px] leading-tight text-slate-500">{descripcionCobroPuesto}</div>
-                      <div className="text-[11px] leading-tight text-amber-600">Pendiente hoy: {formatMoney(inputsHabilitados ? pendientePuestoDia : 0)}</div>
+                      <div className="text-[11px] leading-tight text-amber-600">
+                        Saldo pendiente: {formatMoney(inputsHabilitados ? saldoPuestePendiente : 0)}
+                        {inputsHabilitados && deudaPuestoRango > 0 && (
+                          <div className="text-[10px] leading-tight text-amber-500">
+                            ({formatMoney(deudaPuestoRango)} anterior + {formatMoney(descuentoVisible)} hoy)
+                          </div>
+                        )}
+                      </div>
                     </td>
                     <td className={`table-cell font-semibold ${valorALiquidarVisible >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
                       {formatMoney(valorALiquidarVisible)}
