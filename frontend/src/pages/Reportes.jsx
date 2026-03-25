@@ -21,6 +21,9 @@ const MEDIOS_PAGO = [
   { value: 'otros', label: 'Otros' },
 ];
 
+const moneyFormatter = new Intl.NumberFormat('es-CO', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+const formatMoney = (value) => `$${moneyFormatter.format(Number(value || 0))}`;
+
 const KpiCard = ({ title, value, hint, tone = 'slate' }) => {
   const tones = {
     slate: 'from-slate-900 to-slate-700 text-white',
@@ -91,7 +94,7 @@ const Reportes = () => {
 
   useEffect(() => {
     cargarTodo();
-  }, []);
+  }, [paramsBase]);
 
   const aplicarRangoRapido = (tipo) => {
     const base = new Date();
