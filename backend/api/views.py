@@ -2395,9 +2395,8 @@ def liquidar_dia_v2(request):
         estado_diaria.notas = notas
         estado_diaria.usuario_liquida = request.user
         
-        # Cambiar a cancelado si hay movimiento
-        if (total_pagado > 0) or (abono_puesto > 0):
-            estado_diaria.estado = 'cancelado'
+        # Cualquier liquidación marca el día como cancelado
+        estado_diaria.estado = 'cancelado'
         
         estado_diaria.save()
         estado_resultante = estado_diaria.estado
@@ -2405,7 +2404,7 @@ def liquidar_dia_v2(request):
     except (OperationalError, ProgrammingError):
         # Compatibilidad: intentar persistencia SQL en esquema legacy para no perder datos.
         tabla_diaria_no_disponible = True
-        estado_resultante = 'cancelado' if ((total_pagado > 0) or (abono_puesto > 0)) else 'pendiente'
+        estado_resultante = 'cancelado'
         try:
             with connection.cursor() as cursor:
                 # 1) Intentar update de fila existente (set completo).
