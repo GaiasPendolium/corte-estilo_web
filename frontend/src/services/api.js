@@ -419,6 +419,20 @@ export const reportesService = {
     return response.data;
   },
 
+  liquidarDiaV2: async ({ estilista_id, fecha, pago_efectivo, pago_nequi, pago_daviplata, pago_otros, abono_puesto, notas }) => {
+    const response = await api.post('/reportes/estilistas/liquidar-dia-v2/', {
+      estilista_id,
+      fecha,
+      pago_efectivo,
+      pago_nequi,
+      pago_daviplata,
+      pago_otros,
+      abono_puesto,
+      notas,
+    });
+    return response.data;
+  },
+
   getConsumoEmpleadoDeudas: async (params) => {
     const response = await api.get('/reportes/consumo-empleado/deudas/', { params });
     return response.data;

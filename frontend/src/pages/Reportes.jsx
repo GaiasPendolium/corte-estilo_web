@@ -227,31 +227,16 @@ const aplicarEstadoLiquidacion = async (fila) => {
   setSavingEstadoByEstilista((prev) => ({ ...prev, [estilistaId]: true }));
   
   try {
-    const token = window.localStorage?.getItem('access_token') || '';
-    const res = await fetch('/api/reportes/estilistas/liquidar-dia-v2/', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify({
-        estilista_id: estilistaId,
-        fecha: fechaInicio,
-        pago_efectivo,
-        pago_nequi,
-        pago_daviplata,
-        pago_otros,
-        abono_puesto,
-        notas: `Liquidación ${fechaInicio}`,
-      }),
+    const resultado = await reportesService.liquidarDiaV2({
+      estilista_id: estilistaId,
+      fecha: fechaInicio,
+      pago_efectivo,
+      pago_nequi,
+      pago_daviplata,
+      pago_otros,
+      abono_puesto,
+      notas: `Liquidación ${fechaInicio}`,
     });
-    
-    if (!res.ok) {
-      const data = await res.json();
-      throw new Error(data.error || `Error ${res.status}`);
-    }
-    
-    const resultado = await res.json();
     const g = resultado.liquidacion.ganancias_totales;
     const d = resultado.liquidacion.descuento_puesto;
     const p = resultado.pagos.total;
@@ -260,7 +245,8 @@ const aplicarEstadoLiquidacion = async (fila) => {
     toast.success(`✓ ${resultado.estilista.nombre}: Gan ${formatMoney(g)} - Desc ${formatMoney(d)} - Pagado ${formatMoney(p)} - Saldo ${formatMoney(s)}`);
     await cargarTodo();
   } catch (error) {
-    toast.error(`❌ ${error.message}`);
+    const msg = error?.response?.data?.error || error?.message || 'No se pudo procesar la liquidación.';
+    toast.error(`❌ ${msg}`);
   } finally {
     setSavingEstadoByEstilista((prev) => ({ ...prev, [estilistaId]: false }));
   }
