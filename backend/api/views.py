@@ -14,6 +14,7 @@ from decimal import Decimal
 import csv
 import io
 import uuid
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
 from .models import (
     Usuario, Estilista, Servicio, Cliente, Producto,
@@ -31,6 +32,10 @@ from .serializers import (
 
 def _es_admin_o_gerente(user):
     return getattr(user, 'rol', None) in ['administrador', 'gerente']
+
+
+def _es_admin(user):
+    return str(getattr(user, 'rol', '') or '').strip().lower() == 'administrador'
 
 
 def _validar_edicion_admin_gerente(user, recurso):
@@ -1768,6 +1773,71 @@ def abonar_consumo_empleado(request):
             saldo_pendiente__gt=0,
         ).order_by('fecha_hora', 'id')
     )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def mejorar_imagen_ia(request):
+    if not _es_admin(request.user):
+        return Response({'error': 'Solo administrador puede usar el mejorador de imagen.'}, status=status.HTTP_403_FORBIDDEN)
+
+    imagen_file = request.FILES.get('imagen')
+    if not imagen_file:
+        return Response({'error': 'Debes adjuntar una imagen en el campo "imagen".'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        intensidad = float(request.data.get('intensidad', 55))
+    except Exception:
+        intensidad = 55
+
+    if intensidad < 0:
+        intensidad = 0
+    if intensidad > 100:
+        intensidad = 100
+    fuerza = intensidad / 100.0
+
+    upscale_raw = str(request.data.get('upscale', 'true')).strip().lower()
+    upscale = upscale_raw not in {'false', '0', 'no'}
+
+    try:
+        with Image.open(imagen_file) as img_in:
+            img = ImageOps.exif_transpose(img_in).convert('RGB')
+
+            original_w, original_h = img.size
+            if upscale and max(original_w, original_h) < 1200:
+                factor = 2.0 if max(original_w, original_h) < 900 else 1.5
+                img = img.resize((int(original_w * factor), int(original_h * factor)), Image.Resampling.LANCZOS)
+
+            # Reducción suave de ruido + recuperación de detalle para fotos borrosas.
+            iteraciones_ruido = 1 + int(fuerza * 2)
+            for _ in range(iteraciones_ruido):
+                img = img.filter(ImageFilter.MedianFilter(size=3))
+
+            img = img.filter(ImageFilter.SMOOTH_MORE)
+            img = ImageEnhance.Contrast(img).enhance(1.08 + (fuerza * 0.25))
+            img = ImageEnhance.Sharpness(img).enhance(1.15 + (fuerza * 1.10))
+            img = img.filter(
+                ImageFilter.UnsharpMask(
+                    radius=1.6 + (fuerza * 0.8),
+                    percent=int(140 + (fuerza * 120)),
+                    threshold=2,
+                )
+            )
+            img = ImageOps.autocontrast(img, cutoff=0.6 + (fuerza * 1.4))
+            img = ImageEnhance.Color(img).enhance(1.02 + (fuerza * 0.12))
+            img = ImageEnhance.Brightness(img).enhance(1.01 + (fuerza * 0.04))
+
+            out = io.BytesIO()
+            img.save(out, format='JPEG', quality=95, optimize=True)
+            out.seek(0)
+
+    except Exception:
+        return Response({'error': 'No se pudo procesar la imagen. Verifica que el archivo sea válido.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    response = HttpResponse(out.getvalue(), content_type='image/jpeg')
+    response['Content-Disposition'] = 'inline; filename="imagen_mejorada.jpg"'
+    response['X-Imagen-Mejorada'] = 'true'
+    return response
 
     if not deudas_pendientes:
         return Response({'error': 'El empleado no tiene deudas pendientes.'}, status=status.HTTP_400_BAD_REQUEST)

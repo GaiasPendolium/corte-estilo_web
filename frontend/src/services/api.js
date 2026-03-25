@@ -420,3 +420,33 @@ export const reportesService = {
     return response.data;
   },
 };
+
+export const iaService = {
+  mejorarImagen: async ({ imagenFile, intensidad = 55, upscale = true }) => {
+    const formData = new FormData();
+    formData.append('imagen', imagenFile);
+    formData.append('intensidad', String(intensidad));
+    formData.append('upscale', String(Boolean(upscale)));
+
+    const response = await api.post('/ia/mejorar-imagen/', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+      responseType: 'blob',
+    });
+
+    if (response.data?.type === 'application/json') {
+      const text = await response.data.text();
+      let errorMsg = 'No se pudo mejorar la imagen';
+      try {
+        const payload = JSON.parse(text);
+        errorMsg = payload?.error || payload?.message || errorMsg;
+      } catch (err) {
+        // Ignorar parse error y usar mensaje por defecto.
+      }
+      throw new Error(errorMsg);
+    }
+
+    return response.data;
+  },
+};
