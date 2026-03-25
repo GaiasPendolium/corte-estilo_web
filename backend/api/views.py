@@ -121,6 +121,20 @@ def _listar_historial_legacy(fecha_inicio, fecha_fin, estilista_id=None, limit=1
         else:
             fecha_cambio_str = str(fecha_cambio_val)
 
+        descuento_dia_estimado = Decimal(0)
+        ganancias_totales_estimadas = Decimal(0)
+        try:
+            estilista_hist = Estilista.objects.filter(id=row[1]).first()
+            fecha_calc = fecha_val.date() if isinstance(fecha_val, datetime) else fecha_val
+            if estilista_hist and fecha_calc:
+                ganancias_totales_estimadas, descuento_dia_estimado, _ = _calcular_totales_dia_estilista(estilista_hist, fecha_calc)
+        except Exception:
+            descuento_dia_estimado = Decimal(0)
+            ganancias_totales_estimadas = Decimal(0)
+
+        abono_estimado = max(Decimal(0), ganancias_totales_estimadas - monto_liquidado)
+        pendiente_estimado = max(Decimal(0), descuento_dia_estimado - abono_estimado)
+
         registros.append(
             {
                 'id': row[0],
@@ -133,8 +147,8 @@ def _listar_historial_legacy(fecha_inicio, fecha_fin, estilista_id=None, limit=1
                 'usuario_id': row[7],
                 'usuario_nombre': row[8],
                 'monto_liquidado': float(monto_liquidado),
-                'abono_puesto': 0,
-                'pendiente_puesto': float(max(Decimal(0), -monto_liquidado)),
+                'abono_puesto': float(abono_estimado),
+                'pendiente_puesto': float(pendiente_estimado),
                 'fecha_cambio': fecha_cambio_str,
             }
         )
@@ -2086,27 +2100,15 @@ def estado_pago_estilista_dia(request):
                 # Siempre actualizar/crear el registro, incluso si es 'pendiente'
                 # Así evitamos problemas de sincronización en el BI
                 ganancias_totales_dia, descuento_dia, neto_dia = _calcular_totales_dia_estilista(estilista, fecha_cursor)
-                max_pagable = max(Decimal(0), ganancias_totales_dia)
-                abono_aplicado = min(abono_puesto, max(descuento_dia, Decimal(0))) if estado == 'cancelado' else Decimal(0)
-                max_liquidable_empleado = max(Decimal(0), ganancias_totales_dia - (max(descuento_dia, Decimal(0)) - abono_aplicado))
+                neto_ganado_dia = max(Decimal(0), neto_dia)
+                abono_aplicado = abono_puesto if estado == 'cancelado' else Decimal(0)
 
-                if (total_pagado + abono_aplicado) > max_pagable:
-                    return Response(
-                        {
-                            'error': (
-                                f'La suma de valor a liquidar + pago puesto (${float((total_pagado + abono_aplicado)):.2f}) '
-                                f'no puede exceder las ganancias totales del día (${float(max_pagable):.2f}).'
-                            )
-                        },
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
-
-                if total_pagado > max_liquidable_empleado:
+                if total_pagado > neto_ganado_dia:
                     return Response(
                         {
                             'error': (
                                 f'El valor a liquidar (${float(total_pagado):.2f}) '
-                                f'no puede exceder ${float(max_liquidable_empleado):.2f} según el abono de puesto.'
+                                f'no puede exceder el neto ganado del día (${float(neto_ganado_dia):.2f}).'
                             )
                         },
                         status=status.HTTP_400_BAD_REQUEST,
@@ -2133,10 +2135,30 @@ def estado_pago_estilista_dia(request):
             except (OperationalError, ProgrammingError):
                 tabla_diaria_no_disponible = True
 
-        if estado_anterior != estado:
+        if estado == 'pendiente' and estado_anterior == 'cancelado':
+            try:
+                try:
+                    EstadoPagoEstilistaHistorial.objects.filter(
+                        estilista=estilista,
+                        fecha=fecha_cursor,
+                        estado_nuevo='cancelado',
+                    ).delete()
+                except (OperationalError, ProgrammingError):
+                    with connection.cursor() as cursor:
+                        cursor.execute(
+                            """
+                            DELETE FROM estado_pago_estilista_historial
+                            WHERE estilista_id = %s AND fecha = %s AND estado_nuevo = %s
+                            """,
+                            [estilista.id, fecha_cursor, 'cancelado'],
+                        )
+            except Exception:
+                historial_no_disponible = True
+
+        if estado_anterior != estado and estado == 'cancelado':
             try:
                 _, descuento_dia_hist, _ = _calcular_totales_dia_estilista(estilista, fecha_cursor)
-                abono_aplicado_hist = min(abono_puesto, max(descuento_dia_hist, Decimal(0))) if estado == 'cancelado' else Decimal(0)
+                abono_aplicado_hist = abono_puesto if estado == 'cancelado' else Decimal(0)
                 pendiente_puesto_hist = max(max(descuento_dia_hist, Decimal(0)) - abono_aplicado_hist, Decimal(0))
                 try:
                     EstadoPagoEstilistaHistorial.objects.create(

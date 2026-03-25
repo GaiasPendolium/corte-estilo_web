@@ -200,7 +200,7 @@ const Reportes = () => {
     const comisiones = Number(fila.comision_ventas_producto || 0);
     const descuentoPuesto = Number(fila.descuento_espacio || 0);
     const gananciasTotales = facturacionServicios + comisiones;
-    const limiteAbonoPuesto = Math.max(descuentoPuesto, 0);
+    const netoGanado = Math.max(gananciasTotales - descuentoPuesto, 0);
     const esDiaUnico = fechaInicio === fechaFin;
 
     const pagos = {
@@ -221,28 +221,16 @@ const Reportes = () => {
         return;
       }
 
-      if (abonoPuesto > limiteAbonoPuesto) {
-        toast.warning(`El pago del puesto no puede exceder ${formatMoney(limiteAbonoPuesto)}.`);
-        return;
-      }
-
-      if ((totalPagos + abonoPuesto) > gananciasTotales) {
-        toast.warning(`La suma de valor a liquidar + pago de puesto no puede exceder ${formatMoney(gananciasTotales)}.`);
-        return;
-      }
-
-      const descuentoAplicado = Math.min(abonoPuesto, Math.max(descuentoPuesto, 0));
-      const maxLiquidableEmpleado = Math.max(gananciasTotales - (Math.max(descuentoPuesto, 0) - descuentoAplicado), 0);
-      if (totalPagos > maxLiquidableEmpleado) {
-        toast.warning(`El valor a liquidar no puede exceder ${formatMoney(maxLiquidableEmpleado)} para el abono de puesto indicado.`);
+      if (totalPagos > netoGanado) {
+        toast.warning(`El valor a liquidar no puede exceder ${formatMoney(netoGanado)} (neto ganado).`);
         return;
       }
 
       pagosDetalle = pagos;
 
       const totalRegistrado = Object.values(pagosDetalle).reduce((a, b) => a + Number(b || 0), 0);
-      if (totalRegistrado > Math.max(maxLiquidableEmpleado, 0)) {
-        toast.warning(`El valor a liquidar no puede exceder ${formatMoney(Math.max(maxLiquidableEmpleado, 0))}.`);
+      if (totalRegistrado > Math.max(netoGanado, 0)) {
+        toast.warning(`El valor a liquidar no puede exceder ${formatMoney(Math.max(netoGanado, 0))}.`);
         return;
       }
     }
@@ -509,10 +497,15 @@ const Reportes = () => {
                 const gananciasTotales = Number(item.facturacion_servicios || 0) + Number(item.comision_ventas_producto || 0);
                 const descuentoPuesto = Number(item.descuento_espacio || 0);
                 const abonoPuestoDigitado = Number(abonoPuestoPorEstilista[item.estilista_id] || 0);
-                const descuentoAplicado = abonoPuestoDigitado > 0
-                  ? Math.min(abonoPuestoDigitado, Math.max(descuentoPuesto, 0))
-                  : descuentoPuesto;
-                const valorALiquidar = gananciasTotales - descuentoAplicado;
+                const valorALiquidar = Math.max(gananciasTotales - descuentoPuesto, 0);
+                const tipoCobro = item.tipo_cobro_espacio || 'sin_cobro';
+                const valorCobroCfg = Number(item.valor_cobro_espacio || 0);
+                const descripcionCobroPuesto = tipoCobro === 'costo_fijo_neto'
+                  ? `Cobro fijo: ${formatMoney(valorCobroCfg)}`
+                  : tipoCobro === 'porcentaje_neto'
+                    ? `Cobro porcentaje: ${valorCobroCfg}%`
+                    : 'Sin cobro de puesto';
+                const pendientePuestoDia = Math.max(descuentoPuesto - abonoPuestoDigitado, 0);
                 const estadoActual = item.estado_pago_rango || item.estado_pago_dia || 'pendiente';
                 return (
                   <tr key={item.estilista_id}>
@@ -521,7 +514,8 @@ const Reportes = () => {
                     <td className="table-cell">{formatMoney(item.comision_ventas_producto)}</td>
                     <td className="table-cell">
                       <div>{formatMoney(item.descuento_espacio)}</div>
-                      <div className="text-[11px] leading-tight text-slate-500">Se liquida con abono puesto</div>
+                      <div className="text-[11px] leading-tight text-slate-500">{descripcionCobroPuesto}</div>
+                      <div className="text-[11px] leading-tight text-amber-600">Pendiente hoy: {formatMoney(pendientePuestoDia)}</div>
                     </td>
                     <td className={`table-cell font-semibold ${valorALiquidar >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
                       {formatMoney(valorALiquidar)}
