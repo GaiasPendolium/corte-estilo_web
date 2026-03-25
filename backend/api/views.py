@@ -2459,7 +2459,9 @@ def reporte_cierre_caja(request):
     ventas_qs = VentaProducto.objects.select_related('producto', 'estilista').filter(
         fecha_hora__date__gte=fecha_inicio_dt,
         fecha_hora__date__lte=fecha_fin_dt,
-    ).exclude(tipo_operacion='consumo_empleado')
+    )
+    ventas_pagadas_qs = ventas_qs.exclude(tipo_operacion='consumo_empleado')
+    ventas_consumo_qs = ventas_qs.filter(tipo_operacion='consumo_empleado')
 
     servicios_qs = ServicioRealizado.objects.select_related(
         'servicio',
@@ -2485,6 +2487,8 @@ def reporte_cierre_caja(request):
 
     if medio_pago and medio_pago != 'todos':
         ventas_qs = ventas_qs.filter(medio_pago=medio_pago)
+        ventas_pagadas_qs = ventas_pagadas_qs.filter(medio_pago=medio_pago)
+        ventas_consumo_qs = ventas_consumo_qs.filter(medio_pago=medio_pago)
         servicios_qs = servicios_qs.filter(medio_pago=medio_pago)
         adicionales_qs = adicionales_qs.filter(servicio_realizado__medio_pago=medio_pago)
 
@@ -2495,7 +2499,7 @@ def reporte_cierre_caja(request):
     ventas_productos_total = Decimal(0)
     costo_productos_total = Decimal(0)
 
-    for venta in ventas_qs.order_by('-fecha_hora'):
+    for venta in ventas_pagadas_qs.order_by('-fecha_hora'):
         valor_venta = Decimal(venta.total or 0)
         costo_unitario = Decimal(venta.producto.precio_compra or 0)
         valor_compra = costo_unitario * Decimal(venta.cantidad or 0)
@@ -2513,6 +2517,30 @@ def reporte_cierre_caja(request):
                 'medio_pago': venta.medio_pago,
                 'estilista_nombre': venta.estilista.nombre if venta.estilista_id else '',
                 'descripcion': venta.producto.nombre,
+                'cantidad': int(venta.cantidad or 0),
+                'valor_venta': float(valor_venta),
+                'valor_compra': float(valor_compra),
+                'ganancia_neta': float(ganancia),
+            }
+        )
+
+    # Consumo empleado: se muestra en el detalle para trazabilidad,
+    # pero no suma al total de ingresos de venta en cierre de caja.
+    for venta in ventas_consumo_qs.order_by('-fecha_hora'):
+        valor_venta = Decimal(venta.total or 0)
+        costo_unitario = Decimal(venta.producto.precio_compra or 0)
+        valor_compra = costo_unitario * Decimal(venta.cantidad or 0)
+        ganancia = valor_venta - valor_compra
+
+        detalle_productos.append(
+            {
+                'fecha_hora': timezone.localtime(venta.fecha_hora).strftime('%Y-%m-%d %H:%M:%S') if venta.fecha_hora else None,
+                'fecha': _fecha_operativa_desde_dt(venta.fecha_hora).strftime('%Y-%m-%d') if venta.fecha_hora else None,
+                'origen': 'consumo_empleado',
+                'numero_factura': venta.numero_factura,
+                'medio_pago': venta.medio_pago,
+                'estilista_nombre': venta.estilista.nombre if venta.estilista_id else '',
+                'descripcion': f"{venta.producto.nombre} (consumo empleado)",
                 'cantidad': int(venta.cantidad or 0),
                 'valor_venta': float(valor_venta),
                 'valor_compra': float(valor_compra),
@@ -2628,8 +2656,6 @@ def reporte_cierre_caja(request):
         nombres_adicionales = []
         if ad.servicio_id:
             nombres_adicionales.append(ad.servicio.nombre)
-        if ad.producto_id:
-            nombres_adicionales.append(ad.producto.nombre)
         if nombres_adicionales:
             nombre = ' + '.join(nombres_adicionales)
             if nombre not in adicionales_nombres_por_servicio[sid]:

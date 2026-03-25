@@ -218,7 +218,13 @@ const Reportes = () => {
               {(productos.detalle || []).map((item, idx) => (
                 <tr key={`${item.fecha_hora || item.fecha || 'x'}-${idx}`}>
                   <td className="table-cell">{item.fecha_hora || item.fecha || '-'}</td>
-                  <td className="table-cell">{item.origen === 'adicional_producto_servicio' ? 'Servicio adicional producto' : 'Venta producto'}</td>
+                  <td className="table-cell">
+                    {item.origen === 'adicional_producto_servicio'
+                      ? 'Servicio adicional producto'
+                      : item.origen === 'consumo_empleado'
+                        ? 'Consumo empleado'
+                        : 'Venta producto'}
+                  </td>
                   <td className="table-cell">{item.descripcion || '-'}</td>
                   <td className="table-cell">{item.cantidad || 0}</td>
                   <td className="table-cell">{formatMoney(item.valor_venta)}</td>
