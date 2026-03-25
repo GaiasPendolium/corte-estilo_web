@@ -242,10 +242,13 @@ const aplicarEstadoLiquidacion = async (fila) => {
     });
     const g = resultado.liquidacion.ganancias_totales;
     const d = resultado.liquidacion.descuento_puesto;
+    const d_ant = resultado.puesto.deuda_anterior;
+    const d_tot = resultado.puesto.deuda_total;
     const p = resultado.pagos.total;
     const s = resultado.puesto.saldo_pendiente;
     
-    toast.success(`✓ ${resultado.estilista.nombre}: Gan ${formatMoney(g)} - Desc ${formatMoney(d)} - Pagado ${formatMoney(p)} - Saldo ${formatMoney(s)}`);
+    const msgDeuda = d_ant > 0 ? ` (${formatMoney(d_ant)} anterior + ${formatMoney(d)} hoy)` : '';
+    toast.success(`✓ ${resultado.estilista.nombre}: Gan ${formatMoney(g)} - Puesto ${formatMoney(d_tot)}${msgDeuda} - Pagado ${formatMoney(p)} - Saldo ${formatMoney(s)}`);
     await cargarTodo();
   } catch (error) {
     const msg = error?.response?.data?.error || error?.message || 'No se pudo procesar la liquidación.';
