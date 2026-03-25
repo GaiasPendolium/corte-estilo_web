@@ -2307,17 +2307,21 @@ def liquidar_dia_v2(request):
     
     # ============ [2] VALIDAR REGLAS DE NEGOCIO ============
     # Deuda anterior de puesto (saldo arrastrado del último día liquidado)
-    ultimo_estado = EstadoPagoEstilistaDia.objects.filter(
-        estilista=estilista,
-        fecha__lt=fecha,
-    ).order_by('-fecha').first()
     deuda_anterior_puesto = Decimal(0)
-    if ultimo_estado:
-        deuda_anterior_puesto = Decimal(
-            getattr(ultimo_estado, 'saldo_puesto_pendiente', None)
-            or getattr(ultimo_estado, 'pendiente_puesto', 0)
-            or 0
-        )
+    try:
+        ultimo_estado = EstadoPagoEstilistaDia.objects.filter(
+            estilista=estilista,
+            fecha__lt=fecha,
+        ).order_by('-fecha').first()
+        if ultimo_estado:
+            deuda_anterior_puesto = Decimal(
+                getattr(ultimo_estado, 'saldo_puesto_pendiente', None)
+                or getattr(ultimo_estado, 'pendiente_puesto', 0)
+                or 0
+            )
+    except (OperationalError, ProgrammingError):
+        # Si la tabla diaria no está al día en producción, continuar sin romper.
+        deuda_anterior_puesto = Decimal(0)
 
     # 1) Tope principal: valor a liquidar no puede superar valor total empleado
     if total_pagado > ganancias:
@@ -2365,6 +2369,9 @@ def liquidar_dia_v2(request):
     saldo_puesto = max(deuda_total_puesto - abono_aplicado_total_puesto, Decimal(0))
     
     # ============ [4] GUARDAR ============
+    tabla_diaria_no_disponible = False
+    estado_resultante = 'pendiente'
+    estado_anterior = 'pendiente'
     try:
         estado_diaria, _ = EstadoPagoEstilistaDia.objects.get_or_create(
             estilista=estilista,
@@ -2392,13 +2399,18 @@ def liquidar_dia_v2(request):
             estado_diaria.estado = 'cancelado'
         
         estado_diaria.save()
+        estado_resultante = estado_diaria.estado
         
+    except (OperationalError, ProgrammingError):
+        # Compatibilidad: no bloquear liquidación por cambios pendientes de schema.
+        tabla_diaria_no_disponible = True
+        estado_resultante = 'cancelado' if ((total_pagado > 0) or (abono_puesto > 0)) else 'pendiente'
     except Exception as e:
-        return Response({'error': f'Error: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response({'error': f'Error procesando liquidación: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
     
     # ============ [5] HISTORIAL ============
     try:
-        if estado_diaria.estado == 'cancelado' and estado_anterior == 'pendiente':
+        if estado_resultante == 'cancelado' and estado_anterior == 'pendiente':
             EstadoPagoEstilistaHistorial.objects.create(
                 estilista=estilista,
                 fecha=fecha,
@@ -2438,7 +2450,8 @@ def liquidar_dia_v2(request):
             'abono_aplicado': float(abono_aplicado_total_puesto),
             'saldo_pendiente': float(saldo_puesto),
         },
-        'estado': estado_diaria.estado,
+        'estado': estado_resultante,
+        'tabla_diaria_no_disponible': tabla_diaria_no_disponible,
     })
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
