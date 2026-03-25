@@ -699,10 +699,9 @@ const aplicarEstadoLiquidacion = async (fila) => {
               )}
               {historialEstados.map((h) => {
                 const pendientePuesto = Number(h.pendiente_puesto || 0);
-                const estadoHist = (String(h.estado_nuevo || '').toLowerCase() === 'debe' || pendientePuesto > 0)
-                  ? 'debe'
-                  : (String(h.estado_nuevo || '').toLowerCase() === 'cancelado' ? 'cancelado' : 'pendiente');
-                const estadoHistLabel = estadoHist === 'debe' ? 'Debe' : (estadoHist === 'cancelado' ? 'Liquidado' : 'Pendiente');
+                const estadoNuevo = String(h.estado_nuevo || '').toLowerCase();
+                const estadoHist = estadoNuevo === 'cancelado' ? 'cancelado' : estadoNuevo === 'debe' ? 'debe' : 'pendiente';
+                const estadoHistLabel = estadoHist === 'cancelado' ? 'Liquidado' : estadoHist === 'debe' ? 'Debe' : 'Pendiente';
                 const estadoHistClass = estadoHist === 'debe'
                   ? 'bg-rose-100 text-rose-800'
                   : (estadoHist === 'cancelado' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800');
