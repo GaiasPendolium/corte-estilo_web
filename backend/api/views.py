@@ -115,6 +115,36 @@ def _calcular_neto_dia_estilista(estilista, fecha_dia):
     return (base_servicio_dia - descuento_dia) + comision_producto_caja_dia + comision_producto_servicio_dia
 
 
+def _calcular_saldo_deuda_puesto_estilista(estilista, fecha_corte=None):
+    """Saldo acumulado de deuda de puesto para un estilista hasta una fecha."""
+    try:
+        qs = EstadoPagoEstilistaDia.objects.filter(estilista=estilista, estado='cancelado')
+        if fecha_corte is not None:
+            qs = qs.filter(fecha__lte=fecha_corte)
+        qs = qs.order_by('fecha', 'id')
+    except (OperationalError, ProgrammingError):
+        return Decimal(0)
+
+    saldo = Decimal(0)
+    for item in qs:
+        neto_dia = _calcular_neto_dia_estilista(estilista, item.fecha)
+        if neto_dia < 0:
+            saldo += abs(neto_dia)
+            saldo -= (
+                Decimal(item.pago_efectivo or 0)
+                + Decimal(item.pago_nequi or 0)
+                + Decimal(item.pago_daviplata or 0)
+                + Decimal(item.pago_otros or 0)
+            )
+        else:
+            saldo -= Decimal(item.abono_puesto or 0)
+
+        if saldo < 0:
+            saldo = Decimal(0)
+
+    return saldo
+
+
 class UsuarioViewSet(viewsets.ModelViewSet):
     """ViewSet para el modelo Usuario"""
     
@@ -1213,6 +1243,11 @@ def _calcular_datos_bi(request):
             estados_pago_map = {}
 
     for estilista in Estilista.objects.filter(activo=True):
+        deuda_puesto_arrastrada = _calcular_saldo_deuda_puesto_estilista(
+            estilista,
+            fecha_inicio_dt - timedelta(days=1),
+        )
+
         servicios_est = servicios_qs.filter(estilista=estilista)
         ventas_est = ventas_pagadas_qs.filter(estilista=estilista)
 
@@ -1357,6 +1392,7 @@ def _calcular_datos_bi(request):
                 'estado_pago_rango': estado_pago_rango,
                 'dias_cancelados_rango': int(dias_cancelados),
                 'dias_pendientes_rango': int(max(total_dias - dias_cancelados, 0)),
+                'deuda_puesto_arrastrada': float(deuda_puesto_arrastrada),
                 'fecha_estado_pago': fecha_fin,
             }
         )
@@ -1843,6 +1879,7 @@ def estado_pago_estilista_dia(request):
                     'pago_nequi': float(x.pago_nequi or 0),
                     'pago_daviplata': float(x.pago_daviplata or 0),
                     'pago_otros': float(x.pago_otros or 0),
+                    'abono_puesto': float(x.abono_puesto or 0),
                     'notas': x.notas,
                 }
                 for x in EstadoPagoEstilistaDia.objects.filter(fecha=fecha)
@@ -1866,6 +1903,7 @@ def estado_pago_estilista_dia(request):
                         'pago_nequi': 0,
                         'pago_daviplata': 0,
                         'pago_otros': 0,
+                        'abono_puesto': 0,
                         'notas': h.notas,
                     }
                 )
@@ -1894,6 +1932,7 @@ def estado_pago_estilista_dia(request):
     pago_daviplata = _to_decimal_non_negative(pagos_detalle.get('daviplata'))
     pago_otros = _to_decimal_non_negative(pagos_detalle.get('otros'))
     total_pagado = pago_efectivo + pago_nequi + pago_daviplata + pago_otros
+    abono_puesto = _to_decimal_non_negative(request.data.get('abono_puesto'))
 
     if not estilista_id or estado not in {'pendiente', 'cancelado'}:
         return Response(
@@ -1963,6 +2002,39 @@ def estado_pago_estilista_dia(request):
                 # Así evitamos problemas de sincronización en el BI
                 neto_dia = _calcular_neto_dia_estilista(estilista, fecha_cursor)
                 max_pagable = abs(neto_dia)
+
+                if neto_dia > 0 and abono_puesto > max_pagable:
+                    return Response(
+                        {
+                            'error': (
+                                f'El abono a puesto (${float(abono_puesto):.2f}) '
+                                f'no puede exceder el neto del día (${float(max_pagable):.2f}).'
+                            )
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                if neto_dia <= 0 and abono_puesto > 0:
+                    return Response(
+                        {
+                            'error': 'El abono a puesto desde base solo aplica cuando el neto del día es positivo.'
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                if neto_dia > 0:
+                    max_pago_empleado = max_pagable - abono_puesto
+                    if total_pagado > max_pago_empleado:
+                        return Response(
+                            {
+                                'error': (
+                                    f'Con abono a puesto de ${float(abono_puesto):.2f}, '
+                                    f'el pago al empleado no puede exceder ${float(max_pago_empleado):.2f}.'
+                                )
+                            },
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+
                 if total_pagado > max_pagable:
                     return Response(
                         {
@@ -1983,6 +2055,7 @@ def estado_pago_estilista_dia(request):
                         'pago_nequi': pago_nequi if estado == 'cancelado' else Decimal(0),
                         'pago_daviplata': pago_daviplata if estado == 'cancelado' else Decimal(0),
                         'pago_otros': pago_otros if estado == 'cancelado' else Decimal(0),
+                        'abono_puesto': abono_puesto if estado == 'cancelado' else Decimal(0),
                         'notas': notas,
                     },
                 )
@@ -2027,6 +2100,7 @@ def estado_pago_estilista_dia(request):
                 'otros': float(pago_otros),
                 'total': float(total_pagado),
             },
+            'abono_puesto': float(abono_puesto),
         }
     )
 
