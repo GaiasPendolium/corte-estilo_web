@@ -507,6 +507,8 @@ const Reportes = () => {
                     : 'Sin cobro de puesto';
                 const pendientePuestoDia = Math.max(descuentoPuesto - abonoPuestoDigitado, 0);
                 const estadoActual = item.estado_pago_rango || item.estado_pago_dia || 'pendiente';
+                const valorALiquidarVisible = estadoActual === 'cancelado' ? 0 : valorALiquidar;
+                const deudaPuestoVisible = estadoActual === 'cancelado' ? 0 : deudaPuestoRango;
                 return (
                   <tr key={item.estilista_id}>
                     <td className="table-cell font-medium">{item.estilista_nombre}</td>
@@ -517,10 +519,10 @@ const Reportes = () => {
                       <div className="text-[11px] leading-tight text-slate-500">{descripcionCobroPuesto}</div>
                       <div className="text-[11px] leading-tight text-amber-600">Pendiente hoy: {formatMoney(pendientePuestoDia)}</div>
                     </td>
-                    <td className={`table-cell font-semibold ${valorALiquidar >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                      {formatMoney(valorALiquidar)}
+                    <td className={`table-cell font-semibold ${valorALiquidarVisible >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                      {formatMoney(valorALiquidarVisible)}
                     </td>
-                    <td className="table-cell text-amber-700 font-semibold">{formatMoney(deudaPuestoRango)}</td>
+                    <td className="table-cell text-amber-700 font-semibold">{formatMoney(deudaPuestoVisible)}</td>
                     <td className="table-cell">
                       <input
                         className="input-field !py-2 !min-h-0 min-w-[120px]"

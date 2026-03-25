@@ -83,12 +83,10 @@ def _listar_historial_legacy(fecha_inicio, fecha_fin, estilista_id=None, limit=1
             h.usuario_id,
             COALESCE(u.nombre_completo, 'Sistema') AS usuario_nombre,
             h.monto_liquidado,
-            h.fecha_cambio,
-            COALESCE(d.pago_efectivo, 0) + COALESCE(d.pago_nequi, 0) + COALESCE(d.pago_daviplata, 0) + COALESCE(d.pago_otros, 0) AS total_registrado_dia
+            h.fecha_cambio
         FROM estado_pago_estilista_historial h
         INNER JOIN estilistas e ON e.id = h.estilista_id
         LEFT JOIN usuarios u ON u.id = h.usuario_id
-        LEFT JOIN estado_pago_estilista_dia d ON d.estilista_id = h.estilista_id AND d.fecha = h.fecha
         WHERE h.fecha >= %s AND h.fecha <= %s
     """
     params = [fecha_inicio, fecha_fin]
@@ -108,7 +106,6 @@ def _listar_historial_legacy(fecha_inicio, fecha_fin, estilista_id=None, limit=1
     for row in rows:
         fecha_val = row[3]
         fecha_cambio_val = row[10]
-        total_registrado_dia = Decimal(str(row[11] or 0))
         monto_liquidado = Decimal(str(row[9] or 0))
 
         if isinstance(fecha_val, datetime):
@@ -135,10 +132,7 @@ def _listar_historial_legacy(fecha_inicio, fecha_fin, estilista_id=None, limit=1
             descuento_dia_estimado = Decimal(0)
             ganancias_totales_estimadas = Decimal(0)
 
-        # En esquema legacy, monto_liquidado representa pago al empleado.
-        # El abono de puesto puede inferirse desde el total registrado del día.
-        abono_por_registro_dia = max(Decimal(0), total_registrado_dia - monto_liquidado)
-        abono_estimado = max(abono_por_registro_dia, Decimal(0))
+        abono_estimado = max(Decimal(0), ganancias_totales_estimadas - monto_liquidado)
         pendiente_estimado = max(Decimal(0), descuento_dia_estimado - abono_estimado)
 
         registros.append(
@@ -1459,12 +1453,14 @@ def _calcular_datos_bi(request):
                 estilista=estilista,
                 fecha__lt=fecha_inicio_dt,
                 neto_dia__lt=0,
+                estado='pendiente',
             ).values_list('neto_dia', flat=True)
             deuda_puesto_historica = abs(sum(Decimal(x or 0) for x in registros_anteriores))
         except Exception:
             deuda_puesto_historica = Decimal(0)
 
-        deuda_total_acumulada = deuda_puesto_historica + abs(pago_neto_pendiente)
+        deuda_rango_pendiente = max(Decimal(0), -pago_neto_pendiente)
+        deuda_total_acumulada = deuda_puesto_historica + deuda_rango_pendiente
 
         estilistas_data.append(
             {
