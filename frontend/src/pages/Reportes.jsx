@@ -669,7 +669,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
         <div className="flex items-center justify-between gap-3">
           <div>
             <h3 className="card-header mb-0">Historial de Liquidacion</h3>
-            <p className="text-sm text-slate-600">Fecha del dia liquidado, fecha hora del proceso, empleado, valor liquidado, pendiente puesto y usuario que liquido.</p>
+            <p className="text-sm text-slate-600">Fecha del dia liquidado, fecha hora del proceso, empleado, estado, valor liquidado, pendiente puesto y usuario que liquido.</p>
           </div>
           <button className="btn-secondary" onClick={cargarTodo} disabled={loadingHistorial}>
             {loadingHistorial ? 'Cargando...' : 'Actualizar historial'}
@@ -683,6 +683,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
                 <th className="px-4 py-3 text-left">Fecha liquidada</th>
                 <th className="px-4 py-3 text-left">Fecha hora</th>
                 <th className="px-4 py-3 text-left">Empleado</th>
+                <th className="px-4 py-3 text-left">Estado</th>
                 <th className="px-4 py-3 text-left">Valor liquidado</th>
                 <th className="px-4 py-3 text-left">Abono puesto</th>
                 <th className="px-4 py-3 text-left">Pendiente puesto</th>
@@ -693,16 +694,28 @@ const aplicarEstadoLiquidacion = async (fila) => {
             <tbody className="bg-white divide-y divide-gray-200">
               {historialEstados.length === 0 && (
                 <tr>
-                  <td className="table-cell text-slate-500" colSpan={esAdministrador ? 8 : 7}>No hay liquidaciones registradas en el rango.</td>
+                  <td className="table-cell text-slate-500" colSpan={esAdministrador ? 9 : 8}>No hay liquidaciones registradas en el rango.</td>
                 </tr>
               )}
               {historialEstados.map((h) => {
                 const pendientePuesto = Number(h.pendiente_puesto || 0);
+                const estadoHist = (String(h.estado_nuevo || '').toLowerCase() === 'debe' || pendientePuesto > 0)
+                  ? 'debe'
+                  : (String(h.estado_nuevo || '').toLowerCase() === 'cancelado' ? 'cancelado' : 'pendiente');
+                const estadoHistLabel = estadoHist === 'debe' ? 'Debe' : (estadoHist === 'cancelado' ? 'Liquidado' : 'Pendiente');
+                const estadoHistClass = estadoHist === 'debe'
+                  ? 'bg-rose-100 text-rose-800'
+                  : (estadoHist === 'cancelado' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800');
                 return (
                   <tr key={h.id}>
                     <td className="table-cell">{h.fecha || '-'}</td>
                     <td className="table-cell">{h.fecha_cambio || '-'}</td>
                     <td className="table-cell font-medium">{h.estilista_nombre || '-'}</td>
+                    <td className="table-cell">
+                      <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${estadoHistClass}`}>
+                        {estadoHistLabel}
+                      </span>
+                    </td>
                     <td className={`table-cell font-semibold ${Number(h.monto_liquidado || 0) >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
                       {formatMoney(h.monto_liquidado)}
                     </td>
