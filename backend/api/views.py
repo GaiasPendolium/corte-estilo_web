@@ -88,42 +88,81 @@ def _mejorar_imagen_rapida(imagen_file, intensidad=55, upscale=True):
         return out.getvalue()
 
 
-def _mejorar_imagen_ia_real(imagen_bytes, intensidad=55, upscale=True):
+def _mejorar_imagen_ia_real(imagen_bytes, intensidad=55, upscale=True, upscale_factor=3):
     import cv2
     import numpy as np
 
     fuerza = max(0.0, min(100.0, float(intensidad))) / 100.0
+    if int(upscale_factor) not in {2, 3, 4}:
+        upscale_factor = 3
+
     arr = np.frombuffer(imagen_bytes, dtype=np.uint8)
     img_bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     if img_bgr is None:
         raise ValueError('No se pudo decodificar la imagen.')
 
-    # Denoise suave para preparar restauración sin destruir textura.
-    h = int(3 + (fuerza * 5))
-    img_bgr = cv2.fastNlMeansDenoisingColored(img_bgr, None, h, h, 7, 21)
-
-    if upscale and max(img_bgr.shape[:2]) <= 1900:
-        scale = 2 if max(img_bgr.shape[:2]) > 1000 else 3
-        model_path = _ruta_modelo_edsr(scale=scale)
-        sr = cv2.dnn_superres.DnnSuperResImpl_create()
-        sr.readModel(str(model_path))
-        sr.setModel('edsr', int(scale))
-        img_bgr = sr.upsample(img_bgr)
-
-    # Preservar color natural: ajustar solo el canal de luminancia (Y), no croma.
+    # Preservar color natural: procesar detalle principalmente en luminancia (Y).
     ycrcb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2YCrCb)
     y, cr, cb = cv2.split(ycrcb)
+    y_ref = y.copy()
 
-    # Contraste local controlado para recuperar microdetalle sin cambiar tonos.
+    # Estimación robusta de ruido para denoise adaptativo.
+    y_float = y.astype(np.float32)
+    mediana = np.median(y_float)
+    mad = np.median(np.abs(y_float - mediana))
+    sigma_est = float(mad / 0.6745) if mad > 0 else 0.0
+    h = int(max(2, min(8, (sigma_est / 11.0) + (fuerza * 1.4))))
+    if sigma_est > 3.0 or fuerza >= 0.45:
+        y = cv2.fastNlMeansDenoising(y, None, h, 7, 21)
+
+    if upscale and max(img_bgr.shape[:2]) <= 2200:
+        # Super-resolución IA en luminancia para minimizar shift de color.
+        y_input = cv2.cvtColor(y, cv2.COLOR_GRAY2BGR)
+        model_path = _ruta_modelo_edsr(scale=upscale_factor)
+        sr = cv2.dnn_superres.DnnSuperResImpl_create()
+        sr.readModel(str(model_path))
+        sr.setModel('edsr', int(upscale_factor))
+        y_sr_bgr = sr.upsample(y_input)
+        y = cv2.cvtColor(y_sr_bgr, cv2.COLOR_BGR2GRAY)
+
+        target_w = y.shape[1]
+        target_h = y.shape[0]
+        cr = cv2.resize(cr, (target_w, target_h), interpolation=cv2.INTER_CUBIC)
+        cb = cv2.resize(cb, (target_w, target_h), interpolation=cv2.INTER_CUBIC)
+        y_ref = cv2.resize(y_ref, (target_w, target_h), interpolation=cv2.INTER_LANCZOS4)
+
+    # Contraste local muy suave y mezclado para evitar efecto plástico.
     clahe = cv2.createCLAHE(
-        clipLimit=1.5 + (fuerza * 1.2),
+        clipLimit=1.05 + (fuerza * 0.35),
         tileGridSize=(8, 8),
     )
-    y = clahe.apply(y)
+    y_clahe = clahe.apply(y)
+    clahe_mix = 0.08 + (fuerza * 0.12)
+    y = cv2.addWeighted(y, 1.0 - clahe_mix, y_clahe, clahe_mix, 0)
 
-    # Unsharp suave sobre luminancia para evitar halos y bordes artificiales.
-    blur = cv2.GaussianBlur(y, (0, 0), 0.9 + (fuerza * 0.7))
-    y = cv2.addWeighted(y, 1.20 + (fuerza * 0.10), blur, -(0.20 + (fuerza * 0.10)), 0)
+    # Sharpening edge-aware: refuerzo moderado solo en bordes reales.
+    y_f = y.astype(np.float32)
+    base = cv2.bilateralFilter(y_f, d=0, sigmaColor=12 + (fuerza * 8), sigmaSpace=4 + (fuerza * 2))
+    detalle = y_f - base
+    detalle = np.clip(detalle, -12.0, 12.0)
+    gx = cv2.Sobel(y_f, cv2.CV_32F, 1, 0, ksize=3)
+    gy = cv2.Sobel(y_f, cv2.CV_32F, 0, 1, ksize=3)
+    mag = cv2.magnitude(gx, gy)
+    mag_norm = cv2.normalize(mag, None, alpha=0.0, beta=1.0, norm_type=cv2.NORM_MINMAX)
+    edge_mask = cv2.GaussianBlur(np.power(mag_norm, 1.25), (0, 0), 1.0)
+
+    # Protección de piel/zonas uniformes para mantener apariencia natural.
+    skin_mask = ((cr > 133) & (cr < 173) & (cb > 77) & (cb < 127)).astype(np.float32)
+    skin_mask = cv2.GaussianBlur(skin_mask, (0, 0), 2.0)
+    protect = 1.0 - (0.55 * skin_mask)
+
+    amount = 0.10 + (fuerza * 0.12)
+    y_sharp = y_f + (detalle * edge_mask * protect * amount)
+    y_sharp = np.clip(y_sharp, 0, 255).astype(np.uint8)
+
+    # Mezcla final con referencia para conservar iluminación natural y evitar sobreproceso.
+    natural_mix = 0.22 + (fuerza * 0.10)
+    y = cv2.addWeighted(y_sharp, 1.0 - natural_mix, y_ref, natural_mix, 0)
 
     ycrcb_out = cv2.merge([y, cr, cb])
     img_bgr = cv2.cvtColor(ycrcb_out, cv2.COLOR_YCrCb2BGR)
@@ -1946,6 +1985,12 @@ def mejorar_imagen_ia(request):
 
     upscale_raw = str(request.data.get('upscale', 'true')).strip().lower()
     upscale = upscale_raw not in {'false', '0', 'no'}
+    try:
+        upscale_factor = int(request.data.get('upscale_factor', 3))
+    except Exception:
+        upscale_factor = 3
+    if upscale_factor not in {2, 3, 4}:
+        upscale_factor = 3
     modo = str(request.data.get('modo', 'ia')).strip().lower()
     if modo not in {'ia', 'rapido'}:
         modo = 'ia'
@@ -1954,7 +1999,12 @@ def mejorar_imagen_ia(request):
         if modo == 'ia':
             imagen_file.seek(0)
             imagen_bytes = imagen_file.read()
-            salida_bytes = _mejorar_imagen_ia_real(imagen_bytes, intensidad=intensidad, upscale=upscale)
+            salida_bytes = _mejorar_imagen_ia_real(
+                imagen_bytes,
+                intensidad=intensidad,
+                upscale=upscale,
+                upscale_factor=upscale_factor,
+            )
         else:
             salida_bytes = _mejorar_imagen_rapida(imagen_file, intensidad=intensidad, upscale=upscale)
     except Exception as exc:

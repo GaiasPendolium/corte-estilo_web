@@ -73,6 +73,12 @@ CORS_ALLOWED_ORIGINS = config(
     cast=lambda v: [s.strip() for s in v.split(',')]
 )
 
+CORS_ALLOWED_ORIGIN_REGEXES = config(
+    'CORS_ALLOWED_ORIGIN_REGEXES',
+    default=r'^https://.*\.vercel\.app$',
+    cast=lambda v: [s.strip() for s in v.split(',') if s.strip()]
+)
+
 CORS_ALLOW_CREDENTIALS = True
 
 DATABASE_URL = config('DATABASE_URL', default='')

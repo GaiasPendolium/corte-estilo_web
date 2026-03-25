@@ -10,8 +10,9 @@ const MejoradorImagenIA = () => {
   const [imagenOriginalUrl, setImagenOriginalUrl] = useState('');
   const [imagenMejoradaBlob, setImagenMejoradaBlob] = useState(null);
   const [imagenMejoradaUrl, setImagenMejoradaUrl] = useState('');
-  const [intensidad, setIntensidad] = useState(55);
+  const [intensidad, setIntensidad] = useState(40);
   const [upscale, setUpscale] = useState(true);
+  const [upscaleFactor, setUpscaleFactor] = useState(2);
   const [modo, setModo] = useState('ia');
   const [loading, setLoading] = useState(false);
 
@@ -70,6 +71,7 @@ const MejoradorImagenIA = () => {
         imagenFile: imagenOriginal,
         intensidad,
         upscale,
+        upscaleFactor,
         modo,
       });
       const url = URL.createObjectURL(blob);
@@ -132,7 +134,7 @@ const MejoradorImagenIA = () => {
             </select>
             <p className="text-xs text-slate-500 mt-1">
               {modo === 'ia'
-                ? 'Mejor calidad para fotos borrosas, preservando color natural (más lento).'
+                ? 'Mejor calidad natural. Recomendado: intensidad 35-50 y 2x/3x para evitar artefactos.'
                 : 'Más rápido, menor calidad que IA.'}
             </p>
           </div>
@@ -157,6 +159,20 @@ const MejoradorImagenIA = () => {
             />
             Reescalar automáticamente fotos pequeñas
           </label>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Factor de reescalado</label>
+            <select
+              className="input-field"
+              value={upscaleFactor}
+              onChange={(e) => setUpscaleFactor(Number(e.target.value || 3))}
+              disabled={!upscale}
+            >
+              <option value={2}>2x (más natural)</option>
+              <option value={3}>3x (equilibrado)</option>
+              <option value={4}>4x (máximo detalle)</option>
+            </select>
+          </div>
 
           <button className="btn-primary w-full inline-flex items-center justify-center gap-2" onClick={mejorarImagen} disabled={loading || !imagenOriginal}>
             {loading ? <FiRefreshCw className="animate-spin" /> : <FiImage />}

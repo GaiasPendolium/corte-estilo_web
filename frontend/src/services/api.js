@@ -1,6 +1,9 @@
 import axios from 'axios';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
+const DEFAULT_PROD_API_URL = 'https://corteandestilo-production.up.railway.app/api';
+const isLocalHost =
+  typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname);
+const API_URL = import.meta.env.VITE_API_URL || (isLocalHost ? 'http://localhost:8000/api' : DEFAULT_PROD_API_URL);
 
 // Crear instancia de axios
 const api = axios.create({
@@ -52,6 +55,10 @@ api.interceptors.response.use(
         window.location.href = '/login';
         return Promise.reject(refreshError);
       }
+    }
+
+    if (!error.response) {
+      error.message = 'No se pudo conectar al servidor. Verifica VITE_API_URL y CORS en backend.';
     }
 
     return Promise.reject(error);
@@ -422,11 +429,12 @@ export const reportesService = {
 };
 
 export const iaService = {
-  mejorarImagen: async ({ imagenFile, intensidad = 55, upscale = true, modo = 'ia' }) => {
+  mejorarImagen: async ({ imagenFile, intensidad = 55, upscale = true, upscaleFactor = 3, modo = 'ia' }) => {
     const formData = new FormData();
     formData.append('imagen', imagenFile);
     formData.append('intensidad', String(intensidad));
     formData.append('upscale', String(Boolean(upscale)));
+    formData.append('upscale_factor', String(upscaleFactor));
     formData.append('modo', String(modo || 'ia'));
 
     const response = await api.post('/ia/mejorar-imagen/', formData, {
