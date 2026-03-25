@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   FiHome, FiUsers, FiScissors, FiPackage, FiDollarSign,
-  FiBarChart2, FiLogOut, FiMenu, FiX, FiMonitor, FiPrinter, FiImage
+  FiBarChart2, FiLogOut, FiMenu, FiX, FiMonitor, FiPrinter
 } from 'react-icons/fi';
 import useAuthStore from '../store/authStore';
 import { toast } from 'react-toastify';
@@ -28,8 +28,6 @@ const Layout = () => {
   };
 
   const esAdmin = isManagerRole(user?.rol);
-  const esSoloAdmin = String(user?.rol || '').trim().toLowerCase() === 'administrador';
-
   const menuItems = [
     { path: '/dashboard', icon: FiHome, label: 'Dashboard' },
     ...(esAdmin ? [
@@ -40,7 +38,6 @@ const Layout = () => {
     { path: '/servicios', icon: FiPackage, label: 'Operación diaria' },
     { path: '/productos', icon: FiPackage, label: 'Inventario y Servicio' },
     { path: '/ventas', icon: FiDollarSign, label: 'Histórico de ventas' },
-    ...(esSoloAdmin ? [{ path: '/ia-imagen', icon: FiImage, label: 'Mejorador IA Imagen' }] : []),
     { path: '/reportes', icon: FiBarChart2, label: 'Reportes' },
   ];
 

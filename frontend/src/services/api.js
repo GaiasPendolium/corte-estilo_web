@@ -340,6 +340,11 @@ export const reportesService = {
     return response.data;
   },
 
+  getCierreCaja: async (params) => {
+    const response = await api.get('/reportes/cierre-caja/', { params });
+    return response.data;
+  },
+
   exportBICsv: async (params) => {
     try {
       const response = await api.get('/reportes/bi/export/', {
@@ -424,38 +429,6 @@ export const reportesService = {
       medio_pago,
       notas,
     });
-    return response.data;
-  },
-};
-
-export const iaService = {
-  mejorarImagen: async ({ imagenFile, intensidad = 55, upscale = true, upscaleFactor = 3, modo = 'ia' }) => {
-    const formData = new FormData();
-    formData.append('imagen', imagenFile);
-    formData.append('intensidad', String(intensidad));
-    formData.append('upscale', String(Boolean(upscale)));
-    formData.append('upscale_factor', String(upscaleFactor));
-    formData.append('modo', String(modo || 'ia'));
-
-    const response = await api.post('/ia/mejorar-imagen/', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-      responseType: 'blob',
-    });
-
-    if (response.data?.type === 'application/json') {
-      const text = await response.data.text();
-      let errorMsg = 'No se pudo mejorar la imagen';
-      try {
-        const payload = JSON.parse(text);
-        errorMsg = payload?.error || payload?.message || errorMsg;
-      } catch (err) {
-        // Ignorar parse error y usar mensaje por defecto.
-      }
-      throw new Error(errorMsg);
-    }
-
     return response.data;
   },
 };

@@ -8,16 +8,12 @@ from django.db.models import Sum, Count, Q, F
 from django.db import transaction
 from django.db.utils import OperationalError, ProgrammingError
 from django.utils import timezone
-from django.conf import settings
 from django.http import HttpResponse
 from datetime import datetime, timedelta
 from decimal import Decimal
 import csv
 import io
 import uuid
-from pathlib import Path
-import urllib.request
-from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
 from .models import (
     Usuario, Estilista, Servicio, Cliente, Producto,
@@ -35,142 +31,6 @@ from .serializers import (
 
 def _es_admin_o_gerente(user):
     return getattr(user, 'rol', None) in ['administrador', 'gerente']
-
-
-def _es_admin(user):
-    return str(getattr(user, 'rol', '') or '').strip().lower() == 'administrador'
-
-
-def _ruta_modelo_edsr(scale=2):
-    if int(scale) not in {2, 3, 4}:
-        scale = 2
-    model_dir = Path(getattr(settings, 'MEDIA_ROOT', '.')) / 'ai_models'
-    model_dir.mkdir(parents=True, exist_ok=True)
-    model_path = model_dir / f'EDSR_x{int(scale)}.pb'
-    if model_path.exists():
-        return model_path
-
-    url = f'https://github.com/Saafke/EDSR_Tensorflow/raw/master/models/EDSR_x{int(scale)}.pb'
-    urllib.request.urlretrieve(url, str(model_path))
-    return model_path
-
-
-def _mejorar_imagen_rapida(imagen_file, intensidad=55, upscale=True):
-    fuerza = max(0.0, min(100.0, float(intensidad))) / 100.0
-    with Image.open(imagen_file) as img_in:
-        img = ImageOps.exif_transpose(img_in).convert('RGB')
-
-        original_w, original_h = img.size
-        if upscale and max(original_w, original_h) < 1200:
-            factor = 2.0 if max(original_w, original_h) < 900 else 1.5
-            img = img.resize((int(original_w * factor), int(original_h * factor)), Image.Resampling.LANCZOS)
-
-        iteraciones_ruido = 1 + int(fuerza * 2)
-        for _ in range(iteraciones_ruido):
-            img = img.filter(ImageFilter.MedianFilter(size=3))
-
-        img = img.filter(ImageFilter.SMOOTH_MORE)
-        img = ImageEnhance.Contrast(img).enhance(1.05 + (fuerza * 0.18))
-        img = ImageEnhance.Sharpness(img).enhance(1.05 + (fuerza * 0.55))
-        img = img.filter(
-            ImageFilter.UnsharpMask(
-                radius=1.3 + (fuerza * 0.7),
-                percent=int(95 + (fuerza * 70)),
-                threshold=2,
-            )
-        )
-        img = ImageOps.autocontrast(img, cutoff=0.4 + (fuerza * 0.8))
-        img = ImageEnhance.Color(img).enhance(1.01 + (fuerza * 0.06))
-
-        out = io.BytesIO()
-        img.save(out, format='PNG', optimize=True)
-        out.seek(0)
-        return out.getvalue()
-
-
-def _mejorar_imagen_ia_real(imagen_bytes, intensidad=55, upscale=True, upscale_factor=3):
-    import cv2
-    import numpy as np
-
-    fuerza = max(0.0, min(100.0, float(intensidad))) / 100.0
-    if int(upscale_factor) not in {2, 3, 4}:
-        upscale_factor = 3
-
-    arr = np.frombuffer(imagen_bytes, dtype=np.uint8)
-    img_bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-    if img_bgr is None:
-        raise ValueError('No se pudo decodificar la imagen.')
-
-    # Preservar color natural: procesar detalle principalmente en luminancia (Y).
-    ycrcb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2YCrCb)
-    y, cr, cb = cv2.split(ycrcb)
-    y_ref = y.copy()
-
-    # Estimación robusta de ruido para denoise adaptativo.
-    y_float = y.astype(np.float32)
-    mediana = np.median(y_float)
-    mad = np.median(np.abs(y_float - mediana))
-    sigma_est = float(mad / 0.6745) if mad > 0 else 0.0
-    h = int(max(2, min(8, (sigma_est / 11.0) + (fuerza * 1.4))))
-    if sigma_est > 3.0 or fuerza >= 0.45:
-        y = cv2.fastNlMeansDenoising(y, None, h, 7, 21)
-
-    if upscale and max(img_bgr.shape[:2]) <= 2200:
-        # Super-resolución IA en luminancia para minimizar shift de color.
-        y_input = cv2.cvtColor(y, cv2.COLOR_GRAY2BGR)
-        model_path = _ruta_modelo_edsr(scale=upscale_factor)
-        sr = cv2.dnn_superres.DnnSuperResImpl_create()
-        sr.readModel(str(model_path))
-        sr.setModel('edsr', int(upscale_factor))
-        y_sr_bgr = sr.upsample(y_input)
-        y = cv2.cvtColor(y_sr_bgr, cv2.COLOR_BGR2GRAY)
-
-        target_w = y.shape[1]
-        target_h = y.shape[0]
-        cr = cv2.resize(cr, (target_w, target_h), interpolation=cv2.INTER_CUBIC)
-        cb = cv2.resize(cb, (target_w, target_h), interpolation=cv2.INTER_CUBIC)
-        y_ref = cv2.resize(y_ref, (target_w, target_h), interpolation=cv2.INTER_LANCZOS4)
-
-    # Contraste local muy suave y mezclado para evitar efecto plástico.
-    clahe = cv2.createCLAHE(
-        clipLimit=1.05 + (fuerza * 0.35),
-        tileGridSize=(8, 8),
-    )
-    y_clahe = clahe.apply(y)
-    clahe_mix = 0.08 + (fuerza * 0.12)
-    y = cv2.addWeighted(y, 1.0 - clahe_mix, y_clahe, clahe_mix, 0)
-
-    # Sharpening edge-aware: refuerzo moderado solo en bordes reales.
-    y_f = y.astype(np.float32)
-    base = cv2.bilateralFilter(y_f, d=0, sigmaColor=12 + (fuerza * 8), sigmaSpace=4 + (fuerza * 2))
-    detalle = y_f - base
-    detalle = np.clip(detalle, -12.0, 12.0)
-    gx = cv2.Sobel(y_f, cv2.CV_32F, 1, 0, ksize=3)
-    gy = cv2.Sobel(y_f, cv2.CV_32F, 0, 1, ksize=3)
-    mag = cv2.magnitude(gx, gy)
-    mag_norm = cv2.normalize(mag, None, alpha=0.0, beta=1.0, norm_type=cv2.NORM_MINMAX)
-    edge_mask = cv2.GaussianBlur(np.power(mag_norm, 1.25), (0, 0), 1.0)
-
-    # Protección de piel/zonas uniformes para mantener apariencia natural.
-    skin_mask = ((cr > 133) & (cr < 173) & (cb > 77) & (cb < 127)).astype(np.float32)
-    skin_mask = cv2.GaussianBlur(skin_mask, (0, 0), 2.0)
-    protect = 1.0 - (0.55 * skin_mask)
-
-    amount = 0.10 + (fuerza * 0.12)
-    y_sharp = y_f + (detalle * edge_mask * protect * amount)
-    y_sharp = np.clip(y_sharp, 0, 255).astype(np.uint8)
-
-    # Mezcla final con referencia para conservar iluminación natural y evitar sobreproceso.
-    natural_mix = 0.22 + (fuerza * 0.10)
-    y = cv2.addWeighted(y_sharp, 1.0 - natural_mix, y_ref, natural_mix, 0)
-
-    ycrcb_out = cv2.merge([y, cr, cb])
-    img_bgr = cv2.cvtColor(ycrcb_out, cv2.COLOR_YCrCb2BGR)
-
-    ok, encoded = cv2.imencode('.png', img_bgr, [int(cv2.IMWRITE_PNG_COMPRESSION), 3])
-    if not ok:
-        raise ValueError('No se pudo codificar la imagen de salida.')
-    return encoded.tobytes()
 
 
 def _validar_edicion_admin_gerente(user, recurso):
@@ -1963,65 +1823,6 @@ def abonar_consumo_empleado(request):
     )
 
 
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def mejorar_imagen_ia(request):
-    if not _es_admin(request.user):
-        return Response({'error': 'Solo administrador puede usar el mejorador de imagen.'}, status=status.HTTP_403_FORBIDDEN)
-
-    imagen_file = request.FILES.get('imagen')
-    if not imagen_file:
-        return Response({'error': 'Debes adjuntar una imagen en el campo "imagen".'}, status=status.HTTP_400_BAD_REQUEST)
-
-    try:
-        intensidad = float(request.data.get('intensidad', 55))
-    except Exception:
-        intensidad = 55
-
-    if intensidad < 0:
-        intensidad = 0
-    if intensidad > 100:
-        intensidad = 100
-
-    upscale_raw = str(request.data.get('upscale', 'true')).strip().lower()
-    upscale = upscale_raw not in {'false', '0', 'no'}
-    try:
-        upscale_factor = int(request.data.get('upscale_factor', 3))
-    except Exception:
-        upscale_factor = 3
-    if upscale_factor not in {2, 3, 4}:
-        upscale_factor = 3
-    modo = str(request.data.get('modo', 'ia')).strip().lower()
-    if modo not in {'ia', 'rapido'}:
-        modo = 'ia'
-
-    try:
-        if modo == 'ia':
-            imagen_file.seek(0)
-            imagen_bytes = imagen_file.read()
-            salida_bytes = _mejorar_imagen_ia_real(
-                imagen_bytes,
-                intensidad=intensidad,
-                upscale=upscale,
-                upscale_factor=upscale_factor,
-            )
-        else:
-            salida_bytes = _mejorar_imagen_rapida(imagen_file, intensidad=intensidad, upscale=upscale)
-    except Exception as exc:
-        if modo == 'ia':
-            return Response(
-                {'error': f'No se pudo procesar con IA real: {str(exc)}. Puedes probar modo rapido.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        return Response({'error': 'No se pudo procesar la imagen. Verifica que el archivo sea válido.'}, status=status.HTTP_400_BAD_REQUEST)
-
-    response = HttpResponse(salida_bytes, content_type='image/png')
-    response['Content-Disposition'] = 'inline; filename="imagen_mejorada.png"'
-    response['X-Imagen-Mejorada'] = 'true'
-    response['X-Imagen-Modo'] = modo
-    return response
-
-
 @api_view(['GET', 'POST'])
 @permission_classes([IsAuthenticated])
 def estado_pago_estilista_dia(request):
@@ -2637,6 +2438,275 @@ def bi_resumen(request):
     """Vista API que retorna datos de BI como JSON"""
     data = _calcular_datos_bi(request)
     return Response(data)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def reporte_cierre_caja(request):
+    """Resumen y detalle operativo de cierre de caja para el rango seleccionado."""
+    fecha_inicio, fecha_fin = _resolver_rango_fechas(request)
+    medio_pago = (request.query_params.get('medio_pago') or '').strip().lower()
+
+    try:
+        fecha_inicio_dt = datetime.strptime(fecha_inicio, '%Y-%m-%d').date()
+        fecha_fin_dt = datetime.strptime(fecha_fin, '%Y-%m-%d').date()
+    except Exception:
+        return Response({'error': 'Formato de fecha invalido. Usa YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    data_bi = _calcular_datos_bi(request)
+    kpis = data_bi.get('kpis', {})
+
+    ventas_qs = VentaProducto.objects.select_related('producto', 'estilista').filter(
+        fecha_hora__date__gte=fecha_inicio_dt,
+        fecha_hora__date__lte=fecha_fin_dt,
+    ).exclude(tipo_operacion='consumo_empleado')
+
+    servicios_qs = ServicioRealizado.objects.select_related(
+        'servicio',
+        'estilista',
+        'cliente',
+        'adicional_otro_producto',
+        'adicional_otro_estilista',
+    ).filter(
+        estado='finalizado',
+        fecha_hora__date__gte=fecha_inicio_dt,
+        fecha_hora__date__lte=fecha_fin_dt,
+    )
+
+    adicionales_qs = ServicioRealizadoAdicional.objects.select_related(
+        'servicio_realizado',
+        'servicio_realizado__servicio',
+        'estilista',
+    ).filter(
+        servicio_realizado__estado='finalizado',
+        servicio_realizado__fecha_hora__date__gte=fecha_inicio_dt,
+        servicio_realizado__fecha_hora__date__lte=fecha_fin_dt,
+    )
+
+    if medio_pago and medio_pago != 'todos':
+        ventas_qs = ventas_qs.filter(medio_pago=medio_pago)
+        servicios_qs = servicios_qs.filter(medio_pago=medio_pago)
+        adicionales_qs = adicionales_qs.filter(servicio_realizado__medio_pago=medio_pago)
+
+    # Detalle de productos vendidos en operacion diaria:
+    # 1) venta directa de producto
+    # 2) producto adicional dentro de servicio
+    detalle_productos = []
+    ventas_productos_total = Decimal(0)
+    costo_productos_total = Decimal(0)
+
+    for venta in ventas_qs.order_by('-fecha_hora'):
+        valor_venta = Decimal(venta.total or 0)
+        costo_unitario = Decimal(venta.producto.precio_compra or 0)
+        valor_compra = costo_unitario * Decimal(venta.cantidad or 0)
+        ganancia = valor_venta - valor_compra
+
+        ventas_productos_total += valor_venta
+        costo_productos_total += valor_compra
+
+        detalle_productos.append(
+            {
+                'fecha_hora': timezone.localtime(venta.fecha_hora).strftime('%Y-%m-%d %H:%M:%S') if venta.fecha_hora else None,
+                'fecha': _fecha_operativa_desde_dt(venta.fecha_hora).strftime('%Y-%m-%d') if venta.fecha_hora else None,
+                'origen': 'venta_producto',
+                'numero_factura': venta.numero_factura,
+                'medio_pago': venta.medio_pago,
+                'estilista_nombre': venta.estilista.nombre if venta.estilista_id else '',
+                'descripcion': venta.producto.nombre,
+                'cantidad': int(venta.cantidad or 0),
+                'valor_venta': float(valor_venta),
+                'valor_compra': float(valor_compra),
+                'ganancia_neta': float(ganancia),
+            }
+        )
+
+    for srv in servicios_qs.order_by('-fecha_hora'):
+        if not srv.adicional_otro_producto_id:
+            continue
+
+        qty = Decimal(srv.adicional_otro_cantidad or 1)
+        precio_venta = Decimal(srv.adicional_otro_producto.precio_venta or 0)
+        precio_compra = Decimal(srv.adicional_otro_producto.precio_compra or 0)
+        valor_venta = precio_venta * qty
+        valor_compra = precio_compra * qty
+        ganancia = valor_venta - valor_compra
+
+        ventas_productos_total += valor_venta
+        costo_productos_total += valor_compra
+
+        detalle_productos.append(
+            {
+                'fecha_hora': timezone.localtime(srv.fecha_hora).strftime('%Y-%m-%d %H:%M:%S') if srv.fecha_hora else None,
+                'fecha': _fecha_operativa_desde_dt(srv.fecha_hora).strftime('%Y-%m-%d') if srv.fecha_hora else None,
+                'origen': 'adicional_producto_servicio',
+                'numero_factura': srv.numero_factura,
+                'medio_pago': srv.medio_pago,
+                'estilista_nombre': srv.adicional_otro_estilista.nombre if srv.adicional_otro_estilista_id else (srv.estilista.nombre if srv.estilista_id else ''),
+                'descripcion': f"{srv.adicional_otro_producto.nombre} (servicio: {srv.servicio.nombre if srv.servicio_id else '-'})",
+                'cantidad': int(qty),
+                'valor_venta': float(valor_venta),
+                'valor_compra': float(valor_compra),
+                'ganancia_neta': float(ganancia),
+            }
+        )
+
+    detalle_productos.sort(key=lambda x: x.get('fecha_hora') or '', reverse=True)
+
+    # Detalle de ingresos por espacio (pagos registrados por medio cuando el neto del dia es negativo).
+    detalle_espacio = []
+    ingresos_espacios = Decimal(0)
+    try:
+        estado_pago_qs = EstadoPagoEstilistaDia.objects.select_related('estilista').filter(
+            fecha__gte=fecha_inicio_dt,
+            fecha__lte=fecha_fin_dt,
+        ).order_by('-fecha', 'estilista__nombre')
+
+        for ep in estado_pago_qs:
+            neto_dia = _calcular_neto_dia_estilista(ep.estilista, ep.fecha)
+            if neto_dia >= 0:
+                continue
+
+            pagos = {
+                'efectivo': Decimal(ep.pago_efectivo or 0),
+                'nequi': Decimal(ep.pago_nequi or 0),
+                'daviplata': Decimal(ep.pago_daviplata or 0),
+                'otros': Decimal(ep.pago_otros or 0),
+            }
+            valor_total = sum(pagos.values(), Decimal(0))
+            if valor_total <= 0:
+                continue
+
+            if medio_pago and medio_pago != 'todos':
+                valor_recibido = Decimal(pagos.get(medio_pago, 0))
+            else:
+                valor_recibido = valor_total
+
+            if valor_recibido <= 0:
+                continue
+
+            ingresos_espacios += valor_recibido
+            detalle_espacio.append(
+                {
+                    'fecha': ep.fecha.strftime('%Y-%m-%d'),
+                    'estilista_id': ep.estilista_id,
+                    'estilista_nombre': ep.estilista.nombre if ep.estilista_id else '',
+                    'medio_pago': medio_pago if (medio_pago and medio_pago != 'todos') else 'mixto',
+                    'pago_efectivo': float(pagos['efectivo']),
+                    'pago_nequi': float(pagos['nequi']),
+                    'pago_daviplata': float(pagos['daviplata']),
+                    'pago_otros': float(pagos['otros']),
+                    'valor_pagado': float(valor_recibido),
+                }
+            )
+    except (OperationalError, ProgrammingError):
+        detalle_espacio = []
+        ingresos_espacios = Decimal(0)
+
+    # Detalle de servicios que dejan ganancia al establecimiento.
+    adicionales_por_servicio = {}
+    for ad in adicionales_qs:
+        sid = int(ad.servicio_realizado_id)
+        valor = Decimal(ad.valor_cobrado or 0)
+        pct = Decimal(ad.porcentaje_establecimiento or 0) if ad.aplica_porcentaje_establecimiento else Decimal(0)
+        if pct < 0:
+            pct = Decimal(0)
+        if pct > 100:
+            pct = Decimal(100)
+
+        valor_est = (valor * pct) / Decimal(100)
+
+        if sid not in adicionales_por_servicio:
+            adicionales_por_servicio[sid] = {
+                'bruto': Decimal(0),
+                'establecimiento': Decimal(0),
+                'cantidad': 0,
+            }
+
+        adicionales_por_servicio[sid]['bruto'] += valor
+        adicionales_por_servicio[sid]['establecimiento'] += valor_est
+        adicionales_por_servicio[sid]['cantidad'] += 1
+
+    detalle_servicios_establecimiento = []
+    ingresos_servicios_establecimiento = Decimal(0)
+
+    for srv in servicios_qs.order_by('-fecha_hora'):
+        sid = int(srv.id)
+        ad_info = adicionales_por_servicio.get(sid, {'bruto': Decimal(0), 'establecimiento': Decimal(0), 'cantidad': 0})
+
+        prod_est = Decimal(0)
+        if srv.adicional_otro_producto_id:
+            qty = Decimal(srv.adicional_otro_cantidad or 1)
+            precio_venta = Decimal(srv.adicional_otro_producto.precio_venta or 0)
+            bruto_prod = precio_venta * qty
+            pct_prod = Decimal(srv.adicional_otro_producto.comision_estilista or 0)
+            if pct_prod < 0:
+                pct_prod = Decimal(0)
+            if pct_prod > 100:
+                pct_prod = Decimal(100)
+            prod_est = bruto_prod - ((bruto_prod * pct_prod) / Decimal(100))
+
+        valor_servicio = Decimal(srv.precio_cobrado or 0) + Decimal(srv.valor_adicionales or 0)
+        ganancia_est = Decimal(srv.monto_establecimiento or 0) + Decimal(ad_info['establecimiento'] or 0) + prod_est
+
+        if ganancia_est <= 0:
+            continue
+
+        ingresos_servicios_establecimiento += ganancia_est
+        detalle_servicios_establecimiento.append(
+            {
+                'fecha_hora': timezone.localtime(srv.fecha_hora).strftime('%Y-%m-%d %H:%M:%S') if srv.fecha_hora else None,
+                'fecha': _fecha_operativa_desde_dt(srv.fecha_hora).strftime('%Y-%m-%d') if srv.fecha_hora else None,
+                'numero_factura': srv.numero_factura,
+                'tipo_servicio': srv.servicio.nombre if srv.servicio_id else '-',
+                'medio_pago': srv.medio_pago,
+                'estilista_nombre': srv.estilista.nombre if srv.estilista_id else '',
+                'valor_servicio': float(valor_servicio),
+                'ganancia_establecimiento': float(ganancia_est),
+            }
+        )
+
+    total_ingresos = Decimal(kpis.get('venta_neta_total', 0) or 0)
+    liquidacion_empleados = Decimal(kpis.get('pago_total_estilistas', 0) or 0)
+    utilidad_productos = Decimal(kpis.get('utilidad_neta_productos', 0) or 0)
+    ganancia_total = total_ingresos - liquidacion_empleados
+
+    suma_componentes = ingresos_servicios_establecimiento + utilidad_productos + ingresos_espacios
+
+    return Response(
+        {
+            'fecha_inicio': fecha_inicio,
+            'fecha_fin': fecha_fin,
+            'medio_pago': medio_pago or 'todos',
+            'resumen': {
+                'total_ingresos': float(total_ingresos),
+                'liquidacion_empleados': float(liquidacion_empleados),
+                'ganancia_total': float(ganancia_total),
+                'ingresos_servicios_establecimiento': float(ingresos_servicios_establecimiento),
+                'ingresos_productos_utilidad': float(utilidad_productos),
+                'ingresos_espacios': float(ingresos_espacios),
+                'suma_componentes_ganancia': float(suma_componentes),
+                'diferencia_cuadre': float(ganancia_total - suma_componentes),
+            },
+            'medios': {
+                'detalle': data_bi.get('cierre_medios', {}).get('detalle', []),
+                'totales': data_bi.get('cierre_medios', {}).get('totales', {}),
+            },
+            'productos': {
+                'ingresos_venta': float(ventas_productos_total),
+                'valor_compra': float(costo_productos_total),
+                'ganancia_neta': float(ventas_productos_total - costo_productos_total),
+                'detalle': detalle_productos,
+            },
+            'espacios': {
+                'total_recibido': float(ingresos_espacios),
+                'detalle': detalle_espacio,
+            },
+            'servicios_establecimiento': {
+                'total_ganancia': float(ingresos_servicios_establecimiento),
+                'detalle': detalle_servicios_establecimiento,
+            },
+        }
+    )
 
 
 @api_view(['GET'])

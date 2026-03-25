@@ -10,7 +10,6 @@ import Ventas from './pages/Ventas';
 import Reportes from './pages/Reportes';
 import PantallaCliente from './pages/PantallaCliente';
 import ImpresionPOS from './pages/ImpresionPOS';
-import MejoradorImagenIA from './pages/MejoradorImagenIA';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
 import useAuthStore from './store/authStore';
@@ -20,14 +19,6 @@ const AdminRoute = ({ children }) => {
   const { user, isAuthenticated } = useAuthStore();
   if (!isAuthenticated) return <Navigate to="/login" replace />;
   if (!isManagerRole(user?.rol)) return <Navigate to="/dashboard" replace />;
-  return children;
-};
-
-const SoloAdministradorRoute = ({ children }) => {
-  const { user, isAuthenticated } = useAuthStore();
-  const rol = String(user?.rol || '').trim().toLowerCase();
-  if (!isAuthenticated) return <Navigate to="/login" replace />;
-  if (rol !== 'administrador') return <Navigate to="/dashboard" replace />;
   return children;
 };
 
@@ -43,7 +34,7 @@ function App() {
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/pantalla-cliente" element={<PantallaCliente />} />
-        
+
         <Route
           path="/"
           element={
@@ -60,7 +51,6 @@ function App() {
           <Route path="productos" element={<Productos />} />
           <Route path="ventas" element={<Ventas />} />
           <Route path="impresion-pos" element={<AdminRoute><ImpresionPOS /></AdminRoute>} />
-          <Route path="ia-imagen" element={<SoloAdministradorRoute><MejoradorImagenIA /></SoloAdministradorRoute>} />
           <Route path="reportes" element={<Reportes />} />
         </Route>
 
