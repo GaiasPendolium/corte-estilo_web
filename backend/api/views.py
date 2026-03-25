@@ -156,79 +156,92 @@ def _listar_historial_legacy(fecha_inicio, fecha_fin, estilista_id=None, limit=1
     return registros
 
 
-def _calcular_totales_dia_estilista(estilista, fecha_dia):
+def calcular_liquidacion_dia_estilista(estilista, fecha_dia):
+    """
+    LIQUIDADOR SIMPLIFICADO Y CLARO:
+    
+    Calcula para UN DÍA:
+    1. GANANCIAS TOTALES = servicios base + comisiones (producto + adicionales)
+    2. DESCUENTO PUESTO = ganancias × % (o monto fijo)
+    3. TOTAL PAGABLE = ganancias - descuento
+    
+    Returns: dict con todos los cálculos {ganancias, descuento, pagable}
+    """
+    
+    # ============ [1] SERVICIOS BASE ============
     servicios_dia = ServicioRealizado.objects.filter(
         estado='finalizado',
         estilista=estilista,
         fecha_hora__date=fecha_dia,
     )
-
-    base_servicio_dia = Decimal(servicios_dia.aggregate(total=Sum('precio_cobrado'))['total'] or 0)
-
-    adicionales_estilista_dia = ServicioRealizadoAdicional.objects.filter(
+    servicios_base = Decimal(servicios_dia.aggregate(total=Sum('precio_cobrado'))['total'] or 0)
+    
+    # ============ [2] COMISIONES POR SERVICIOS ADICIONALES ============
+    adicionales_dia = ServicioRealizadoAdicional.objects.filter(
         estilista=estilista,
         servicio_realizado__estado='finalizado',
         servicio_realizado__fecha_hora__date=fecha_dia,
     )
-    adicionales_liquidos = Decimal(0)
-    for ad in adicionales_estilista_dia:
-        valor = Decimal(ad.valor_cobrado or 0)
-        pct = Decimal(ad.porcentaje_establecimiento or 0) if ad.aplica_porcentaje_establecimiento else Decimal(0)
-        if pct < 0:
-            pct = Decimal(0)
-        if pct > 100:
-            pct = Decimal(100)
-        adicionales_liquidos += valor - ((valor * pct) / Decimal(100))
-
-    base_servicio_dia += adicionales_liquidos
-
-    comision_producto_caja_dia = Decimal(0)
-    ventas_estilista_dia = VentaProducto.objects.select_related('producto').filter(
+    comisiones_adicionales = Decimal(0)
+    for ad in adicionales_dia:
+        valor_cobrado = Decimal(ad.valor_cobrado or 0)
+        pct_est = Decimal(ad.porcentaje_establecimiento or 0) if ad.aplica_porcentaje_establecimiento else Decimal(0)
+        pct_est = max(Decimal(0), min(Decimal(100), pct_est))  # Clamp 0-100
+        monto_estilista = valor_cobrado - (valor_cobrado * pct_est / Decimal(100))
+        comisiones_adicionales += monto_estilista
+    
+    # ============ [3] COMISIONES POR VENTA DE PRODUCTOS ============
+    ventas_dia = VentaProducto.objects.select_related('producto').filter(
         estilista=estilista,
         tipo_operacion='venta',
         fecha_hora__date=fecha_dia,
     )
-    for v in ventas_estilista_dia:
-        pct = Decimal(v.producto.comision_estilista or 0)
-        if pct < 0:
-            pct = Decimal(0)
-        if pct > 100:
-            pct = Decimal(100)
-        comision_producto_caja_dia += (Decimal(v.total or 0) * pct) / Decimal(100)
-
-    comision_producto_servicio_dia = Decimal(0)
-    servicios_producto_adicional_dia = ServicioRealizado.objects.select_related('adicional_otro_producto').filter(
-        estado='finalizado',
-        adicional_otro_estilista=estilista,
-        fecha_hora__date=fecha_dia,
-        adicional_otro_producto__isnull=False,
-    )
-    for srv in servicios_producto_adicional_dia:
-        qty = Decimal(srv.adicional_otro_cantidad or 1)
-        precio_venta = Decimal(srv.adicional_otro_producto.precio_venta or 0)
-        pct = Decimal(srv.adicional_otro_producto.comision_estilista or 0)
-        if pct < 0:
-            pct = Decimal(0)
-        if pct > 100:
-            pct = Decimal(100)
-        comision_producto_servicio_dia += ((precio_venta * qty) * pct) / Decimal(100)
-
-    descuento_dia = Decimal(0)
-    if estilista.tipo_cobro_espacio == 'porcentaje_neto':
-        descuento_dia = (base_servicio_dia * Decimal(estilista.valor_cobro_espacio or 0)) / Decimal(100)
-        if descuento_dia > base_servicio_dia:
-            descuento_dia = base_servicio_dia
+    comisiones_ventas = Decimal(0)
+    for venta in ventas_dia:
+        monto_venta = Decimal(venta.total or 0)
+        pct_comision = Decimal(venta.producto.comision_estilista or 0)
+        pct_comision = max(Decimal(0), min(Decimal(100), pct_comision))  # Clamp 0-100
+        comisiones_ventas += (monto_venta * pct_comision) / Decimal(100)
+    
+    # [1] GANANCIAS TOTALES = BASE + TODAS LAS COMISIONES
+    ganancias_totales = servicios_base + comisiones_adicionales + comisiones_ventas
+    
+    # ============ [2] DESCUENTO POR PUESTO ============
+    descuento_puesto = Decimal(0)
+    if estilista.tipo_cobro_espacio == 'sin_cobro':
+        descuento_puesto = Decimal(0)
+    elif estilista.tipo_cobro_espacio == 'porcentaje_neto':
+        # Porcentaje sobre servicios BASE (no sobre ganancias)
+        pct = Decimal(estilista.valor_cobro_espacio or 0)
+        pct = max(Decimal(0), min(Decimal(100), pct))  # Clamp 0-100
+        descuento_puesto = (servicios_base * pct) / Decimal(100)
     elif estilista.tipo_cobro_espacio == 'costo_fijo_neto':
-        descuento_dia = Decimal(estilista.valor_cobro_espacio or 0)
+        # Monto fijo
+        descuento_puesto = max(Decimal(0), Decimal(estilista.valor_cobro_espacio or 0))
+    
+    # [2] TOTAL PAGABLE = GANANCIAS - DESCUENTO
+    total_pagable = max(ganancias_totales - descuento_puesto, Decimal(0))
+    
+    return {
+        'ganancias_totales': ganancias_totales,
+        'servicios_base': servicios_base,
+        'comisiones_adicionales': comisiones_adicionales,
+        'comisiones_ventas': comisiones_ventas,
+        'descuento_puesto': descuento_puesto,
+        'total_pagable': total_pagable,
+    }
 
-    ganancias_totales_dia = base_servicio_dia + comision_producto_caja_dia + comision_producto_servicio_dia
-    neto_dia = ganancias_totales_dia - descuento_dia
-    return ganancias_totales_dia, descuento_dia, neto_dia
+
+def _calcular_totales_dia_estilista(estilista, fecha_dia):
+    """LEGACY: Para compatibilidad con código antiguo"""
+    calc = calcular_liquidacion_dia_estilista(estilista, fecha_dia)
+    return calc['ganancias_totales'], calc['descuento_puesto'], calc['total_pagable']
 
 
 def _calcular_neto_dia_estilista(estilista, fecha_dia):
-    _, _, neto_dia = _calcular_totales_dia_estilista(estilista, fecha_dia)
-    return neto_dia
+    """LEGACY: Para compatibilidad"""
+    calc = calcular_liquidacion_dia_estilista(estilista, fecha_dia)
+    return calc['total_pagable']
 
 
 class UsuarioViewSet(viewsets.ModelViewSet):
@@ -2225,6 +2238,154 @@ def estado_pago_estilista_dia(request):
     )
 
 
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def liquidar_dia_v2(request):
+    """
+    NUEVO ENDPOINT SIMPLIFICADO - LIQUIDADOR CLARO Y CORRECTO
+    
+    POST /api/liquidar-dia-v2/
+    
+    Body:
+    {
+        "estilista_id": 5,
+        "fecha": "2026-03-15",
+        "pago_efectivo": 50000,
+        "pago_nequi": 30000,
+        "pago_daviplata": 0,
+        "pago_otros": 0,
+        "abono_puesto": 15000,
+        "notas": "Liquidación del día"
+    }
+    
+    LÓGICA CRYSTAL CLEAR:
+    1. Calcula ganancias + descuento del día
+    2. Valida: pago_total + abono_puesto <= total_pagable
+    3. Guarda en tabla diaria con TODOS LOS CAMPOS
+    4. Crea registro historial
+    5. Retorna tabla con valores
+    """
+    
+    # ============ EXTRACCIÓN Y VALIDACIÓN ============
+    try:
+        estilista_id = int(request.data.get('estilista_id') or 0)
+        estilista = Estilista.objects.get(id=estilista_id, activo=True)
+    except (ValueError, Estilista.DoesNotExist):
+        return Response({'error': 'Estilista no encontrado'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        fecha_str = request.data.get('fecha', '').strip()
+        fecha = datetime.strptime(fecha_str, '%Y-%m-%d').date()
+    except Exception:
+        return Response({'error': 'Formato fecha inválido'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    # Convertir a Decimal
+    def _to_decimal(v):
+        try:
+            d = Decimal(str(v or 0))
+            return max(d, Decimal(0))
+        except:
+            return Decimal(0)
+    
+    pago_efectivo = _to_decimal(request.data.get('pago_efectivo'))
+    pago_nequi = _to_decimal(request.data.get('pago_nequi'))
+    pago_daviplata = _to_decimal(request.data.get('pago_daviplata'))
+    pago_otros = _to_decimal(request.data.get('pago_otros'))
+    abono_puesto = _to_decimal(request.data.get('abono_puesto'))
+    notas = request.data.get('notas', '').strip()[:255]
+    
+    total_pagado = pago_efectivo + pago_nequi + pago_daviplata + pago_otros
+    
+    # ============ [1] CALCULAR LIQUIDACIÓN ============
+    calc = calcular_liquidacion_dia_estilista(estilista, fecha)
+    ganancias = calc['ganancias_totales']
+    descuento = calc['descuento_puesto']
+    pagable = calc['total_pagable']
+    
+    # ============ [2] VALIDAR ============
+    suma = total_pagado + abono_puesto
+    if suma > pagable:
+        return Response({
+            'error': f'Suma ({float(suma):.2f}) > pagable ({float(pagable):.2f})',
+            'ganancias_dia': float(ganancias),
+            'descuento_puesto': float(descuento),
+            'total_pagable': float(pagable),
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    # ============ [3] SALDO PENDIENTE ============
+    saldo_puesto = max(descuento - abono_puesto, Decimal(0))
+    
+    # ============ [4] GUARDAR ============
+    try:
+        estado_diaria, _ = EstadoPagoEstilistaDia.objects.get_or_create(
+            estilista=estilista,
+            fecha=fecha,
+        )
+        estado_anterior = estado_diaria.estado
+        
+        # Actualizar todos los campos
+        estado_diaria.ganancias_totales = ganancias
+        estado_diaria.descuento_puesto = descuento
+        estado_diaria.total_pagable = pagable
+        estado_diaria.pago_efectivo = pago_efectivo
+        estado_diaria.pago_nequi = pago_nequi
+        estado_diaria.pago_daviplata = pago_daviplata
+        estado_diaria.pago_otros = pago_otros
+        estado_diaria.abono_puesto = abono_puesto
+        estado_diaria.saldo_puesto_pendiente = saldo_puesto
+        estado_diaria.notas = notas
+        estado_diaria.usuario_liquida = request.user
+        
+        # Cambiar a cancelado si hay movimiento
+        if (total_pagado > 0) or (abono_puesto > 0):
+            estado_diaria.estado = 'cancelado'
+        
+        estado_diaria.save()
+        
+    except Exception as e:
+        return Response({'error': f'Error: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    # ============ [5] HISTORIAL ============
+    try:
+        if estado_diaria.estado == 'cancelado' and estado_anterior == 'pendiente':
+            EstadoPagoEstilistaHistorial.objects.create(
+                estilista=estilista,
+                fecha=fecha,
+                estado_anterior=estado_anterior,
+                estado_nuevo='cancelado',
+                notas=notas,
+                usuario=request.user,
+                monto_liquidado=total_pagado,
+                abono_puesto=abono_puesto,
+                pendiente_puesto=saldo_puesto,
+            )
+    except:
+        pass  # No bloquear
+    
+    # ============ [6] RESPUESTA ============
+    return Response({
+        'success': True,
+        'estilista': {'id': estilista.id, 'nombre': estilista.nombre},
+        'fecha': fecha.strftime('%Y-%m-%d'),
+        'liquidacion': {
+            'ganancias_totales': float(ganancias),
+            'descuento_puesto': float(descuento),
+            'total_pagable': float(pagable),
+        },
+        'pagos': {
+            'efectivo': float(pago_efectivo),
+            'nequi': float(pago_nequi),
+            'daviplata': float(pago_daviplata),
+            'otros': float(pago_otros),
+            'total': float(total_pagado),
+        },
+        'puesto': {
+            'descuento': float(descuento),
+            'abono': float(abono_puesto),
+            'saldo_pendiente': float(saldo_puesto),
+        },
+        'estado': estado_diaria.estado,
+    })
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def estado_pago_estilista_historial(request):

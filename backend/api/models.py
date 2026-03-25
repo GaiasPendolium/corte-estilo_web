@@ -545,29 +545,89 @@ class AbonoDeudaEmpleado(models.Model):
 
 
 class EstadoPagoEstilistaDia(models.Model):
-    """Estado de pago por estilista y por día para control de cartera."""
+    """
+    Estado de pago por estilista y por día - LIQUIDADOR SIMPLIFICADO
+    
+    ESTRUCTURA CLARA:
+    1. ganancias_totales = servicios base + comisiones caja + comisiones adicionales
+    2. descuento_puesto = ganancias_totales × % (o costo fijo)
+    3. total_pagable = ganancias_totales - descuento_puesto
+    4. total_pagado = pago_efectivo + pago_nequi + pago_daviplata + pago_otros
+    5. saldo_pendiente_puesto = max(descuento_puesto - abono_puesto, 0)
+    
+    TODO SE CALCULA Y SE GUARDA AQUÍ PARA CLARIDAD TOTAL.
+    """
 
     ESTADOS = [
-        ('pendiente', 'Pendiente'),
-        ('cancelado', 'Cancelado'),
+        ('pendiente', 'Pendiente de pago'),
+        ('cancelado', 'Pagado/Cancelado'),
     ]
 
+    # IDENTIFCACIÓN
     estilista = models.ForeignKey(
         Estilista,
         on_delete=models.CASCADE,
         related_name='estados_pago_diario',
         verbose_name='Estilista'
     )
-    fecha = models.DateField(verbose_name='Fecha')
-    estado = models.CharField(max_length=20, choices=ESTADOS, default='pendiente', verbose_name='Estado Pago')
+    fecha = models.DateField(verbose_name='Fecha del día')
+    estado = models.CharField(max_length=20, choices=ESTADOS, default='pendiente', verbose_name='Estado')
+    
+    # [1] GANANCIAS DEL DÍA (CÁLCULO BASE)
+    ganancias_totales = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0,
+        verbose_name='Ganancias totales (servicios + comisiones)'
+    )
+    
+    # [2] DESCUENTO POR PUESTO (GASTO FIJO/VARIABLE)
+    descuento_puesto = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0,
+        verbose_name='Descuento por alquiler puesto/espacio'
+    )
+    
+    # [3] TOTAL PAGABLE AL EMPLEADO (después de descuentos)
+    total_pagable = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0,
+        verbose_name='Total pagable (ganancias - descuento puesto)'
+    )
+    
+    # [4] PAGOS DESGLOSADOS (cómo se pagó)
     pago_efectivo = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Pago efectivo')
     pago_nequi = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Pago Nequi')
     pago_daviplata = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Pago Daviplata')
     pago_otros = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Pago otros')
-    abono_puesto = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Abono puesto')
-    pendiente_puesto = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Pendiente puesto')
-    neto_dia = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Neto del día', null=True, blank=True)
+    
+    # Cálculo automático: total_pagado
+    @property
+    def total_pagado(self):
+        """Suma de todos los medios de pago"""
+        return self.pago_efectivo + self.pago_nequi + self.pago_daviplata + self.pago_otros
+    
+    # [5] PUESTO: ABONO Y DEUDA
+    abono_puesto = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0,
+        verbose_name='Abono realizado al puesto'
+    )
+    
+    saldo_puesto_pendiente = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0,
+        verbose_name='Saldo pendiente del puesto después de pago'
+    )
+    
+    # CAMPOS LEGACY (compatibilidad)
+    neto_dia = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Neto del día (DEPRECATED)', null=True, blank=True)
+    pendiente_puesto = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Pendiente puesto (DEPRECATED)', null=True, blank=True)
+    
+    # AUDITORÍA
     notas = models.CharField(max_length=255, blank=True, null=True, verbose_name='Notas')
+    usuario_liquida = models.ForeignKey(
+        Usuario,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='liquidaciones_realizadas',
+        verbose_name='Usuario que realizó la liquidación'
+    )
     actualizado_en = models.DateTimeField(auto_now=True, verbose_name='Actualizado en')
 
     class Meta:
