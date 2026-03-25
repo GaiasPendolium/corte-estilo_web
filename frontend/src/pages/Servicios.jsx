@@ -106,6 +106,16 @@ const serviceMatchesSearch = (servicio, query) => {
   return terms.every((term) => index.includes(term));
 };
 
+const isShampooServiceName = (nombre) => {
+  const n = String(nombre || '').toLowerCase();
+  return n.includes('shampoo');
+};
+
+const isDepilationServiceName = (nombre) => {
+  const n = String(nombre || '').toLowerCase();
+  return n.includes('depilacion') || n.includes('depilación');
+};
+
 const moneyFormatterCOP = new Intl.NumberFormat('es-CO', {
   style: 'currency',
   currency: 'COP',
@@ -319,7 +329,11 @@ const Servicios = () => {
   );
 
   const serviciosAdicionalesConfigurados = useMemo(
-    () => servicios.filter((s) => Boolean(s.es_adicional) && (s.activo ?? true)),
+    () => servicios.filter((s) => {
+      if (!(s.activo ?? true)) return false;
+      if (Boolean(s.es_adicional)) return true;
+      return isShampooServiceName(s.nombre) || isDepilationServiceName(s.nombre);
+    }),
     [servicios]
   );
 
@@ -330,8 +344,12 @@ const Servicios = () => {
 
   const esServicioShampoo = (servicioId) => {
     const srv = serviciosAdicionalesMap.get(Number(servicioId || 0));
-    const nombre = String(srv?.nombre || '').toLowerCase();
-    return nombre.includes('shampoo');
+    return isShampooServiceName(srv?.nombre);
+  };
+
+  const esServicioDepilacion = (servicioId) => {
+    const srv = serviciosAdicionalesMap.get(Number(servicioId || 0));
+    return isDepilationServiceName(srv?.nombre);
   };
 
   const construirItemAdicional = ({
@@ -534,7 +552,11 @@ const Servicios = () => {
           valor: item.valor || String(toPesoInt(servicio.precio || 0)),
           estilista_id: esServicioShampoo(servicio.id) ? '' : item.estilista_id,
           aplica_porcentaje_establecimiento: esServicioShampoo(servicio.id) ? false : item.aplica_porcentaje_establecimiento,
-          porcentaje_establecimiento: esServicioShampoo(servicio.id) ? '0' : item.porcentaje_establecimiento,
+          porcentaje_establecimiento: esServicioShampoo(servicio.id)
+            ? '0'
+            : esServicioDepilacion(servicio.id)
+            ? (item.porcentaje_establecimiento || '30')
+            : item.porcentaje_establecimiento,
         };
       }),
     }));
