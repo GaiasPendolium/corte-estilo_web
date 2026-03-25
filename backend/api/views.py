@@ -2243,6 +2243,30 @@ def estado_pago_estilista_historial(request):
     if fecha_inicio > fecha_fin:
         return Response({'error': 'fecha_inicio no puede ser mayor que fecha_fin.'}, status=status.HTTP_400_BAD_REQUEST)
 
+    # Limpieza puntual solicitada por negocio para eliminar dos registros incorrectos.
+    # Se ejecuta con tolerancia de 1 segundo para evitar diferencias de milisegundos.
+    marcas_erroneas = ['2026-03-25 00:41:27', '2026-03-25 00:11:54']
+    for marca in marcas_erroneas:
+        try:
+            dt_local = timezone.make_aware(datetime.strptime(marca, '%Y-%m-%d %H:%M:%S'))
+            dt_fin = dt_local + timedelta(seconds=1)
+            try:
+                EstadoPagoEstilistaHistorial.objects.filter(
+                    fecha_cambio__gte=dt_local,
+                    fecha_cambio__lt=dt_fin,
+                ).delete()
+            except (OperationalError, ProgrammingError):
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        DELETE FROM estado_pago_estilista_historial
+                        WHERE fecha_cambio >= %s AND fecha_cambio < %s
+                        """,
+                        [dt_local, dt_fin],
+                    )
+        except Exception:
+            continue
+
     try:
         qs = EstadoPagoEstilistaHistorial.objects.select_related('estilista', 'usuario').filter(
             fecha__gte=fecha_inicio,
