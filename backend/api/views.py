@@ -2590,6 +2590,11 @@ def reporte_cierre_caja(request):
         ).order_by('-fecha', 'estilista__nombre')
 
         for ep in estado_pago_qs:
+            neto_dia = _calcular_neto_dia_estilista(ep.estilista, ep.fecha)
+            if neto_dia >= 0:
+                # Si el neto del dia no es deuda del estilista, este pago no es ingreso de espacio.
+                continue
+
             pagos = {
                 'efectivo': Decimal(ep.pago_efectivo or 0),
                 'nequi': Decimal(ep.pago_nequi or 0),
@@ -2708,7 +2713,8 @@ def reporte_cierre_caja(request):
         )
 
     total_ingresos = Decimal(kpis.get('venta_neta_total', 0) or 0)
-    liquidacion_empleados = Decimal(kpis.get('pago_total_estilistas', 0) or 0)
+    # Liquidacion del periodo completo para el rango seleccionado (incluye dias ya cancelados).
+    liquidacion_empleados = Decimal(kpis.get('pago_total_estilistas_neto_periodo', 0) or 0)
     utilidad_productos = Decimal(kpis.get('utilidad_neta_productos', 0) or 0)
     ganancia_total = total_ingresos - liquidacion_empleados
 

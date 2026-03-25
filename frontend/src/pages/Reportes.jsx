@@ -234,6 +234,15 @@ const Reportes = () => {
                   </td>
                 </tr>
               ))}
+              {(productos.detalle || []).length > 0 && (
+                <tr className="bg-emerald-100 font-semibold">
+                  <td className="table-cell" colSpan={3}>TOTAL</td>
+                  <td className="table-cell">{(productos.detalle || []).reduce((sum, item) => sum + Number(item.cantidad || 0), 0)}</td>
+                  <td className="table-cell">{formatMoney((productos.detalle || []).reduce((sum, item) => sum + Number(item.valor_venta || 0), 0))}</td>
+                  <td className="table-cell">{formatMoney((productos.detalle || []).reduce((sum, item) => sum + Number(item.valor_compra || 0), 0))}</td>
+                  <td className="table-cell">{formatMoney((productos.detalle || []).reduce((sum, item) => sum + Number(item.ganancia_neta || 0), 0))}</td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -264,6 +273,12 @@ const Reportes = () => {
                     <td className="table-cell font-semibold text-cyan-700">{formatMoney(item.valor_pagado)}</td>
                   </tr>
                 ))}
+                {(espacios.detalle || []).length > 0 && (
+                  <tr className="bg-cyan-100 font-semibold">
+                    <td className="table-cell" colSpan={2}>TOTAL</td>
+                    <td className="table-cell text-cyan-800">{formatMoney((espacios.detalle || []).reduce((sum, item) => sum + Number(item.valor_pagado || 0), 0))}</td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -295,6 +310,13 @@ const Reportes = () => {
                     <td className="table-cell font-semibold text-violet-700">{formatMoney(item.ganancia_establecimiento)}</td>
                   </tr>
                 ))}
+                {(serviciosEst.detalle || []).length > 0 && (
+                  <tr className="bg-violet-100 font-semibold">
+                    <td className="table-cell" colSpan={2}>TOTAL</td>
+                    <td className="table-cell">{formatMoney((serviciosEst.detalle || []).reduce((sum, item) => sum + Number(item.valor_servicio || 0), 0))}</td>
+                    <td className="table-cell text-violet-800">{formatMoney((serviciosEst.detalle || []).reduce((sum, item) => sum + Number(item.ganancia_establecimiento || 0), 0))}</td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
