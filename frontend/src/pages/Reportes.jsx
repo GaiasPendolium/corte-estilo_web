@@ -231,16 +231,18 @@ const Reportes = () => {
         return;
       }
 
-      pagosDetalle = {
-        efectivo: Number(pagos.efectivo || 0) + Number(medioAbonoPuesto === 'efectivo' ? abonoPuesto : 0),
-        nequi: Number(pagos.nequi || 0) + Number(medioAbonoPuesto === 'nequi' ? abonoPuesto : 0),
-        daviplata: Number(pagos.daviplata || 0) + Number(medioAbonoPuesto === 'daviplata' ? abonoPuesto : 0),
-        otros: Number(pagos.otros || 0) + Number(medioAbonoPuesto === 'otros' ? abonoPuesto : 0),
-      };
+      const descuentoAplicado = Math.min(abonoPuesto, Math.max(descuentoPuesto, 0));
+      const maxLiquidableEmpleado = Math.max(gananciasTotales - (Math.max(descuentoPuesto, 0) - descuentoAplicado), 0);
+      if (totalPagos > maxLiquidableEmpleado) {
+        toast.warning(`El valor a liquidar no puede exceder ${formatMoney(maxLiquidableEmpleado)} para el abono de puesto indicado.`);
+        return;
+      }
+
+      pagosDetalle = pagos;
 
       const totalRegistrado = Object.values(pagosDetalle).reduce((a, b) => a + Number(b || 0), 0);
-      if (totalRegistrado > Math.max(gananciasTotales, 0)) {
-        toast.warning(`El valor registrado no puede exceder ${formatMoney(Math.max(gananciasTotales, 0))}.`);
+      if (totalRegistrado > Math.max(maxLiquidableEmpleado, 0)) {
+        toast.warning(`El valor a liquidar no puede exceder ${formatMoney(Math.max(maxLiquidableEmpleado, 0))}.`);
         return;
       }
     }
@@ -253,6 +255,8 @@ const Reportes = () => {
         fecha_fin: fechaFin,
         estado,
         pagos_detalle: pagosDetalle,
+        abono_puesto: estado === 'cancelado' ? abonoPuesto : 0,
+        medio_abono_puesto: medioAbonoPuesto,
       });
 
       toast.success(estado === 'cancelado' ? 'Liquidacion guardada.' : 'Liquidacion revertida a pendiente.');
@@ -659,7 +663,7 @@ const Reportes = () => {
                 </tr>
               )}
               {historialEstados.map((h) => {
-                const pendientePuesto = Math.max(0, -Number(h.monto_liquidado || 0));
+                const pendientePuesto = Number(h.pendiente_puesto || 0);
                 return (
                   <tr key={h.id}>
                     <td className="table-cell">{h.fecha_cambio || '-'}</td>

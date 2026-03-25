@@ -606,6 +606,8 @@ class EstadoPagoEstilistaHistorial(models.Model):
         verbose_name='Usuario'
     )
     monto_liquidado = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Monto liquidado')
+    abono_puesto = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Abono puesto')
+    pendiente_puesto = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Pendiente puesto')
     fecha_cambio = models.DateTimeField(default=timezone.now, verbose_name='Fecha Cambio')
 
     class Meta:

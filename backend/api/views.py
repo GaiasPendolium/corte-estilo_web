@@ -1902,6 +1902,8 @@ def estado_pago_estilista_dia(request):
     estado = (request.data.get('estado') or '').strip().lower()
     notas = request.data.get('notas')
     pagos_detalle = request.data.get('pagos_detalle') or {}
+    abono_puesto_raw = request.data.get('abono_puesto')
+    medio_abono_puesto = (request.data.get('medio_abono_puesto') or 'efectivo').strip().lower()
 
     def _to_decimal_non_negative(value):
         try:
@@ -1917,6 +1919,10 @@ def estado_pago_estilista_dia(request):
     pago_daviplata = _to_decimal_non_negative(pagos_detalle.get('daviplata'))
     pago_otros = _to_decimal_non_negative(pagos_detalle.get('otros'))
     total_pagado = pago_efectivo + pago_nequi + pago_daviplata + pago_otros
+    abono_puesto = _to_decimal_non_negative(abono_puesto_raw)
+
+    if medio_abono_puesto not in {'efectivo', 'nequi', 'daviplata', 'otros'}:
+        medio_abono_puesto = 'efectivo'
 
     if not estilista_id or estado not in {'pendiente', 'cancelado'}:
         return Response(
@@ -1940,7 +1946,7 @@ def estado_pago_estilista_dia(request):
     if fecha_inicio_dt > fecha_fin_dt:
         return Response({'error': 'fecha_inicio no puede ser mayor que fecha_fin.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    if total_pagado > 0 and fecha_inicio_dt != fecha_fin_dt:
+    if (total_pagado > 0 or abono_puesto > 0) and fecha_inicio_dt != fecha_fin_dt:
         return Response(
             {'error': 'El detalle de pago por medio solo se puede registrar para un único día.'},
             status=status.HTTP_400_BAD_REQUEST,
@@ -1984,28 +1990,47 @@ def estado_pago_estilista_dia(request):
             try:
                 # Siempre actualizar/crear el registro, incluso si es 'pendiente'
                 # Así evitamos problemas de sincronización en el BI
-                ganancias_totales_dia, _, neto_dia = _calcular_totales_dia_estilista(estilista, fecha_cursor)
+                ganancias_totales_dia, descuento_dia, neto_dia = _calcular_totales_dia_estilista(estilista, fecha_cursor)
                 max_pagable = max(Decimal(0), ganancias_totales_dia)
-                if total_pagado > max_pagable:
+                abono_aplicado = min(abono_puesto, max(descuento_dia, Decimal(0))) if estado == 'cancelado' else Decimal(0)
+                max_liquidable_empleado = max(Decimal(0), ganancias_totales_dia - (max(descuento_dia, Decimal(0)) - abono_aplicado))
+
+                if (total_pagado + abono_aplicado) > max_pagable:
                     return Response(
                         {
                             'error': (
-                                f'La suma de pagos por medio (${float(total_pagado):.2f}) '
+                                f'La suma de valor a liquidar + pago puesto (${float((total_pagado + abono_aplicado)):.2f}) '
                                 f'no puede exceder las ganancias totales del día (${float(max_pagable):.2f}).'
                             )
                         },
                         status=status.HTTP_400_BAD_REQUEST,
                     )
 
+                if total_pagado > max_liquidable_empleado:
+                    return Response(
+                        {
+                            'error': (
+                                f'El valor a liquidar (${float(total_pagado):.2f}) '
+                                f'no puede exceder ${float(max_liquidable_empleado):.2f} según el abono de puesto.'
+                            )
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                pago_efectivo_total = pago_efectivo + (abono_aplicado if medio_abono_puesto == 'efectivo' else Decimal(0))
+                pago_nequi_total = pago_nequi + (abono_aplicado if medio_abono_puesto == 'nequi' else Decimal(0))
+                pago_daviplata_total = pago_daviplata + (abono_aplicado if medio_abono_puesto == 'daviplata' else Decimal(0))
+                pago_otros_total = pago_otros + (abono_aplicado if medio_abono_puesto == 'otros' else Decimal(0))
+
                 EstadoPagoEstilistaDia.objects.update_or_create(
                     estilista=estilista,
                     fecha=fecha_cursor,
                     defaults={
                         'estado': estado,
-                        'pago_efectivo': pago_efectivo if estado == 'cancelado' else Decimal(0),
-                        'pago_nequi': pago_nequi if estado == 'cancelado' else Decimal(0),
-                        'pago_daviplata': pago_daviplata if estado == 'cancelado' else Decimal(0),
-                        'pago_otros': pago_otros if estado == 'cancelado' else Decimal(0),
+                        'pago_efectivo': pago_efectivo_total if estado == 'cancelado' else Decimal(0),
+                        'pago_nequi': pago_nequi_total if estado == 'cancelado' else Decimal(0),
+                        'pago_daviplata': pago_daviplata_total if estado == 'cancelado' else Decimal(0),
+                        'pago_otros': pago_otros_total if estado == 'cancelado' else Decimal(0),
                         'neto_dia': neto_dia,
                         'notas': notas,
                     },
@@ -2015,7 +2040,9 @@ def estado_pago_estilista_dia(request):
 
         if estado_anterior != estado:
             try:
-                monto_liquidado = _calcular_neto_dia_estilista(estilista, fecha_cursor)
+                _, descuento_dia_hist, _ = _calcular_totales_dia_estilista(estilista, fecha_cursor)
+                abono_aplicado_hist = min(abono_puesto, max(descuento_dia_hist, Decimal(0))) if estado == 'cancelado' else Decimal(0)
+                pendiente_puesto_hist = max(max(descuento_dia_hist, Decimal(0)) - abono_aplicado_hist, Decimal(0))
                 EstadoPagoEstilistaHistorial.objects.create(
                     estilista=estilista,
                     fecha=fecha_cursor,
@@ -2023,7 +2050,9 @@ def estado_pago_estilista_dia(request):
                     estado_nuevo=estado,
                     notas=notas,
                     usuario=usuario_obj,
-                    monto_liquidado=monto_liquidado,
+                    monto_liquidado=total_pagado if estado == 'cancelado' else Decimal(0),
+                    abono_puesto=abono_aplicado_hist,
+                    pendiente_puesto=pendiente_puesto_hist,
                 )
                 cambios_registrados += 1
             except (OperationalError, ProgrammingError):
@@ -2051,6 +2080,8 @@ def estado_pago_estilista_dia(request):
                 'otros': float(pago_otros),
                 'total': float(total_pagado),
             },
+            'abono_puesto': float(abono_puesto),
+            'medio_abono_puesto': medio_abono_puesto,
         }
     )
 
@@ -2102,6 +2133,8 @@ def estado_pago_estilista_historial(request):
                 'usuario_id': x.usuario_id,
                 'usuario_nombre': x.usuario.nombre_completo if x.usuario else 'Sistema',
                 'monto_liquidado': float(x.monto_liquidado or 0),
+                'abono_puesto': float(x.abono_puesto or 0),
+                'pendiente_puesto': float(x.pendiente_puesto or 0),
                 'fecha_cambio': timezone.localtime(x.fecha_cambio).strftime('%Y-%m-%d %H:%M:%S'),
             }
             for x in qs[:limit]
