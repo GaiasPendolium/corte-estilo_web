@@ -540,10 +540,11 @@ const aplicarEstadoLiquidacion = async (fila) => {
                     ? `Cobro porcentaje: ${valorCobroCfg}%`
                     : 'Sin cobro de puesto';
                 const pendientePuestoDia = tieneServiciosHoy ? Math.max(descuentoVisible - abonoPuestoDigitado, 0) : 0;
-                const saldoPuestePendiente = tieneServiciosHoy ? deudaPuestoRango + descuentoVisible : deudaPuestoRango;
                 const estadoActual = (fechaInicio === fechaFin)
                   ? (estadoDiaPorEstilista[item.estilista_id] || item.estado_pago_dia || 'pendiente')
                   : (item.estado_pago_rango || item.estado_pago_dia || 'pendiente');
+                // Saldo pendiente solo se muestra si el estado es "debe"
+                const saldoPuestePendiente = (estadoActual === 'debe') ? (deudaPuestoRango + descuentoVisible) : 0;
                 const estadoLabel = estadoActual === 'cancelado'
                   ? 'Liquidado'
                   : estadoActual === 'debe'
@@ -575,8 +576,8 @@ const aplicarEstadoLiquidacion = async (fila) => {
                       <div>{formatMoney(descuentoPuestoValidado)}</div>
                       <div className="text-[11px] leading-tight text-slate-500">{descripcionCobroPuesto}</div>
                       <div className="text-[11px] leading-tight text-amber-600">
-                        Saldo pendiente: {formatMoney(inputsHabilitados ? saldoPuestePendiente : 0)}
-                        {inputsHabilitados && deudaPuestoRango > 0 && (
+                        Saldo pendiente: {formatMoney(saldoPuestePendiente)}
+                        {estadoActual === 'debe' && deudaPuestoRango > 0 && (
                           <div className="text-[10px] leading-tight text-amber-500">
                             ({formatMoney(deudaPuestoRango)} anterior + {formatMoney(descuentoVisible)} hoy)
                           </div>
