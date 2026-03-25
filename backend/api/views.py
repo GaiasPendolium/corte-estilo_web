@@ -2119,25 +2119,26 @@ def estado_pago_estilista_dia(request):
 
         if not tabla_diaria_no_disponible:
             try:
-                # Siempre actualizar/crear el registro, incluso si es 'pendiente'
-                # Así evitamos problemas de sincronización en el BI
+                # Calcular totales del día específico
                 ganancias_totales_dia, descuento_dia, neto_dia = _calcular_totales_dia_estilista(estilista, fecha_cursor)
                 neto_ganado_dia = max(Decimal(0), neto_dia)
                 abono_aplicado = abono_puesto if estado == 'cancelado' else Decimal(0)
 
-                if total_pagado > neto_ganado_dia:
+                # Validación: la suma de liquidación + abono no debe exceder el neto ganado del día
+                suma_total_pagos = total_pagado + abono_aplicado
+                if suma_total_pagos > neto_ganado_dia:
                     return Response(
                         {
                             'error': (
-                                f'El valor a liquidar (${float(total_pagado):.2f}) '
+                                f'La suma de liquidación (${float(total_pagado):.2f}) + '
+                                f'abono puesto (${float(abono_aplicado):.2f}) = ${float(suma_total_pagos):.2f} '
                                 f'no puede exceder el neto ganado del día (${float(neto_ganado_dia):.2f}).'
                             )
                         },
                         status=status.HTTP_400_BAD_REQUEST,
                     )
 
-                # El abono de puesto no es pago al empleado; se registra en historial,
-                # pero no debe inflar salidas por medio de liquidación.
+                # Actualizar tabla diaria: guarda pagos al empleado (sin abono_puesto en los medios)
                 EstadoPagoEstilistaDia.objects.update_or_create(
                     estilista=estilista,
                     fecha=fecha_cursor,
@@ -2154,25 +2155,8 @@ def estado_pago_estilista_dia(request):
             except (OperationalError, ProgrammingError):
                 tabla_diaria_no_disponible = True
 
-        if estado == 'pendiente' and estado_anterior == 'cancelado':
-            try:
-                try:
-                    EstadoPagoEstilistaHistorial.objects.filter(
-                        estilista=estilista,
-                        fecha=fecha_cursor,
-                        estado_nuevo='cancelado',
-                    ).delete()
-                except (OperationalError, ProgrammingError):
-                    with connection.cursor() as cursor:
-                        cursor.execute(
-                            """
-                            DELETE FROM estado_pago_estilista_historial
-                            WHERE estilista_id = %s AND fecha = %s AND estado_nuevo = %s
-                            """,
-                            [estilista.id, fecha_cursor, 'cancelado'],
-                        )
-            except Exception:
-                historial_no_disponible = True
+        # NOTA: El "deshacer" ya NO borra historial (auditoría se mantiene).
+        # Solo se revierte el estado a pendiente en tabla diaria.
 
         if estado_anterior != estado and estado == 'cancelado':
             try:

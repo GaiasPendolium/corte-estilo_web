@@ -511,8 +511,10 @@ const Reportes = () => {
                 const deudaPuestoRango = Number(item.deuda_total_acumulada || 0);
                 const gananciasTotales = Number(item.facturacion_servicios || 0) + Number(item.comision_ventas_producto || 0);
                 const descuentoPuesto = Number(item.descuento_espacio || 0);
+                const tieneServiciosHoy = gananciasTotales > 0;
+                const descuentoVisible = tieneServiciosHoy ? descuentoPuesto : 0;
+                const netoGanado = Math.max(gananciasTotales - descuentoVisible, 0);
                 const abonoPuestoDigitado = Number(abonoPuestoPorEstilista[item.estilista_id] || 0);
-                const valorALiquidar = Math.max(gananciasTotales - descuentoPuesto, 0);
                 const tipoCobro = item.tipo_cobro_espacio || 'sin_cobro';
                 const valorCobroCfg = Number(item.valor_cobro_espacio || 0);
                 const descripcionCobroPuesto = tipoCobro === 'costo_fijo_neto'
@@ -520,12 +522,12 @@ const Reportes = () => {
                   : tipoCobro === 'porcentaje_neto'
                     ? `Cobro porcentaje: ${valorCobroCfg}%`
                     : 'Sin cobro de puesto';
-                const pendientePuestoDia = Math.max(descuentoPuesto - abonoPuestoDigitado, 0);
+                const pendientePuestoDia = tieneServiciosHoy ? Math.max(descuentoVisible - abonoPuestoDigitado, 0) : 0;
                 const estadoActual = (fechaInicio === fechaFin)
                   ? (estadoDiaPorEstilista[item.estilista_id] || item.estado_pago_dia || 'pendiente')
                   : (item.estado_pago_rango || item.estado_pago_dia || 'pendiente');
-                const valorALiquidarVisible = estadoActual === 'cancelado' ? 0 : valorALiquidar;
-                const descuentoPuestoVisible = estadoActual === 'cancelado' ? 0 : descuentoPuesto;
+                const valorALiquidarVisible = estadoActual === 'cancelado' ? 0 : netoGanado;
+                const descuentoPuestoValidado = estadoActual === 'cancelado' ? 0 : descuentoVisible;
                 const deudaPuestoVisible = deudaPuestoRango;
                 const inputsHabilitados = estadoActual !== 'cancelado';
                 return (
@@ -534,7 +536,7 @@ const Reportes = () => {
                     <td className="table-cell">{formatMoney(item.facturacion_servicios)}</td>
                     <td className="table-cell">{formatMoney(item.comision_ventas_producto)}</td>
                     <td className="table-cell">
-                      <div>{formatMoney(descuentoPuestoVisible)}</div>
+                      <div>{formatMoney(descuentoPuestoValidado)}</div>
                       <div className="text-[11px] leading-tight text-slate-500">{descripcionCobroPuesto}</div>
                       <div className="text-[11px] leading-tight text-amber-600">Pendiente hoy: {formatMoney(inputsHabilitados ? pendientePuestoDia : 0)}</div>
                     </td>
