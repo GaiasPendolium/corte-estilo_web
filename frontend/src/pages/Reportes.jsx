@@ -540,8 +540,10 @@ const aplicarEstadoLiquidacion = async (fila) => {
                     ? `Cobro porcentaje: ${valorCobroCfg}%`
                     : 'Sin cobro de puesto';
                 const pendientePuestoDia = tieneServiciosHoy ? Math.max(descuentoVisible - abonoPuestoDigitado, 0) : 0;
+                // Para UN DÍA: confiar SOLO en estadoDiaPorEstilista (del endpoint específico del día)
+                // Para RANGO: usar el estado del BI basado en múltiples días
                 const estadoActual = (fechaInicio === fechaFin)
-                  ? (estadoDiaPorEstilista[item.estilista_id] || item.estado_pago_dia || 'pendiente')
+                  ? (estadoDiaPorEstilista[item.estilista_id] || 'pendiente')
                   : (item.estado_pago_rango || item.estado_pago_dia || 'pendiente');
                 // Saldo pendiente solo se muestra si el estado es "debe"
                 const saldoPuestePendiente = (estadoActual === 'debe') ? (deudaPuestoRango + descuentoVisible) : 0;
