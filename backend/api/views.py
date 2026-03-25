@@ -2420,7 +2420,6 @@ def liquidar_dia_v2(request):
                             pago_otros=%s,
                             abono_puesto=%s,
                             pendiente_puesto=%s,
-                            neto_dia=%s,
                             notas=%s,
                             actualizado_en=%s
                         WHERE estilista_id=%s AND fecha=%s
@@ -2433,7 +2432,6 @@ def liquidar_dia_v2(request):
                             pago_otros,
                             abono_puesto,
                             saldo_puesto,
-                            pagable,
                             notas,
                             timezone.now(),
                             estilista.id,
@@ -2449,7 +2447,6 @@ def liquidar_dia_v2(request):
                             pago_nequi=%s,
                             pago_daviplata=%s,
                             pago_otros=%s,
-                            neto_dia=%s,
                             notas=%s,
                             actualizado_en=%s
                         WHERE estilista_id=%s AND fecha=%s
@@ -2460,7 +2457,6 @@ def liquidar_dia_v2(request):
                             pago_nequi,
                             pago_daviplata,
                             pago_otros,
-                            pagable,
                             notas,
                             timezone.now(),
                             estilista.id,
@@ -2475,8 +2471,8 @@ def liquidar_dia_v2(request):
                             """
                             INSERT INTO estado_pago_estilista_dia
                             (estilista_id, fecha, estado, pago_efectivo, pago_nequi, pago_daviplata, pago_otros,
-                             abono_puesto, pendiente_puesto, neto_dia, notas, actualizado_en)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                             abono_puesto, pendiente_puesto, notas, actualizado_en)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             """,
                             [
                                 estilista.id,
@@ -2488,7 +2484,6 @@ def liquidar_dia_v2(request):
                                 pago_otros,
                                 abono_puesto,
                                 saldo_puesto,
-                                pagable,
                                 notas,
                                 timezone.now(),
                             ],
@@ -2498,8 +2493,8 @@ def liquidar_dia_v2(request):
                             """
                             INSERT INTO estado_pago_estilista_dia
                             (estilista_id, fecha, estado, pago_efectivo, pago_nequi, pago_daviplata, pago_otros,
-                             neto_dia, notas, actualizado_en)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                             notas, actualizado_en)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                             """,
                             [
                                 estilista.id,
@@ -2509,7 +2504,6 @@ def liquidar_dia_v2(request):
                                 pago_nequi,
                                 pago_daviplata,
                                 pago_otros,
-                                pagable,
                                 notas,
                                 timezone.now(),
                             ],
