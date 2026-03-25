@@ -168,13 +168,13 @@ def calcular_liquidacion_dia_estilista(estilista, fecha_dia):
     Returns: dict con todos los cálculos {ganancias, descuento, pagable}
     """
     
-    # ============ [1] SERVICIOS BASE ============
+    # ============ [1] SERVICIOS BASE (PAGABLE AL EMPLEADO) ============
     servicios_dia = ServicioRealizado.objects.filter(
         estado='finalizado',
         estilista=estilista,
         fecha_hora__date=fecha_dia,
     )
-    servicios_base = Decimal(servicios_dia.aggregate(total=Sum('precio_cobrado'))['total'] or 0)
+    servicios_base = Decimal(servicios_dia.aggregate(total=Sum('monto_estilista'))['total'] or 0)
     
     # ============ [2] COMISIONES POR SERVICIOS ADICIONALES ============
     adicionales_dia = ServicioRealizadoAdicional.objects.filter(
@@ -1347,6 +1347,7 @@ def _calcular_datos_bi(request):
 
         # Calcular totales de servicios
         total_servicios_precio_cobrado = Decimal(servicios_est.aggregate(total=Sum('precio_cobrado'))['total'] or 0)
+        total_servicios_pagables_est = Decimal(servicios_est.aggregate(total=Sum('monto_estilista'))['total'] or 0)
         adicionales_estilista = [ad for ad in adicionales_asignados_lista if ad.estilista_id == estilista.id]
         total_adicionales_asignados_bruto_est = Decimal(0)
         total_adicionales_asignados_est = Decimal(0)
@@ -1364,8 +1365,8 @@ def _calcular_datos_bi(request):
             total_adicionales_asignados_est += valor_emp
             total_adicionales_deduccion_est += valor_est
         
-        # Base para pagar al estilista = servicios principales + servicios adicionales asignados.
-        ganancia_servicios_est = total_servicios_precio_cobrado + total_adicionales_asignados_est
+        # Base para pagar al estilista = monto del estilista en servicios principales + adicionales asignados.
+        ganancia_servicios_est = total_servicios_pagables_est + total_adicionales_asignados_est
         
         # Para liquidación del estilista, facturación atribuida = servicios base + adicionales asignados.
         total_facturado_cliente = total_servicios_precio_cobrado + total_adicionales_asignados_bruto_est
@@ -1390,7 +1391,7 @@ def _calcular_datos_bi(request):
         servicios_por_dia = {}
         for srv in servicios_est:
             fecha_srv = _fecha_operativa_desde_dt(srv.fecha_hora)
-            servicios_por_dia[fecha_srv] = servicios_por_dia.get(fecha_srv, Decimal(0)) + Decimal(srv.precio_cobrado or 0)
+            servicios_por_dia[fecha_srv] = servicios_por_dia.get(fecha_srv, Decimal(0)) + Decimal(srv.monto_estilista or 0)
 
         for ad in adicionales_estilista:
             fecha_ad = _fecha_operativa_desde_dt(ad.servicio_realizado.fecha_hora)
@@ -1505,6 +1506,7 @@ def _calcular_datos_bi(request):
                 'dias_cobrados_alquiler': int(len(dias_trabajados)) if estilista.tipo_cobro_espacio == 'costo_fijo_neto' else 0,
                 'total_dias_trabajados': int(len(dias_trabajados)),
                 'facturacion_servicios': float(total_facturado_cliente),
+                'valor_total_empleado': float(ganancia_servicios_est),
                 'valor_servicios_adicionales': float(total_adicionales_asignados_est),
                 'deduccion_servicios_adicionales': float(total_adicionales_deduccion_est),
                 'ganancias_servicios': float(ganancia_servicios_est),

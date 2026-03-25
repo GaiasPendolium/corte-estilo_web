@@ -490,7 +490,9 @@ const aplicarEstadoLiquidacion = async (fila) => {
               )}
               {(biData?.estilistas || []).map((item) => {
                 const deudaPuestoRango = Number(item.deuda_total_acumulada || 0);
-                const gananciasTotales = Number(item.facturacion_servicios || 0) + Number(item.comision_ventas_producto || 0);
+                const valorTotalEmpleado = Number((item.valor_total_empleado ?? item.ganancias_servicios ?? item.facturacion_servicios) || 0);
+                const comisionesEmpleado = Number(item.comision_ventas_producto || 0);
+                const gananciasTotales = valorTotalEmpleado + comisionesEmpleado;
                 const descuentoPuesto = Number(item.descuento_espacio || 0);
                 const tieneServiciosHoy = gananciasTotales > 0;
                 const descuentoVisible = tieneServiciosHoy ? descuentoPuesto : 0;
@@ -514,8 +516,8 @@ const aplicarEstadoLiquidacion = async (fila) => {
                 return (
                   <tr key={item.estilista_id}>
                     <td className="table-cell font-medium">{item.estilista_nombre}</td>
-                    <td className="table-cell">{formatMoney(item.facturacion_servicios)}</td>
-                    <td className="table-cell">{formatMoney(item.comision_ventas_producto)}</td>
+                    <td className="table-cell">{formatMoney(valorTotalEmpleado)}</td>
+                    <td className="table-cell">{formatMoney(comisionesEmpleado)}</td>
                     <td className="table-cell">
                       <div>{formatMoney(descuentoPuestoValidado)}</div>
                       <div className="text-[11px] leading-tight text-slate-500">{descripcionCobroPuesto}</div>
