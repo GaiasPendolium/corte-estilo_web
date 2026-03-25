@@ -63,38 +63,40 @@ const Reportes = () => {
     [periodo, fechaInicio, fechaFin, medioPago]
   );
 
-  const cargarTodo = async () => {
-    try {
-      setLoading(true);
-      const [cierreResp, biResp, carteraResp] = await Promise.all([
-        reportesService.getCierreCaja(paramsBase),
-        reportesService.getBIResumen(paramsBase),
-        reportesService.getConsumoEmpleadoDeudas({
-          periodo,
-          fecha_inicio: fechaInicio,
-          fecha_fin: fechaFin,
-        }),
-      ]);
-
-      setCierreCaja(cierreResp || null);
-      setBiData(biResp || null);
-      setCarteraData({
-        resumen: carteraResp?.resumen || [],
-        deudas: carteraResp?.deudas || [],
-      });
-    } catch (error) {
-      toast.error('No se pudieron cargar los reportes');
-      setCierreCaja(null);
-      setBiData(null);
-      setCarteraData({ resumen: [], deudas: [] });
-    } finally {
-      setLoading(false);
-    }
-  };
+  const paramsBaseString = JSON.stringify(paramsBase);
 
   useEffect(() => {
+    const cargarTodo = async () => {
+      try {
+        setLoading(true);
+        const [cierreResp, biResp, carteraResp] = await Promise.all([
+          reportesService.getCierreCaja(paramsBase),
+          reportesService.getBIResumen(paramsBase),
+          reportesService.getConsumoEmpleadoDeudas({
+            periodo,
+            fecha_inicio: fechaInicio,
+            fecha_fin: fechaFin,
+          }),
+        ]);
+
+        setCierreCaja(cierreResp || null);
+        setBiData(biResp || null);
+        setCarteraData({
+          resumen: carteraResp?.resumen || [],
+          deudas: carteraResp?.deudas || [],
+        });
+      } catch (error) {
+        toast.error('No se pudieron cargar los reportes');
+        setCierreCaja(null);
+        setBiData(null);
+        setCarteraData({ resumen: [], deudas: [] });
+      } finally {
+        setLoading(false);
+      }
+    };
+
     cargarTodo();
-  }, [paramsBase]);
+  }, [paramsBaseString, periodo, fechaInicio, fechaFin]);
 
   const aplicarRangoRapido = (tipo) => {
     const base = new Date();
