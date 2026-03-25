@@ -392,7 +392,7 @@ export const reportesService = {
     return response.data;
   },
 
-  setEstadoPagoEstilistaDia: async ({ estilista_id, fecha, fecha_inicio, fecha_fin, estado, notas, pagos_detalle, abono_puesto }) => {
+  setEstadoPagoEstilistaDia: async ({ estilista_id, fecha, fecha_inicio, fecha_fin, estado, notas, pagos_detalle }) => {
     const response = await api.post('/reportes/estilistas/estado-pago-dia/', {
       estilista_id,
       fecha,
@@ -401,7 +401,6 @@ export const reportesService = {
       estado,
       notas,
       pagos_detalle,
-      abono_puesto,
     });
     return response.data;
   },

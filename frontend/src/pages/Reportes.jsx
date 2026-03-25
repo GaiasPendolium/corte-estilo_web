@@ -131,7 +131,6 @@ const Reportes = () => {
           nequi: String(Number(x.pago_nequi || 0) || ''),
           daviplata: String(Number(x.pago_daviplata || 0) || ''),
           otros: String(Number(x.pago_otros || 0) || ''),
-          abono_puesto: String(Number(x.abono_puesto || 0) || ''),
         };
       });
       setPagosPorEstilista(map);
@@ -376,21 +375,7 @@ const Reportes = () => {
         nequi: prev[estilistaId]?.nequi || '',
         daviplata: prev[estilistaId]?.daviplata || '',
         otros: prev[estilistaId]?.otros || '',
-        abono_puesto: prev[estilistaId]?.abono_puesto || '',
         [medio]: String(valor || '').replace(/[^\d.]/g, ''),
-      },
-    }));
-  };
-
-  const actualizarAbonoPuesto = (estilistaId, valor) => {
-    setPagosPorEstilista((prev) => ({
-      ...prev,
-      [estilistaId]: {
-        efectivo: prev[estilistaId]?.efectivo || '',
-        nequi: prev[estilistaId]?.nequi || '',
-        daviplata: prev[estilistaId]?.daviplata || '',
-        otros: prev[estilistaId]?.otros || '',
-        abono_puesto: String(valor || '').replace(/[^\d.]/g, ''),
       },
     }));
   };
@@ -406,20 +391,14 @@ const Reportes = () => {
     const netoPendiente = Number(fila.pago_neto_pendiente ?? fila.pago_neto_estilista ?? 0);
     const limite = Math.abs(netoPendiente);
     const totalRegistrado = totalPagosFila(fila.estilista_id);
-    const abonoPuesto = Number(pagosPorEstilista[fila.estilista_id]?.abono_puesto || 0);
-    const deudaArrastrada = Number(fila.deuda_puesto_arrastrada || 0);
     const abonado = Math.min(totalRegistrado, limite);
     const restante = Math.max(limite - abonado, 0);
-    const saldoPuestoRestante = Math.max(deudaArrastrada - abonoPuesto, 0);
     return {
       netoPendiente,
       limite,
       totalRegistrado,
-      abonoPuesto,
-      deudaArrastrada,
       abonado,
       restante,
-      saldoPuestoRestante,
       esDeudaEspacio: netoPendiente < 0,
       esPagoEstilista: netoPendiente > 0,
     };
@@ -498,28 +477,12 @@ const Reportes = () => {
       daviplata: Number(pagosPorEstilista[estilistaId]?.daviplata || 0),
       otros: Number(pagosPorEstilista[estilistaId]?.otros || 0),
     };
-    const abonoPuesto = Number(pagosPorEstilista[estilistaId]?.abono_puesto || 0);
     const totalPagos = Object.values(pagosDetalle).reduce((acc, val) => acc + (Number.isFinite(val) ? val : 0), 0);
     const netoPendiente = Number(fila.pago_neto_pendiente ?? fila.pago_neto_estilista ?? 0);
     const maxPagable = Math.abs(netoPendiente);
 
     if (estado === 'cancelado' && fechaInicio !== fechaFin && totalPagos > 0) {
       toast.warning('Para registrar pagos por medio debes seleccionar un solo día (fecha inicio = fecha fin).');
-      return;
-    }
-
-    if (estado === 'cancelado' && netoPendiente > 0 && abonoPuesto > maxPagable) {
-      toast.warning(`El abono a puesto no puede exceder el neto (${formatMoney(maxPagable)}).`);
-      return;
-    }
-
-    if (estado === 'cancelado' && netoPendiente <= 0 && abonoPuesto > 0) {
-      toast.warning('El abono a puesto desde base solo aplica cuando el neto es positivo.');
-      return;
-    }
-
-    if (estado === 'cancelado' && netoPendiente > 0 && totalPagos > (maxPagable - abonoPuesto)) {
-      toast.warning(`Con ese abono a puesto, el pago por medios al empleado no puede exceder ${formatMoney(maxPagable - abonoPuesto)}.`);
       return;
     }
 
@@ -543,7 +506,6 @@ const Reportes = () => {
         fecha_fin: fechaFin,
         estado,
         pagos_detalle: estado === 'cancelado' ? pagosDetalle : { efectivo: 0, nequi: 0, daviplata: 0, otros: 0 },
-        abono_puesto: estado === 'cancelado' ? abonoPuesto : 0,
       });
 
       await loadData();
@@ -857,7 +819,6 @@ const Reportes = () => {
                 <th className="px-6 py-3 text-left">Días trabajados</th>
                 <th className="px-6 py-3 text-left">Neto pendiente</th>
                 <th className="px-6 py-3 text-left">Estado saldo</th>
-                <th className="px-6 py-3 text-left">Abono a puesto</th>
                 <th className="px-6 py-3 text-left">Pago efectivo</th>
                 <th className="px-6 py-3 text-left">Pago Nequi</th>
                 <th className="px-6 py-3 text-left">Pago Daviplata</th>
@@ -900,9 +861,6 @@ const Reportes = () => {
                     <div className="text-xs text-slate-500">
                       Periodo completo: {formatMoney(s.pago_neto_periodo)} | Ya cancelado: {formatMoney(s.pago_neto_cancelado)}
                     </div>
-                    <div className="text-xs text-amber-700 mt-1">
-                      Deuda puesto arrastrada: {formatMoney(s.deuda_puesto_arrastrada || 0)}
-                    </div>
                     {(s.estado_pago_rango || s.estado_pago_dia) === 'cancelado' && (
                       <div className="text-xs font-medium text-emerald-700 mt-1">Ya liquidado para todo el rango seleccionado</div>
                     )}
@@ -911,18 +869,6 @@ const Reportes = () => {
                     {Number(s.pago_neto_pendiente || s.pago_neto_estilista || 0) > 0 && <span className="text-emerald-700 font-medium">A pagar (pendiente)</span>}
                     {Number(s.pago_neto_pendiente || s.pago_neto_estilista || 0) < 0 && <span className="text-red-700 font-medium">Debe al establecimiento</span>}
                     {Number(s.pago_neto_pendiente || s.pago_neto_estilista || 0) === 0 && <span className="text-slate-600 font-medium">En cero</span>}
-                  </td>
-                  <td className="table-cell">
-                    <input
-                      className="input-field !py-3 !min-h-0 min-w-[130px] text-base font-medium"
-                      type="number"
-                      min="0"
-                      step="1"
-                      placeholder="0"
-                      value={pagosPorEstilista[s.estilista_id]?.abono_puesto || ''}
-                      onChange={(e) => actualizarAbonoPuesto(s.estilista_id, e.target.value)}
-                      disabled={Number(s.pago_neto_pendiente || s.pago_neto_estilista || 0) <= 0}
-                    />
                   </td>
                   <td className="table-cell">
                     <input
@@ -972,10 +918,8 @@ const Reportes = () => {
                     <div>{formatMoney(resumenPago.totalRegistrado)}</div>
                     {resumenPago.esPagoEstilista && (
                       <>
-                        <div className="text-xs text-slate-500 mt-1">Abono a puesto: {formatMoney(resumenPago.abonoPuesto)}</div>
                         <div className="text-xs text-slate-500 mt-1">Pagado a estilista: {formatMoney(resumenPago.abonado)}</div>
                         <div className="text-xs font-medium text-amber-700">Pendiente por pagar: {formatMoney(resumenPago.restante)}</div>
-                        <div className="text-xs font-medium text-red-700">Saldo deuda puesto: {formatMoney(resumenPago.saldoPuestoRestante)}</div>
                       </>
                     )}
                     {resumenPago.esDeudaEspacio && (
