@@ -2138,7 +2138,11 @@ def estado_pago_estilista_dia(request):
                         status=status.HTTP_400_BAD_REQUEST,
                     )
 
-                # Actualizar tabla diaria: guarda pagos al empleado (sin abono_puesto en los medios)
+                # Actualizar tabla diaria: guarda pagos al empleado + abono y pendiente de puesto
+                _, descuento_dia, _ = _calcular_totales_dia_estilista(estilista, fecha_cursor)
+                abono_puesto_dia = abono_puesto if estado == 'cancelado' else Decimal(0)
+                pendiente_puesto_dia = max(max(descuento_dia, Decimal(0)) - abono_puesto_dia, Decimal(0))
+                
                 EstadoPagoEstilistaDia.objects.update_or_create(
                     estilista=estilista,
                     fecha=fecha_cursor,
@@ -2150,6 +2154,8 @@ def estado_pago_estilista_dia(request):
                         'pago_otros': pago_otros if estado == 'cancelado' else Decimal(0),
                         'neto_dia': neto_dia,
                         'notas': notas,
+                        'abono_puesto': abono_puesto_dia,
+                        'pendiente_puesto': pendiente_puesto_dia,
                     },
                 )
             except (OperationalError, ProgrammingError):

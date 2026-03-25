@@ -564,6 +564,8 @@ class EstadoPagoEstilistaDia(models.Model):
     pago_nequi = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Pago Nequi')
     pago_daviplata = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Pago Daviplata')
     pago_otros = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Pago otros')
+    abono_puesto = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Abono puesto')
+    pendiente_puesto = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Pendiente puesto')
     neto_dia = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Neto del día', null=True, blank=True)
     notas = models.CharField(max_length=255, blank=True, null=True, verbose_name='Notas')
     actualizado_en = models.DateTimeField(auto_now=True, verbose_name='Actualizado en')
