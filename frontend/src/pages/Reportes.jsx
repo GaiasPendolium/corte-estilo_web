@@ -166,6 +166,14 @@ const Reportes = () => {
                   </td>
                 </tr>
               ))}
+              {medios.length > 0 && (
+                <tr className="bg-indigo-100 font-semibold">
+                  <td className="table-cell">TOTAL</td>
+                  <td className="table-cell">{formatMoney(medios.reduce((sum, m) => sum + Number(m.ingresos || 0), 0))}</td>
+                  <td className="table-cell">{formatMoney(medios.reduce((sum, m) => sum + Number(m.salidas || 0), 0))}</td>
+                  <td className="table-cell text-indigo-900">{formatMoney(medios.reduce((sum, m) => sum + Number(m.saldo || 0), 0))}</td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>

@@ -2552,7 +2552,7 @@ def reporte_cierre_caja(request):
 
     detalle_productos.sort(key=lambda x: x.get('fecha_hora') or '', reverse=True)
 
-    # Detalle de ingresos por espacio (pagos registrados por medio cuando el neto del dia es negativo).
+    # Detalle de ingresos por espacio (pagos registrados por medio cuando el estilista debe al espacio).
     detalle_espacio = []
     ingresos_espacios = Decimal(0)
     try:
@@ -2562,10 +2562,6 @@ def reporte_cierre_caja(request):
         ).order_by('-fecha', 'estilista__nombre')
 
         for ep in estado_pago_qs:
-            neto_dia = _calcular_neto_dia_estilista(ep.estilista, ep.fecha)
-            if neto_dia >= 0:
-                continue
-
             pagos = {
                 'efectivo': Decimal(ep.pago_efectivo or 0),
                 'nequi': Decimal(ep.pago_nequi or 0),
@@ -2576,6 +2572,7 @@ def reporte_cierre_caja(request):
             if valor_total <= 0:
                 continue
 
+            # Para filtrar por medio de pago específico
             if medio_pago and medio_pago != 'todos':
                 valor_recibido = Decimal(pagos.get(medio_pago, 0))
             else:
@@ -2604,6 +2601,7 @@ def reporte_cierre_caja(request):
 
     # Detalle de servicios que dejan ganancia al establecimiento.
     adicionales_por_servicio = {}
+    adicionales_nombres_por_servicio = {}
     for ad in adicionales_qs:
         sid = int(ad.servicio_realizado_id)
         valor = Decimal(ad.valor_cobrado or 0)
@@ -2621,10 +2619,21 @@ def reporte_cierre_caja(request):
                 'establecimiento': Decimal(0),
                 'cantidad': 0,
             }
+            adicionales_nombres_por_servicio[sid] = []
 
         adicionales_por_servicio[sid]['bruto'] += valor
         adicionales_por_servicio[sid]['establecimiento'] += valor_est
         adicionales_por_servicio[sid]['cantidad'] += 1
+        
+        nombres_adicionales = []
+        if ad.servicio_id:
+            nombres_adicionales.append(ad.servicio.nombre)
+        if ad.producto_id:
+            nombres_adicionales.append(ad.producto.nombre)
+        if nombres_adicionales:
+            nombre = ' + '.join(nombres_adicionales)
+            if nombre not in adicionales_nombres_por_servicio[sid]:
+                adicionales_nombres_por_servicio[sid].append(nombre)
 
     detalle_servicios_establecimiento = []
     ingresos_servicios_establecimiento = Decimal(0)
@@ -2632,6 +2641,7 @@ def reporte_cierre_caja(request):
     for srv in servicios_qs.order_by('-fecha_hora'):
         sid = int(srv.id)
         ad_info = adicionales_por_servicio.get(sid, {'bruto': Decimal(0), 'establecimiento': Decimal(0), 'cantidad': 0})
+        ad_nombres = adicionales_nombres_por_servicio.get(sid, [])
 
         prod_est = Decimal(0)
         if srv.adicional_otro_producto_id:
@@ -2652,12 +2662,18 @@ def reporte_cierre_caja(request):
             continue
 
         ingresos_servicios_establecimiento += ganancia_est
+        
+        # Construir nombre del servicio
+        tipo_servicio = srv.servicio.nombre if srv.servicio_id else '-'
+        if ad_nombres:
+            tipo_servicio = f"{tipo_servicio} + {', '.join(ad_nombres)}"
+        
         detalle_servicios_establecimiento.append(
             {
                 'fecha_hora': timezone.localtime(srv.fecha_hora).strftime('%Y-%m-%d %H:%M:%S') if srv.fecha_hora else None,
                 'fecha': _fecha_operativa_desde_dt(srv.fecha_hora).strftime('%Y-%m-%d') if srv.fecha_hora else None,
                 'numero_factura': srv.numero_factura,
-                'tipo_servicio': srv.servicio.nombre if srv.servicio_id else '-',
+                'tipo_servicio': tipo_servicio,
                 'medio_pago': srv.medio_pago,
                 'estilista_nombre': srv.estilista.nombre if srv.estilista_id else '',
                 'valor_servicio': float(valor_servicio),
