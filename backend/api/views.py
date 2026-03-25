@@ -3306,7 +3306,7 @@ def reporte_cierre_caja(request):
         for ep in estado_pago_qs:
             # El ingreso por espacio es el abono_puesto (lo que el empleado pagó al espacio)
             valor_recibido = Decimal(ep.abono_puesto or 0)
-            
+
             if valor_recibido <= 0:
                 continue
 
@@ -3322,6 +3322,40 @@ def reporte_cierre_caja(request):
     except (OperationalError, ProgrammingError):
         detalle_espacio = []
         ingresos_espacios = Decimal(0)
+
+    # Fallback: si la tabla diaria no trae abonos, intentar reconstruir desde historial
+    # (último registro por estilista/fecha para evitar doble conteo por múltiples cambios).
+    if ingresos_espacios <= 0 and len(detalle_espacio) == 0:
+        try:
+            historial_qs = EstadoPagoEstilistaHistorial.objects.select_related('estilista').filter(
+                fecha__gte=fecha_inicio_dt,
+                fecha__lte=fecha_fin_dt,
+            ).order_by('estilista_id', 'fecha', '-fecha_cambio')
+
+            vistos_hist = set()
+            for h in historial_qs:
+                key = (int(h.estilista_id or 0), h.fecha)
+                if key in vistos_hist:
+                    continue
+                vistos_hist.add(key)
+
+                valor_recibido = Decimal(getattr(h, 'abono_puesto', 0) or 0)
+                if valor_recibido <= 0:
+                    continue
+
+                ingresos_espacios += valor_recibido
+                detalle_espacio.append(
+                    {
+                        'fecha': h.fecha.strftime('%Y-%m-%d') if h.fecha else None,
+                        'estilista_id': h.estilista_id,
+                        'estilista_nombre': h.estilista.nombre if h.estilista_id else '',
+                        'valor_pagado': float(valor_recibido),
+                    }
+                )
+
+            detalle_espacio.sort(key=lambda x: (x.get('fecha') or '', x.get('estilista_nombre') or ''), reverse=True)
+        except Exception:
+            pass
 
     # Detalle de servicios que dejan ganancia al establecimiento.
     adicionales_por_servicio = {}
