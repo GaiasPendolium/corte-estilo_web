@@ -2258,12 +2258,15 @@ def liquidar_dia_v2(request):
         "notas": "Liquidación del día"
     }
     
-    LÓGICA CRYSTAL CLEAR:
-    1. Calcula ganancias + descuento del día
-    2. Valida: pago_total + abono_puesto <= total_pagable
-    3. Guarda en tabla diaria con TODOS LOS CAMPOS
-    4. Crea registro historial
-    5. Retorna tabla con valores
+     LÓGICA:
+     1. Calcula ganancias + descuento del día
+     2. Valida reglas de negocio:
+         - El valor a liquidar (pago al empleado) NO puede superar ganancias totales.
+         - El valor a liquidar + abono de puesto del día NO puede superar ganancias totales.
+         - Si hay deuda anterior de puesto, se permite abono extra para cubrirla.
+     3. Guarda en tabla diaria
+     4. Crea registro historial
+     5. Retorna valores calculados
     """
     
     # ============ EXTRACCIÓN Y VALIDACIÓN ============
@@ -2302,18 +2305,64 @@ def liquidar_dia_v2(request):
     descuento = calc['descuento_puesto']
     pagable = calc['total_pagable']
     
-    # ============ [2] VALIDAR ============
-    suma = total_pagado + abono_puesto
-    if suma > pagable:
+    # ============ [2] VALIDAR REGLAS DE NEGOCIO ============
+    # Deuda anterior de puesto (saldo arrastrado del último día liquidado)
+    ultimo_estado = EstadoPagoEstilistaDia.objects.filter(
+        estilista=estilista,
+        fecha__lt=fecha,
+    ).order_by('-fecha').first()
+    deuda_anterior_puesto = Decimal(0)
+    if ultimo_estado:
+        deuda_anterior_puesto = Decimal(
+            getattr(ultimo_estado, 'saldo_puesto_pendiente', None)
+            or getattr(ultimo_estado, 'pendiente_puesto', 0)
+            or 0
+        )
+
+    # 1) Tope principal: valor a liquidar no puede superar valor total empleado
+    if total_pagado > ganancias:
         return Response({
-            'error': f'Suma ({float(suma):.2f}) > pagable ({float(pagable):.2f})',
-            'ganancias_dia': float(ganancias),
-            'descuento_puesto': float(descuento),
-            'total_pagable': float(pagable),
+            'error': (
+                f'El valor a liquidar (${float(total_pagado):.2f}) no puede superar '
+                f'el valor total empleado (${float(ganancias):.2f}).'
+            ),
+            'ganancias_totales': float(ganancias),
+            'valor_liquidar': float(total_pagado),
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+    # Parte del abono que corresponde al puesto del día actual
+    abono_puesto_dia = min(abono_puesto, descuento)
+    # Parte del abono que intenta cubrir deuda arrastrada
+    abono_puesto_extra = max(abono_puesto - descuento, Decimal(0))
+
+    # 2) Tope combinado para el día actual: liquidación + puesto del día <= ganancias
+    suma_dia = total_pagado + abono_puesto_dia
+    if suma_dia > ganancias:
+        return Response({
+            'error': (
+                f'Liquidación (${float(total_pagado):.2f}) + puesto del día (${float(abono_puesto_dia):.2f}) '
+                f'no puede superar el valor total empleado (${float(ganancias):.2f}).'
+            ),
+            'ganancias_totales': float(ganancias),
+            'liquidacion': float(total_pagado),
+            'abono_puesto_dia': float(abono_puesto_dia),
+            'suma_dia': float(suma_dia),
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+    # 3) El abono extra solo es válido si existe deuda anterior
+    if abono_puesto_extra > 0 and deuda_anterior_puesto <= 0:
+        return Response({
+            'error': (
+                f'El abono extra a puesto (${float(abono_puesto_extra):.2f}) requiere deuda anterior. '
+                'No se encontró saldo pendiente arrastrado.'
+            ),
+            'deuda_anterior_puesto': float(deuda_anterior_puesto),
         }, status=status.HTTP_400_BAD_REQUEST)
     
-    # ============ [3] SALDO PENDIENTE ============
-    saldo_puesto = max(descuento - abono_puesto, Decimal(0))
+    # ============ [3] SALDO PENDIENTE ACUMULADO DE PUESTO ============
+    deuda_total_puesto = deuda_anterior_puesto + descuento
+    abono_aplicado_total_puesto = min(abono_puesto, deuda_total_puesto)
+    saldo_puesto = max(deuda_total_puesto - abono_aplicado_total_puesto, Decimal(0))
     
     # ============ [4] GUARDAR ============
     try:
@@ -2327,12 +2376,14 @@ def liquidar_dia_v2(request):
         estado_diaria.ganancias_totales = ganancias
         estado_diaria.descuento_puesto = descuento
         estado_diaria.total_pagable = pagable
+        estado_diaria.neto_dia = pagable  # compatibilidad legacy
         estado_diaria.pago_efectivo = pago_efectivo
         estado_diaria.pago_nequi = pago_nequi
         estado_diaria.pago_daviplata = pago_daviplata
         estado_diaria.pago_otros = pago_otros
         estado_diaria.abono_puesto = abono_puesto
         estado_diaria.saldo_puesto_pendiente = saldo_puesto
+        estado_diaria.pendiente_puesto = saldo_puesto  # compatibilidad legacy
         estado_diaria.notas = notas
         estado_diaria.usuario_liquida = request.user
         
@@ -2382,6 +2433,9 @@ def liquidar_dia_v2(request):
         'puesto': {
             'descuento': float(descuento),
             'abono': float(abono_puesto),
+            'deuda_anterior': float(deuda_anterior_puesto),
+            'deuda_total': float(deuda_total_puesto),
+            'abono_aplicado': float(abono_aplicado_total_puesto),
             'saldo_pendiente': float(saldo_puesto),
         },
         'estado': estado_diaria.estado,
