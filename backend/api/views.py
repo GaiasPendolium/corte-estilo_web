@@ -2492,6 +2492,18 @@ def reporte_cierre_caja(request):
         servicios_qs = servicios_qs.filter(medio_pago=medio_pago)
         adicionales_qs = adicionales_qs.filter(servicio_realizado__medio_pago=medio_pago)
 
+    abonos_consumo_qs = AbonoDeudaEmpleado.objects.filter(
+        fecha_hora__date__gte=fecha_inicio_dt,
+        fecha_hora__date__lte=fecha_fin_dt,
+    )
+    if medio_pago and medio_pago != 'todos':
+        abonos_consumo_qs = abonos_consumo_qs.filter(medio_pago=medio_pago)
+
+    abonos_por_deuda = {}
+    for ab in abonos_consumo_qs:
+        did = int(ab.deuda_id)
+        abonos_por_deuda[did] = abonos_por_deuda.get(did, Decimal(0)) + Decimal(ab.monto or 0)
+
     # Detalle de productos vendidos en operacion diaria:
     # 1) venta directa de producto
     # 2) producto adicional dentro de servicio
@@ -2525,11 +2537,21 @@ def reporte_cierre_caja(request):
         )
 
     # Consumo empleado: se muestra en el detalle para trazabilidad,
-    # pero no suma al total de ingresos de venta en cierre de caja.
+    # pero en ingresos solo cuenta lo realmente abonado (pagado) en el rango.
     for venta in ventas_consumo_qs.order_by('-fecha_hora'):
-        valor_venta = Decimal(venta.total or 0)
+        valor_credito_total = Decimal(venta.total or 0)
+        valor_venta = Decimal(0)
+        if venta.deuda_consumo_id:
+            valor_venta = Decimal(abonos_por_deuda.get(int(venta.deuda_consumo_id), Decimal(0)))
+            if valor_venta > valor_credito_total:
+                valor_venta = valor_credito_total
+
         costo_unitario = Decimal(venta.producto.precio_compra or 0)
-        valor_compra = costo_unitario * Decimal(venta.cantidad or 0)
+        valor_compra_total = costo_unitario * Decimal(venta.cantidad or 0)
+
+        # Prorratear el costo según lo efectivamente pagado en el periodo.
+        factor_pago = (valor_venta / valor_credito_total) if valor_credito_total > 0 else Decimal(0)
+        valor_compra = valor_compra_total * factor_pago
         ganancia = valor_venta - valor_compra
 
         detalle_productos.append(
@@ -2590,11 +2612,6 @@ def reporte_cierre_caja(request):
         ).order_by('-fecha', 'estilista__nombre')
 
         for ep in estado_pago_qs:
-            neto_dia = _calcular_neto_dia_estilista(ep.estilista, ep.fecha)
-            if neto_dia >= 0:
-                # Si el neto del dia no es deuda del estilista, este pago no es ingreso de espacio.
-                continue
-
             pagos = {
                 'efectivo': Decimal(ep.pago_efectivo or 0),
                 'nequi': Decimal(ep.pago_nequi or 0),
