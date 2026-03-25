@@ -488,7 +488,7 @@ const Reportes = () => {
                 </tr>
               )}
               {(biData?.estilistas || []).map((item) => {
-                const deudaPuestoRango = Math.max(0, -Number(item.pago_neto_periodo || 0));
+                const deudaPuestoRango = Number(item.deuda_total_acumulada || 0);
                 const estadoActual = item.estado_pago_rango || item.estado_pago_dia || 'pendiente';
                 return (
                   <tr key={item.estilista_id}>

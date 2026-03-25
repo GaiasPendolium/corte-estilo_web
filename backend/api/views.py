@@ -1330,6 +1330,20 @@ def _calcular_datos_bi(request):
         else:
             estado_pago_rango = 'parcial'
 
+        # Calcular deuda histórica acumulada (días anteriores a fecha_inicio con neto < 0 no pagado)
+        deuda_puesto_historica = Decimal(0)
+        try:
+            registros_anteriores = EstadoPagoEstilistaDia.objects.filter(
+                estilista=estilista,
+                fecha__lt=fecha_inicio_dt,
+                neto_dia__lt=0,
+            ).values_list('neto_dia', flat=True)
+            deuda_puesto_historica = abs(sum(Decimal(x or 0) for x in registros_anteriores))
+        except Exception:
+            deuda_puesto_historica = Decimal(0)
+
+        deuda_total_acumulada = deuda_puesto_historica + abs(pago_neto_pendiente)
+
         estilistas_data.append(
             {
                 'estilista_id': estilista.id,
@@ -1353,6 +1367,8 @@ def _calcular_datos_bi(request):
                 'pago_neto_pendiente': float(pago_neto_pendiente),
                 'pago_neto_periodo': float(pago_neto_periodo),
                 'pago_neto_cancelado': float(pago_neto_cancelado),
+                'deuda_puesto_historica': float(deuda_puesto_historica),
+                'deuda_total_acumulada': float(deuda_total_acumulada),
                 'estado_pago_dia': estado_pago_rango,
                 'estado_pago_rango': estado_pago_rango,
                 'dias_cancelados_rango': int(dias_cancelados),
@@ -1983,6 +1999,7 @@ def estado_pago_estilista_dia(request):
                         'pago_nequi': pago_nequi if estado == 'cancelado' else Decimal(0),
                         'pago_daviplata': pago_daviplata if estado == 'cancelado' else Decimal(0),
                         'pago_otros': pago_otros if estado == 'cancelado' else Decimal(0),
+                        'neto_dia': neto_dia,
                         'notas': notas,
                     },
                 )
