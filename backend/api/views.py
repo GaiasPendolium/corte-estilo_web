@@ -8,12 +8,15 @@ from django.db.models import Sum, Count, Q, F
 from django.db import transaction
 from django.db.utils import OperationalError, ProgrammingError
 from django.utils import timezone
+from django.conf import settings
 from django.http import HttpResponse
 from datetime import datetime, timedelta
 from decimal import Decimal
 import csv
 import io
 import uuid
+from pathlib import Path
+import urllib.request
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
 from .models import (
@@ -36,6 +39,86 @@ def _es_admin_o_gerente(user):
 
 def _es_admin(user):
     return str(getattr(user, 'rol', '') or '').strip().lower() == 'administrador'
+
+
+def _ruta_modelo_edsr_x3():
+    model_dir = Path(getattr(settings, 'MEDIA_ROOT', '.')) / 'ai_models'
+    model_dir.mkdir(parents=True, exist_ok=True)
+    model_path = model_dir / 'EDSR_x3.pb'
+    if model_path.exists():
+        return model_path
+
+    url = 'https://github.com/Saafke/EDSR_Tensorflow/raw/master/models/EDSR_x3.pb'
+    urllib.request.urlretrieve(url, str(model_path))
+    return model_path
+
+
+def _mejorar_imagen_rapida(imagen_file, intensidad=55, upscale=True):
+    fuerza = max(0.0, min(100.0, float(intensidad))) / 100.0
+    with Image.open(imagen_file) as img_in:
+        img = ImageOps.exif_transpose(img_in).convert('RGB')
+
+        original_w, original_h = img.size
+        if upscale and max(original_w, original_h) < 1200:
+            factor = 2.0 if max(original_w, original_h) < 900 else 1.5
+            img = img.resize((int(original_w * factor), int(original_h * factor)), Image.Resampling.LANCZOS)
+
+        iteraciones_ruido = 1 + int(fuerza * 2)
+        for _ in range(iteraciones_ruido):
+            img = img.filter(ImageFilter.MedianFilter(size=3))
+
+        img = img.filter(ImageFilter.SMOOTH_MORE)
+        img = ImageEnhance.Contrast(img).enhance(1.05 + (fuerza * 0.18))
+        img = ImageEnhance.Sharpness(img).enhance(1.05 + (fuerza * 0.55))
+        img = img.filter(
+            ImageFilter.UnsharpMask(
+                radius=1.3 + (fuerza * 0.7),
+                percent=int(95 + (fuerza * 70)),
+                threshold=2,
+            )
+        )
+        img = ImageOps.autocontrast(img, cutoff=0.4 + (fuerza * 0.8))
+        img = ImageEnhance.Color(img).enhance(1.01 + (fuerza * 0.06))
+
+        out = io.BytesIO()
+        img.save(out, format='JPEG', quality=95, optimize=True)
+        out.seek(0)
+        return out.getvalue()
+
+
+def _mejorar_imagen_ia_real(imagen_bytes, intensidad=55, upscale=True):
+    import cv2
+    import numpy as np
+
+    fuerza = max(0.0, min(100.0, float(intensidad))) / 100.0
+    arr = np.frombuffer(imagen_bytes, dtype=np.uint8)
+    img_bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if img_bgr is None:
+        raise ValueError('No se pudo decodificar la imagen.')
+
+    # Denoise suave para preparar deblurring.
+    h = int(3 + (fuerza * 5))
+    img_bgr = cv2.fastNlMeansDenoisingColored(img_bgr, None, h, h, 7, 21)
+
+    if upscale and max(img_bgr.shape[:2]) <= 1900:
+        model_path = _ruta_modelo_edsr_x3()
+        sr = cv2.dnn_superres.DnnSuperResImpl_create()
+        sr.readModel(str(model_path))
+        sr.setModel('edsr', 3)
+        img_bgr = sr.upsample(img_bgr)
+
+    # Realce de detalle y nitidez con parámetros más naturales.
+    sigma_s = int(10 + (fuerza * 40))
+    sigma_r = 0.08 + (fuerza * 0.10)
+    img_bgr = cv2.detailEnhance(img_bgr, sigma_s=sigma_s, sigma_r=sigma_r)
+
+    gaussian = cv2.GaussianBlur(img_bgr, (0, 0), 1.1 + (fuerza * 0.7))
+    img_bgr = cv2.addWeighted(img_bgr, 1.35 + (fuerza * 0.18), gaussian, -(0.35 + (fuerza * 0.18)), 0)
+
+    ok, encoded = cv2.imencode('.jpg', img_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+    if not ok:
+        raise ValueError('No se pudo codificar la imagen de salida.')
+    return encoded.tobytes()
 
 
 def _validar_edicion_admin_gerente(user, recurso):
@@ -1774,71 +1857,6 @@ def abonar_consumo_empleado(request):
         ).order_by('fecha_hora', 'id')
     )
 
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def mejorar_imagen_ia(request):
-    if not _es_admin(request.user):
-        return Response({'error': 'Solo administrador puede usar el mejorador de imagen.'}, status=status.HTTP_403_FORBIDDEN)
-
-    imagen_file = request.FILES.get('imagen')
-    if not imagen_file:
-        return Response({'error': 'Debes adjuntar una imagen en el campo "imagen".'}, status=status.HTTP_400_BAD_REQUEST)
-
-    try:
-        intensidad = float(request.data.get('intensidad', 55))
-    except Exception:
-        intensidad = 55
-
-    if intensidad < 0:
-        intensidad = 0
-    if intensidad > 100:
-        intensidad = 100
-    fuerza = intensidad / 100.0
-
-    upscale_raw = str(request.data.get('upscale', 'true')).strip().lower()
-    upscale = upscale_raw not in {'false', '0', 'no'}
-
-    try:
-        with Image.open(imagen_file) as img_in:
-            img = ImageOps.exif_transpose(img_in).convert('RGB')
-
-            original_w, original_h = img.size
-            if upscale and max(original_w, original_h) < 1200:
-                factor = 2.0 if max(original_w, original_h) < 900 else 1.5
-                img = img.resize((int(original_w * factor), int(original_h * factor)), Image.Resampling.LANCZOS)
-
-            # Reducción suave de ruido + recuperación de detalle para fotos borrosas.
-            iteraciones_ruido = 1 + int(fuerza * 2)
-            for _ in range(iteraciones_ruido):
-                img = img.filter(ImageFilter.MedianFilter(size=3))
-
-            img = img.filter(ImageFilter.SMOOTH_MORE)
-            img = ImageEnhance.Contrast(img).enhance(1.08 + (fuerza * 0.25))
-            img = ImageEnhance.Sharpness(img).enhance(1.15 + (fuerza * 1.10))
-            img = img.filter(
-                ImageFilter.UnsharpMask(
-                    radius=1.6 + (fuerza * 0.8),
-                    percent=int(140 + (fuerza * 120)),
-                    threshold=2,
-                )
-            )
-            img = ImageOps.autocontrast(img, cutoff=0.6 + (fuerza * 1.4))
-            img = ImageEnhance.Color(img).enhance(1.02 + (fuerza * 0.12))
-            img = ImageEnhance.Brightness(img).enhance(1.01 + (fuerza * 0.04))
-
-            out = io.BytesIO()
-            img.save(out, format='JPEG', quality=95, optimize=True)
-            out.seek(0)
-
-    except Exception:
-        return Response({'error': 'No se pudo procesar la imagen. Verifica que el archivo sea válido.'}, status=status.HTTP_400_BAD_REQUEST)
-
-    response = HttpResponse(out.getvalue(), content_type='image/jpeg')
-    response['Content-Disposition'] = 'inline; filename="imagen_mejorada.jpg"'
-    response['X-Imagen-Mejorada'] = 'true'
-    return response
-
     if not deudas_pendientes:
         return Response({'error': 'El empleado no tiene deudas pendientes.'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1891,6 +1909,54 @@ def mejorar_imagen_ia(request):
             'aplicaciones': aplicaciones,
         }
     )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def mejorar_imagen_ia(request):
+    if not _es_admin(request.user):
+        return Response({'error': 'Solo administrador puede usar el mejorador de imagen.'}, status=status.HTTP_403_FORBIDDEN)
+
+    imagen_file = request.FILES.get('imagen')
+    if not imagen_file:
+        return Response({'error': 'Debes adjuntar una imagen en el campo "imagen".'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        intensidad = float(request.data.get('intensidad', 55))
+    except Exception:
+        intensidad = 55
+
+    if intensidad < 0:
+        intensidad = 0
+    if intensidad > 100:
+        intensidad = 100
+
+    upscale_raw = str(request.data.get('upscale', 'true')).strip().lower()
+    upscale = upscale_raw not in {'false', '0', 'no'}
+    modo = str(request.data.get('modo', 'ia')).strip().lower()
+    if modo not in {'ia', 'rapido'}:
+        modo = 'ia'
+
+    try:
+        if modo == 'ia':
+            imagen_file.seek(0)
+            imagen_bytes = imagen_file.read()
+            salida_bytes = _mejorar_imagen_ia_real(imagen_bytes, intensidad=intensidad, upscale=upscale)
+        else:
+            salida_bytes = _mejorar_imagen_rapida(imagen_file, intensidad=intensidad, upscale=upscale)
+    except Exception as exc:
+        if modo == 'ia':
+            return Response(
+                {'error': f'No se pudo procesar con IA real: {str(exc)}. Puedes probar modo rapido.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response({'error': 'No se pudo procesar la imagen. Verifica que el archivo sea válido.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    response = HttpResponse(salida_bytes, content_type='image/jpeg')
+    response['Content-Disposition'] = 'inline; filename="imagen_mejorada.jpg"'
+    response['X-Imagen-Mejorada'] = 'true'
+    response['X-Imagen-Modo'] = modo
+    return response
 
 
 @api_view(['GET', 'POST'])

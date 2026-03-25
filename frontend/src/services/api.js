@@ -422,11 +422,12 @@ export const reportesService = {
 };
 
 export const iaService = {
-  mejorarImagen: async ({ imagenFile, intensidad = 55, upscale = true }) => {
+  mejorarImagen: async ({ imagenFile, intensidad = 55, upscale = true, modo = 'ia' }) => {
     const formData = new FormData();
     formData.append('imagen', imagenFile);
     formData.append('intensidad', String(intensidad));
     formData.append('upscale', String(Boolean(upscale)));
+    formData.append('modo', String(modo || 'ia'));
 
     const response = await api.post('/ia/mejorar-imagen/', formData, {
       headers: {

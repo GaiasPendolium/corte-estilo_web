@@ -12,6 +12,7 @@ const MejoradorImagenIA = () => {
   const [imagenMejoradaUrl, setImagenMejoradaUrl] = useState('');
   const [intensidad, setIntensidad] = useState(55);
   const [upscale, setUpscale] = useState(true);
+  const [modo, setModo] = useState('ia');
   const [loading, setLoading] = useState(false);
 
   const statsOriginal = useMemo(() => {
@@ -69,6 +70,7 @@ const MejoradorImagenIA = () => {
         imagenFile: imagenOriginal,
         intensidad,
         upscale,
+        modo,
       });
       const url = URL.createObjectURL(blob);
       setImagenMejoradaBlob(blob);
@@ -121,6 +123,19 @@ const MejoradorImagenIA = () => {
         </div>
 
         <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Modo de mejora</label>
+            <select className="input-field" value={modo} onChange={(e) => setModo(e.target.value)}>
+              <option value="ia">IA alta calidad (super-res + deblur)</option>
+              <option value="rapido">Rápido (filtros clásicos)</option>
+            </select>
+            <p className="text-xs text-slate-500 mt-1">
+              {modo === 'ia'
+                ? 'Mejor calidad para fotos borrosas, tarda más.'
+                : 'Más rápido, menor calidad que IA.'}
+            </p>
+          </div>
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Intensidad de mejora: {intensidad}%</label>
             <input
