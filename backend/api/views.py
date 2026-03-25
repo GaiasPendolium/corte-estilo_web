@@ -1976,6 +1976,7 @@ def _calcular_datos_bi(request):
             'dias_cobrados_alquiler': int(item.get('dias_cobrados_alquiler') or 0),
             'total_dias_trabajados': int(item.get('total_dias_trabajados') or 0),
             'descuento_espacio': float(item.get('descuento_espacio') or 0),
+            'valor_pagado': float(item.get('descuento_espacio') or 0),
         }
         for item in estilistas_data
     ]
