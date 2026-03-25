@@ -41,14 +41,16 @@ def _es_admin(user):
     return str(getattr(user, 'rol', '') or '').strip().lower() == 'administrador'
 
 
-def _ruta_modelo_edsr_x3():
+def _ruta_modelo_edsr(scale=2):
+    if int(scale) not in {2, 3, 4}:
+        scale = 2
     model_dir = Path(getattr(settings, 'MEDIA_ROOT', '.')) / 'ai_models'
     model_dir.mkdir(parents=True, exist_ok=True)
-    model_path = model_dir / 'EDSR_x3.pb'
+    model_path = model_dir / f'EDSR_x{int(scale)}.pb'
     if model_path.exists():
         return model_path
 
-    url = 'https://github.com/Saafke/EDSR_Tensorflow/raw/master/models/EDSR_x3.pb'
+    url = f'https://github.com/Saafke/EDSR_Tensorflow/raw/master/models/EDSR_x{int(scale)}.pb'
     urllib.request.urlretrieve(url, str(model_path))
     return model_path
 
@@ -81,7 +83,7 @@ def _mejorar_imagen_rapida(imagen_file, intensidad=55, upscale=True):
         img = ImageEnhance.Color(img).enhance(1.01 + (fuerza * 0.06))
 
         out = io.BytesIO()
-        img.save(out, format='JPEG', quality=95, optimize=True)
+        img.save(out, format='PNG', optimize=True)
         out.seek(0)
         return out.getvalue()
 
@@ -96,26 +98,37 @@ def _mejorar_imagen_ia_real(imagen_bytes, intensidad=55, upscale=True):
     if img_bgr is None:
         raise ValueError('No se pudo decodificar la imagen.')
 
-    # Denoise suave para preparar deblurring.
+    # Denoise suave para preparar restauración sin destruir textura.
     h = int(3 + (fuerza * 5))
     img_bgr = cv2.fastNlMeansDenoisingColored(img_bgr, None, h, h, 7, 21)
 
     if upscale and max(img_bgr.shape[:2]) <= 1900:
-        model_path = _ruta_modelo_edsr_x3()
+        scale = 2 if max(img_bgr.shape[:2]) > 1000 else 3
+        model_path = _ruta_modelo_edsr(scale=scale)
         sr = cv2.dnn_superres.DnnSuperResImpl_create()
         sr.readModel(str(model_path))
-        sr.setModel('edsr', 3)
+        sr.setModel('edsr', int(scale))
         img_bgr = sr.upsample(img_bgr)
 
-    # Realce de detalle y nitidez con parámetros más naturales.
-    sigma_s = int(10 + (fuerza * 40))
-    sigma_r = 0.08 + (fuerza * 0.10)
-    img_bgr = cv2.detailEnhance(img_bgr, sigma_s=sigma_s, sigma_r=sigma_r)
+    # Preservar color natural: ajustar solo el canal de luminancia (Y), no croma.
+    ycrcb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2YCrCb)
+    y, cr, cb = cv2.split(ycrcb)
 
-    gaussian = cv2.GaussianBlur(img_bgr, (0, 0), 1.1 + (fuerza * 0.7))
-    img_bgr = cv2.addWeighted(img_bgr, 1.35 + (fuerza * 0.18), gaussian, -(0.35 + (fuerza * 0.18)), 0)
+    # Contraste local controlado para recuperar microdetalle sin cambiar tonos.
+    clahe = cv2.createCLAHE(
+        clipLimit=1.5 + (fuerza * 1.2),
+        tileGridSize=(8, 8),
+    )
+    y = clahe.apply(y)
 
-    ok, encoded = cv2.imencode('.jpg', img_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+    # Unsharp suave sobre luminancia para evitar halos y bordes artificiales.
+    blur = cv2.GaussianBlur(y, (0, 0), 0.9 + (fuerza * 0.7))
+    y = cv2.addWeighted(y, 1.20 + (fuerza * 0.10), blur, -(0.20 + (fuerza * 0.10)), 0)
+
+    ycrcb_out = cv2.merge([y, cr, cb])
+    img_bgr = cv2.cvtColor(ycrcb_out, cv2.COLOR_YCrCb2BGR)
+
+    ok, encoded = cv2.imencode('.png', img_bgr, [int(cv2.IMWRITE_PNG_COMPRESSION), 3])
     if not ok:
         raise ValueError('No se pudo codificar la imagen de salida.')
     return encoded.tobytes()
@@ -1952,8 +1965,8 @@ def mejorar_imagen_ia(request):
             )
         return Response({'error': 'No se pudo procesar la imagen. Verifica que el archivo sea válido.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    response = HttpResponse(salida_bytes, content_type='image/jpeg')
-    response['Content-Disposition'] = 'inline; filename="imagen_mejorada.jpg"'
+    response = HttpResponse(salida_bytes, content_type='image/png')
+    response['Content-Disposition'] = 'inline; filename="imagen_mejorada.png"'
     response['X-Imagen-Mejorada'] = 'true'
     response['X-Imagen-Modo'] = modo
     return response

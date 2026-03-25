@@ -28,7 +28,7 @@ const MejoradorImagenIA = () => {
     if (!imagenMejoradaBlob) return null;
     return {
       tamano: formatKB(imagenMejoradaBlob.size),
-      tipo: imagenMejoradaBlob.type || 'image/jpeg',
+      tipo: imagenMejoradaBlob.type || 'image/png',
     };
   }, [imagenMejoradaBlob]);
 
@@ -85,9 +85,10 @@ const MejoradorImagenIA = () => {
 
   const descargarResultado = () => {
     if (!imagenMejoradaBlob || !imagenMejoradaUrl) return;
+    const ext = imagenMejoradaBlob.type === 'image/png' ? 'png' : 'jpg';
     const a = document.createElement('a');
     a.href = imagenMejoradaUrl;
-    a.download = `mejorada_${Date.now()}.jpg`;
+    a.download = `mejorada_${Date.now()}.${ext}`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -131,7 +132,7 @@ const MejoradorImagenIA = () => {
             </select>
             <p className="text-xs text-slate-500 mt-1">
               {modo === 'ia'
-                ? 'Mejor calidad para fotos borrosas, tarda más.'
+                ? 'Mejor calidad para fotos borrosas, preservando color natural (más lento).'
                 : 'Más rápido, menor calidad que IA.'}
             </p>
           </div>
