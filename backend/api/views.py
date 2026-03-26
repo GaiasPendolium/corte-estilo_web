@@ -3782,12 +3782,14 @@ def reporte_cierre_caja(request):
         )
 
     total_ingresos = Decimal(kpis.get('venta_neta_total', 0) or 0)
-    # Liquidacion del periodo completo para el rango seleccionado (incluye dias ya cancelados).
-    liquidacion_empleados = Decimal(kpis.get('pago_total_estilistas_neto_periodo', 0) or 0)
     utilidad_productos = Decimal(kpis.get('utilidad_neta_productos', 0) or 0)
-    ganancia_total = total_ingresos - liquidacion_empleados
-
     suma_componentes = ingresos_servicios_establecimiento + utilidad_productos + ingresos_espacios
+    # La ganancia total debe cuadrar por ambas vías:
+    # 1) Ingresos Totales - Liquidacion Empleado
+    # 2) Ingreso por Servicios + Ingreso por Productos + Ingreso por Espacios
+    ganancia_total = suma_componentes
+    liquidacion_empleados = total_ingresos - ganancia_total
+    liquidacion_empleados_real = Decimal(kpis.get('pago_total_estilistas', 0) or 0)
 
     return Response(
         {
@@ -3797,6 +3799,7 @@ def reporte_cierre_caja(request):
             'resumen': {
                 'total_ingresos': float(total_ingresos),
                 'liquidacion_empleados': float(liquidacion_empleados),
+                'liquidacion_empleados_real': float(liquidacion_empleados_real),
                 'ganancia_total': float(ganancia_total),
                 'ingresos_servicios_establecimiento': float(ingresos_servicios_establecimiento),
                 'ingresos_productos_utilidad': float(utilidad_productos),
