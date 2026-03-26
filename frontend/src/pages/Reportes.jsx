@@ -66,6 +66,8 @@ const Reportes = () => {
   const [medioAbonoPorDeuda, setMedioAbonoPorDeuda] = useState({});
   const [savingAbonoByDeuda, setSavingAbonoByDeuda] = useState({});
   const [editMontoByAbono, setEditMontoByAbono] = useState({});
+  const [editMedioByAbono, setEditMedioByAbono] = useState({});
+  const [editNotasByAbono, setEditNotasByAbono] = useState({});
   const [savingEditByAbono, setSavingEditByAbono] = useState({});
   const [deudaActivaHistorial, setDeudaActivaHistorial] = useState(null);
   const [pagosPorEstilista, setPagosPorEstilista] = useState({});
@@ -270,6 +272,8 @@ const Reportes = () => {
   const editarAbonoCartera = async (abono, deuda) => {
     const abonoId = Number(abono?.abono_id || 0);
     const monto = Number(editMontoByAbono[abonoId] || 0);
+    const medio = editMedioByAbono[abonoId] || abono.medio_pago || 'efectivo';
+    const notas = editNotasByAbono[abonoId] ?? (abono.notas || '');
     if (!abonoId) {
       toast.error('Abono inválido.');
       return;
@@ -284,8 +288,8 @@ const Reportes = () => {
       await reportesService.editarAbonoConsumoEmpleado({
         abono_id: abonoId,
         monto,
-        medio_pago: abono.medio_pago,
-        notas: abono.notas,
+        medio_pago: medio,
+        notas,
       });
       toast.success('Abono actualizado.');
       await cargarTodo();
@@ -920,7 +924,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
                 <th className="px-4 py-3 text-left">Fecha</th>
                 <th className="px-4 py-3 text-left">Medio</th>
                 <th className="px-4 py-3 text-left">Valor abonado</th>
-                <th className="px-4 py-3 text-left">Editar valor abonado</th>
+                <th className="px-4 py-3 text-left">Editar datos del abono</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
@@ -938,20 +942,38 @@ const aplicarEstadoLiquidacion = async (fila) => {
                 const abonoId = Number(abono.abono_id);
                 const savingEdit = !!savingEditByAbono[abonoId];
                 const editValue = editMontoByAbono[abonoId] ?? String(Number(abono.monto || 0));
+                const editMedio = editMedioByAbono[abonoId] ?? (abono.medio_pago || 'efectivo');
+                const editNotas = editNotasByAbono[abonoId] ?? (abono.notas || '');
                 return (
                   <tr key={abonoId}>
                     <td className="table-cell">{abono.fecha_hora || '-'}</td>
                     <td className="table-cell capitalize">{abono.medio_pago || '-'}</td>
                     <td className="table-cell text-sky-700 font-semibold">{formatMoney(abono.monto)}</td>
                     <td className="table-cell">
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <input
                           type="number"
                           min="0"
                           step="100"
-                          className="input-field !py-2 !w-32"
+                          className="input-field !py-2 !w-28"
                           value={editValue}
                           onChange={(e) => setEditMontoByAbono((prev) => ({ ...prev, [abonoId]: e.target.value }))}
+                        />
+                        <select
+                          className="input-field !py-2 !w-28"
+                          value={editMedio}
+                          onChange={(e) => setEditMedioByAbono((prev) => ({ ...prev, [abonoId]: e.target.value }))}
+                        >
+                          {MEDIOS_PAGO_OPERACION.map((m) => (
+                            <option key={m.value} value={m.value}>{m.label}</option>
+                          ))}
+                        </select>
+                        <input
+                          type="text"
+                          className="input-field !py-2 min-w-[220px]"
+                          placeholder="Notas"
+                          value={editNotas}
+                          onChange={(e) => setEditNotasByAbono((prev) => ({ ...prev, [abonoId]: e.target.value }))}
                         />
                         <button
                           className="btn-secondary !px-3 !py-2"
