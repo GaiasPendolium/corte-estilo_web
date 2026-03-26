@@ -346,8 +346,26 @@ export const reportesService = {
   },
 
   getCierreCaja: async (params) => {
-    const response = await api.get('/reportes/cierre-caja/', { params });
-    return response.data;
+    try {
+      const response = await api.get('/reportes/cierre-caja/', { params });
+      return response.data;
+    } catch (error) {
+      // Mitigacion: reintento directo a Railway si el rewrite de Vercel responde 503.
+      if (!isLocalHost && error?.response?.status === 503) {
+        const token = localStorage.getItem('access_token');
+        const fallback = await axios.get(
+          `${DIRECT_RAILWAY_API_URL}/reportes/cierre-caja/`,
+          {
+            params,
+            headers: {
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+          }
+        );
+        return fallback.data;
+      }
+      throw error;
+    }
   },
 
   exportBICsv: async (params) => {
