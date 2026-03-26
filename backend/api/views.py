@@ -3782,7 +3782,7 @@ def reporte_cierre_caja(request):
         )
 
     total_ingresos = Decimal(kpis.get('venta_neta_total', 0) or 0)
-    utilidad_productos = Decimal(kpis.get('utilidad_neta_productos', 0) or 0)
+    utilidad_productos = ventas_productos_total - costo_productos_total
     suma_componentes = ingresos_servicios_establecimiento + utilidad_productos + ingresos_espacios
     # La ganancia total debe cuadrar por ambas vías:
     # 1) Ingresos Totales - Liquidacion Empleado
