@@ -9,7 +9,7 @@ from .views import (
     reporte_ventas, reporte_servicios, bi_resumen, bi_export_csv,
     bi_export_pdf, bi_resumen_diario, estado_pago_estilista_dia,
     estado_pago_estilista_historial, bi_desglose_estilista, bi_desglose_estilista_debug,
-    reporte_consumo_empleado, abonar_consumo_empleado, reporte_cierre_caja,
+    reporte_consumo_empleado, abonar_consumo_empleado, editar_abono_consumo_empleado, reporte_cierre_caja,
     liquidar_dia_v2, eliminar_estado_pago_historial
 )
 
@@ -45,6 +45,7 @@ urlpatterns = [
     path('reportes/estilistas/liquidar-dia-v2/', liquidar_dia_v2, name='reportes-estilista-liquidar-dia-v2'),
     path('reportes/consumo-empleado/deudas/', reporte_consumo_empleado, name='reporte-consumo-empleado-deudas'),
     path('reportes/consumo-empleado/abonar/', abonar_consumo_empleado, name='reporte-consumo-empleado-abonar'),
+    path('reportes/consumo-empleado/abonos/<int:abono_id>/', editar_abono_consumo_empleado, name='reporte-consumo-empleado-abono-editar'),
     path('reportes/cierre-caja/', reporte_cierre_caja, name='reporte-cierre-caja'),
     
     # Incluir todas las rutas del router

@@ -61,7 +61,13 @@ const Reportes = () => {
   const [loading, setLoading] = useState(true);
   const [cierreCaja, setCierreCaja] = useState(null);
   const [biData, setBiData] = useState(null);
-  const [carteraData, setCarteraData] = useState({ resumen: [], deudas: [] });
+  const [carteraData, setCarteraData] = useState({ resumen: [], deudas: [], abonos_historial: [] });
+  const [abonoPorDeuda, setAbonoPorDeuda] = useState({});
+  const [medioAbonoPorDeuda, setMedioAbonoPorDeuda] = useState({});
+  const [savingAbonoByDeuda, setSavingAbonoByDeuda] = useState({});
+  const [editMontoByAbono, setEditMontoByAbono] = useState({});
+  const [savingEditByAbono, setSavingEditByAbono] = useState({});
+  const [deudaActivaHistorial, setDeudaActivaHistorial] = useState(null);
   const [pagosPorEstilista, setPagosPorEstilista] = useState({});
   const [estadoDiaPorEstilista, setEstadoDiaPorEstilista] = useState({});
   const [abonoPuestoPorEstilista, setAbonoPuestoPorEstilista] = useState({});
@@ -98,6 +104,7 @@ const Reportes = () => {
       setCarteraData({
         resumen: carteraResp?.resumen || [],
         deudas: carteraResp?.deudas || [],
+        abonos_historial: carteraResp?.abonos_historial || [],
       });
 
       try {
@@ -142,7 +149,7 @@ const Reportes = () => {
       toast.error('No se pudieron cargar los reportes');
       setCierreCaja(null);
       setBiData(null);
-      setCarteraData({ resumen: [], deudas: [] });
+      setCarteraData({ resumen: [], deudas: [], abonos_historial: [] });
     } finally {
       setLoading(false);
     }
@@ -210,6 +217,85 @@ const Reportes = () => {
     return ['efectivo', 'nequi', 'daviplata', 'otros']
       .map((k) => Number(pagos[k] || 0))
       .reduce((acc, val) => acc + (Number.isFinite(val) ? val : 0), 0);
+  };
+
+  const resumenPorEstilista = useMemo(() => {
+    const mapa = {};
+    (carteraData?.resumen || []).forEach((item) => {
+      mapa[item.estilista_id] = item;
+    });
+    return mapa;
+  }, [carteraData]);
+
+  const deudaSeleccionada = useMemo(
+    () => (carteraData?.deudas || []).find((d) => Number(d.deuda_id) === Number(deudaActivaHistorial)) || null,
+    [carteraData, deudaActivaHistorial]
+  );
+
+  const abonarFacturaCartera = async (deuda) => {
+    const deudaId = Number(deuda?.deuda_id || 0);
+    const monto = Number(abonoPorDeuda[deudaId] || 0);
+    const medio = medioAbonoPorDeuda[deudaId] || 'efectivo';
+
+    if (!deudaId) {
+      toast.error('Factura inválida.');
+      return;
+    }
+    if (!Number.isFinite(monto) || monto <= 0) {
+      toast.error('Ingresa un valor de abono mayor a 0.');
+      return;
+    }
+
+    setSavingAbonoByDeuda((prev) => ({ ...prev, [deudaId]: true }));
+    try {
+      await reportesService.abonarConsumoEmpleado({
+        estilista_id: deuda.estilista_id,
+        deuda_id: deudaId,
+        monto,
+        medio_pago: medio,
+        notas: `Abono cartera factura ${deuda.numero_factura || deudaId}`,
+      });
+      toast.success('Abono registrado correctamente.');
+      setAbonoPorDeuda((prev) => ({ ...prev, [deudaId]: '' }));
+      await cargarTodo();
+      setDeudaActivaHistorial(deudaId);
+    } catch (error) {
+      const msg = error?.response?.data?.error || 'No se pudo registrar el abono.';
+      toast.error(msg);
+    } finally {
+      setSavingAbonoByDeuda((prev) => ({ ...prev, [deudaId]: false }));
+    }
+  };
+
+  const editarAbonoCartera = async (abono, deuda) => {
+    const abonoId = Number(abono?.abono_id || 0);
+    const monto = Number(editMontoByAbono[abonoId] || 0);
+    if (!abonoId) {
+      toast.error('Abono inválido.');
+      return;
+    }
+    if (!Number.isFinite(monto) || monto <= 0) {
+      toast.error('El nuevo valor del abono debe ser mayor a 0.');
+      return;
+    }
+
+    setSavingEditByAbono((prev) => ({ ...prev, [abonoId]: true }));
+    try {
+      await reportesService.editarAbonoConsumoEmpleado({
+        abono_id: abonoId,
+        monto,
+        medio_pago: abono.medio_pago,
+        notas: abono.notas,
+      });
+      toast.success('Abono actualizado.');
+      await cargarTodo();
+      setDeudaActivaHistorial(deuda?.deuda_id || null);
+    } catch (error) {
+      const msg = error?.response?.data?.error || 'No se pudo editar el abono.';
+      toast.error(msg);
+    } finally {
+      setSavingEditByAbono((prev) => ({ ...prev, [abonoId]: false }));
+    }
   };
 
 const aplicarEstadoLiquidacion = async (fila) => {
@@ -739,39 +825,149 @@ const aplicarEstadoLiquidacion = async (fila) => {
   );
 
   const renderModuloCartera = () => (
-    <div className="card">
-      <h2 className="card-header">Cartera Empleado</h2>
-      <p className="text-sm text-slate-600">Control de consumos del empleado, abonos y saldo pendiente.</p>
-      <div className="mt-4 overflow-x-auto">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="table-header">
-            <tr>
-              <th className="px-4 py-3 text-left">Empleado</th>
-              <th className="px-4 py-3 text-left">Facturas</th>
-              <th className="px-4 py-3 text-left">Consumido</th>
-              <th className="px-4 py-3 text-left">Abonado</th>
-              <th className="px-4 py-3 text-left">Saldo</th>
-              <th className="px-4 py-3 text-left">Estado</th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {(carteraData.resumen || []).length === 0 && (
+    <div className="space-y-6">
+      <div className="card border border-amber-200 bg-amber-50">
+        <h2 className="card-header">Cartera Empleado</h2>
+        <p className="text-sm text-slate-600">Vista por factura con abonos y saldo pendiente. Selecciona una fila para ver su histórico.</p>
+        <div className="mt-4 overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="table-header">
               <tr>
-                <td className="table-cell text-slate-500" colSpan={6}>No hay cartera en el rango seleccionado.</td>
+                <th className="px-4 py-3 text-left">Empleado</th>
+                <th className="px-4 py-3 text-left">Fecha</th>
+                <th className="px-4 py-3 text-left">Factura</th>
+                <th className="px-4 py-3 text-left">Valor total</th>
+                <th className="px-4 py-3 text-left">Valor abonado</th>
+                <th className="px-4 py-3 text-left">Saldo pendiente</th>
+                <th className="px-4 py-3 text-left">Total empleado</th>
+                <th className="px-4 py-3 text-left">Abonar</th>
               </tr>
-            )}
-            {(carteraData.resumen || []).map((item) => (
-              <tr key={item.estilista_id}>
-                <td className="table-cell font-medium">{item.estilista_nombre}</td>
-                <td className="table-cell">{item.facturas || 0}</td>
-                <td className="table-cell">{formatMoney(item.total_consumido)}</td>
-                <td className="table-cell">{formatMoney(item.total_abonado)}</td>
-                <td className="table-cell font-semibold">{formatMoney(item.saldo_pendiente)}</td>
-                <td className="table-cell capitalize">{item.estado || '-'}</td>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {(carteraData.deudas || []).length === 0 && (
+                <tr>
+                  <td className="table-cell text-slate-500" colSpan={8}>No hay cartera en el rango seleccionado.</td>
+                </tr>
+              )}
+              {(carteraData.deudas || []).map((deuda) => {
+                const deudaId = Number(deuda.deuda_id);
+                const resumenEmpleado = resumenPorEstilista[deuda.estilista_id] || {};
+                const saving = !!savingAbonoByDeuda[deudaId];
+                return (
+                  <tr
+                    key={deudaId}
+                    className={`cursor-pointer ${Number(deudaActivaHistorial) === deudaId ? 'bg-amber-100' : ''}`}
+                    onClick={() => setDeudaActivaHistorial(deudaId)}
+                  >
+                    <td className="table-cell font-medium">{deuda.estilista_nombre || '-'}</td>
+                    <td className="table-cell">{(deuda.fecha_hora || '').slice(0, 10) || '-'}</td>
+                    <td className="table-cell font-semibold">{deuda.numero_factura || '-'}</td>
+                    <td className="table-cell">{formatMoney(deuda.total_cargo)}</td>
+                    <td className="table-cell text-sky-700 font-semibold">{formatMoney(deuda.total_abonado)}</td>
+                    <td className="table-cell text-rose-700 font-semibold">{formatMoney(deuda.saldo_pendiente)}</td>
+                    <td className="table-cell">
+                      <div className="text-xs text-slate-700">Saldo: <b>{formatMoney(resumenEmpleado.saldo_pendiente)}</b></div>
+                      <div className="text-xs text-slate-500">Facturas: {resumenEmpleado.facturas || 0}</div>
+                    </td>
+                    <td className="table-cell" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center gap-2">
+                        <select
+                          className="input-field !py-2 !w-28"
+                          value={medioAbonoPorDeuda[deudaId] || 'efectivo'}
+                          onChange={(e) => setMedioAbonoPorDeuda((prev) => ({ ...prev, [deudaId]: e.target.value }))}
+                        >
+                          {MEDIOS_PAGO_OPERACION.map((m) => (
+                            <option key={m.value} value={m.value}>{m.label}</option>
+                          ))}
+                        </select>
+                        <input
+                          type="number"
+                          min="0"
+                          step="100"
+                          className="input-field !py-2 !w-28"
+                          placeholder="Valor"
+                          value={abonoPorDeuda[deudaId] || ''}
+                          onChange={(e) => setAbonoPorDeuda((prev) => ({ ...prev, [deudaId]: e.target.value }))}
+                        />
+                        <button
+                          className="btn-primary !px-3 !py-2"
+                          onClick={() => abonarFacturaCartera(deuda)}
+                          disabled={saving}
+                        >
+                          {saving ? 'Abonando...' : 'Abonar'}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="card border border-sky-200 bg-sky-50">
+        <h2 className="card-header">Historico de abonos de la deuda seleccionada</h2>
+        <p className="text-sm text-slate-600">
+          {deudaSeleccionada
+            ? `Factura ${deudaSeleccionada.numero_factura || '-'} - ${deudaSeleccionada.estilista_nombre || '-'}`
+            : 'Selecciona una factura en la tabla superior para ver su histórico.'}
+        </p>
+        <div className="mt-4 overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="table-header">
+              <tr>
+                <th className="px-4 py-3 text-left">Fecha</th>
+                <th className="px-4 py-3 text-left">Medio</th>
+                <th className="px-4 py-3 text-left">Valor abonado</th>
+                <th className="px-4 py-3 text-left">Editar valor abonado</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {!deudaSeleccionada && (
+                <tr>
+                  <td className="table-cell text-slate-500" colSpan={4}>Sin deuda seleccionada.</td>
+                </tr>
+              )}
+              {deudaSeleccionada && (deudaSeleccionada.abonos || []).length === 0 && (
+                <tr>
+                  <td className="table-cell text-slate-500" colSpan={4}>Esta factura no tiene abonos registrados.</td>
+                </tr>
+              )}
+              {deudaSeleccionada && (deudaSeleccionada.abonos || []).map((abono) => {
+                const abonoId = Number(abono.abono_id);
+                const savingEdit = !!savingEditByAbono[abonoId];
+                const editValue = editMontoByAbono[abonoId] ?? String(Number(abono.monto || 0));
+                return (
+                  <tr key={abonoId}>
+                    <td className="table-cell">{abono.fecha_hora || '-'}</td>
+                    <td className="table-cell capitalize">{abono.medio_pago || '-'}</td>
+                    <td className="table-cell text-sky-700 font-semibold">{formatMoney(abono.monto)}</td>
+                    <td className="table-cell">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min="0"
+                          step="100"
+                          className="input-field !py-2 !w-32"
+                          value={editValue}
+                          onChange={(e) => setEditMontoByAbono((prev) => ({ ...prev, [abonoId]: e.target.value }))}
+                        />
+                        <button
+                          className="btn-secondary !px-3 !py-2"
+                          onClick={() => editarAbonoCartera(abono, deudaSeleccionada)}
+                          disabled={savingEdit}
+                        >
+                          {savingEdit ? 'Guardando...' : 'Guardar'}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

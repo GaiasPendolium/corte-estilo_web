@@ -2144,6 +2144,7 @@ def reporte_consumo_empleado(request):
 
     resumen_mapa = {}
     deudas_items = []
+    deuda_item_map = {}
     for deuda in sorted(qs_pendientes, key=lambda x: x.fecha_hora or timezone.now(), reverse=True):
         est_id = int(deuda.estilista_id)
         if est_id not in resumen_mapa:
@@ -2161,32 +2162,57 @@ def reporte_consumo_empleado(request):
         resumen_mapa[est_id]['saldo_pendiente'] += Decimal(deuda.saldo_pendiente or 0)
         resumen_mapa[est_id]['facturas'] += 1
 
-        deudas_items.append(
-            {
-                'deuda_id': deuda.id,
-                'estilista_id': est_id,
-                'estilista_nombre': deuda.estilista.nombre,
-                'numero_factura': deuda.numero_factura,
-                'fecha_hora': timezone.localtime(deuda.fecha_hora).strftime('%Y-%m-%d %H:%M:%S'),
-                'total_cargo': float(deuda.total_cargo or 0),
-                'total_abonado': float(deuda.total_abonado or 0),
-                'saldo_pendiente': float(deuda.saldo_pendiente or 0),
-                'estado': deuda.estado,
-            }
-        )
+        deuda_item = {
+            'deuda_id': deuda.id,
+            'estilista_id': est_id,
+            'estilista_nombre': deuda.estilista.nombre,
+            'numero_factura': deuda.numero_factura,
+            'fecha_hora': timezone.localtime(deuda.fecha_hora).strftime('%Y-%m-%d %H:%M:%S'),
+            'total_cargo': float(deuda.total_cargo or 0),
+            'total_abonado': float(deuda.total_abonado or 0),
+            'saldo_pendiente': float(deuda.saldo_pendiente or 0),
+            'estado': deuda.estado,
+            'abonos': [],
+        }
+        deudas_items.append(deuda_item)
+        deuda_item_map[int(deuda.id)] = deuda_item
 
-    # Detalle: se arma desde las mismas deudas pendientes del resumen,
-    # para que no haya filas en resumen sin detalle abajo.
+    # Historial de abonos por deuda para vista de cartera y auditoria.
     deuda_ids = [int(d.id) for d in qs_pendientes]
     abono_map = {}
+    abonos_historial = []
     if deuda_ids:
-        abonos_qs = AbonoDeudaEmpleado.objects.filter(deuda_id__in=deuda_ids).order_by('deuda_id', '-fecha_hora')
+        abonos_qs = (
+            AbonoDeudaEmpleado.objects
+            .select_related('usuario', 'deuda')
+            .filter(deuda_id__in=deuda_ids)
+            .order_by('deuda_id', '-fecha_hora', '-id')
+        )
         vistos = set()
         for ab in abonos_qs:
             if ab.deuda_id in vistos:
-                continue
-            abono_map[int(ab.deuda_id)] = ab
-            vistos.add(ab.deuda_id)
+                pass
+            else:
+                abono_map[int(ab.deuda_id)] = ab
+                vistos.add(ab.deuda_id)
+
+            item_abono = {
+                'abono_id': ab.id,
+                'deuda_id': int(ab.deuda_id),
+                'numero_factura': ab.deuda.numero_factura if ab.deuda_id else None,
+                'estilista_id': int(ab.deuda.estilista_id) if ab.deuda_id and ab.deuda.estilista_id else None,
+                'estilista_nombre': ab.deuda.estilista.nombre if ab.deuda_id and ab.deuda.estilista_id else None,
+                'monto': float(ab.monto or 0),
+                'medio_pago': ab.medio_pago,
+                'fecha_hora': timezone.localtime(ab.fecha_hora).strftime('%Y-%m-%d %H:%M:%S') if ab.fecha_hora else None,
+                'usuario_nombre': getattr(ab.usuario, 'nombre_completo', None) if ab.usuario_id else None,
+                'notas': ab.notas,
+            }
+
+            abonos_historial.append(item_abono)
+            deuda_item = deuda_item_map.get(int(ab.deuda_id))
+            if deuda_item is not None:
+                deuda_item['abonos'].append(item_abono)
 
     consumos_detalle = []
     for deuda in qs_pendientes:
@@ -2244,6 +2270,7 @@ def reporte_consumo_empleado(request):
             'resumen': resumen,
             'deudas': deudas_items,
             'consumos_detalle': consumos_detalle,
+            'abonos_historial': abonos_historial,
         }
     )
 
@@ -2257,6 +2284,7 @@ def abonar_consumo_empleado(request):
         raise PermissionDenied('Recepción no tiene permiso para registrar abonos de cartera.')
 
     estilista_id = request.data.get('estilista_id')
+    deuda_id = request.data.get('deuda_id')
     monto = request.data.get('monto')
     medio_pago = (request.data.get('medio_pago') or 'efectivo').strip().lower()
     notas = request.data.get('notas')
@@ -2264,10 +2292,18 @@ def abonar_consumo_empleado(request):
     if medio_pago not in {'nequi', 'daviplata', 'efectivo', 'otros'}:
         return Response({'error': 'Medio de pago inválido.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    try:
-        estilista = Estilista.objects.get(id=int(estilista_id))
-    except Exception:
-        return Response({'error': 'Empleado no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+    deuda_objetivo = None
+    if deuda_id is not None and str(deuda_id).strip() != '':
+        try:
+            deuda_objetivo = DeudaConsumoEmpleado.objects.select_related('estilista').get(id=int(deuda_id))
+            estilista = deuda_objetivo.estilista
+        except Exception:
+            return Response({'error': 'Factura de cartera no encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+    else:
+        try:
+            estilista = Estilista.objects.get(id=int(estilista_id))
+        except Exception:
+            return Response({'error': 'Empleado no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
 
     try:
         monto_decimal = Decimal(str(monto or 0))
@@ -2277,12 +2313,19 @@ def abonar_consumo_empleado(request):
     if monto_decimal <= 0:
         return Response({'error': 'El monto debe ser mayor a cero.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    deudas_pendientes = list(
-        DeudaConsumoEmpleado.objects.filter(
-            estilista=estilista,
-            saldo_pendiente__gt=0,
-        ).order_by('fecha_hora', 'id')
-    )
+    if deuda_objetivo is not None:
+        if deuda_objetivo.estilista_id != estilista.id:
+            return Response({'error': 'La factura no pertenece al empleado indicado.'}, status=status.HTTP_400_BAD_REQUEST)
+        if Decimal(deuda_objetivo.saldo_pendiente or 0) <= 0:
+            return Response({'error': 'La factura seleccionada no tiene saldo pendiente.'}, status=status.HTTP_400_BAD_REQUEST)
+        deudas_pendientes = [deuda_objetivo]
+    else:
+        deudas_pendientes = list(
+            DeudaConsumoEmpleado.objects.filter(
+                estilista=estilista,
+                saldo_pendiente__gt=0,
+            ).order_by('fecha_hora', 'id')
+        )
 
     if not deudas_pendientes:
         return Response({'error': 'El empleado no tiene deudas pendientes.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -2329,11 +2372,88 @@ def abonar_consumo_empleado(request):
             'ok': True,
             'estilista_id': estilista.id,
             'estilista_nombre': estilista.nombre,
+            'deuda_id': int(deuda_objetivo.id) if deuda_objetivo is not None else None,
             'monto_recibido': float(monto_decimal),
             'monto_aplicado': float(monto_decimal - restante),
             'monto_sobrante': float(restante),
             'medio_pago': medio_pago,
             'aplicaciones': aplicaciones,
+        }
+    )
+
+
+@api_view(['PUT', 'PATCH'])
+@permission_classes([IsAuthenticated])
+def editar_abono_consumo_empleado(request, abono_id):
+    """Permite corregir un abono registrado por error y recalcula la deuda asociada."""
+    rol_user = (getattr(request.user, 'rol', '') or '').strip().lower()
+    if rol_user in {'recepcion', 'recepcionista', 'recepción'}:
+        raise PermissionDenied('Recepción no tiene permiso para editar abonos de cartera.')
+
+    try:
+        abono = AbonoDeudaEmpleado.objects.select_related('deuda').get(id=int(abono_id))
+    except Exception:
+        return Response({'error': 'Abono no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+
+    monto_raw = request.data.get('monto', abono.monto)
+    medio_pago = (request.data.get('medio_pago') or abono.medio_pago or 'efectivo').strip().lower()
+    notas = request.data.get('notas', abono.notas)
+
+    if medio_pago not in {'nequi', 'daviplata', 'efectivo', 'otros'}:
+        return Response({'error': 'Medio de pago inválido.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        monto_nuevo = Decimal(str(monto_raw or 0))
+    except Exception:
+        return Response({'error': 'Monto inválido.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if monto_nuevo <= 0:
+        return Response({'error': 'El monto debe ser mayor a cero.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    with transaction.atomic():
+        deuda = DeudaConsumoEmpleado.objects.select_for_update().get(id=abono.deuda_id)
+        total_otros_abonos = Decimal(
+            deuda.abonos.exclude(id=abono.id).aggregate(total=Sum('monto'))['total'] or 0
+        )
+        total_abonado_nuevo = total_otros_abonos + monto_nuevo
+        total_cargo = Decimal(deuda.total_cargo or 0)
+
+        if total_abonado_nuevo - total_cargo > Decimal('0.0001'):
+            return Response(
+                {
+                    'error': 'El valor abonado supera el total de la factura.',
+                    'maximo_permitido': float(max(total_cargo - total_otros_abonos, Decimal(0))),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        abono.monto = monto_nuevo
+        abono.medio_pago = medio_pago
+        abono.notas = notas
+        abono.save(update_fields=['monto', 'medio_pago', 'notas'])
+
+        deuda.total_abonado = total_abonado_nuevo
+        _recalcular_estado_deuda(deuda)
+        deuda.save(update_fields=['total_abonado', 'saldo_pendiente', 'estado'])
+
+    return Response(
+        {
+            'ok': True,
+            'abono': {
+                'abono_id': abono.id,
+                'deuda_id': abono.deuda_id,
+                'numero_factura': deuda.numero_factura,
+                'monto': float(abono.monto or 0),
+                'medio_pago': abono.medio_pago,
+                'notas': abono.notas,
+            },
+            'deuda': {
+                'deuda_id': deuda.id,
+                'total_cargo': float(deuda.total_cargo or 0),
+                'total_abonado': float(deuda.total_abonado or 0),
+                'saldo_pendiente': float(deuda.saldo_pendiente or 0),
+                'estado': deuda.estado,
+            },
         }
     )
 
