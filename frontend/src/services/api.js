@@ -9,6 +9,8 @@ const API_URL = isLocalHost
 const DIRECT_RAILWAY_API_URL = (
   import.meta.env.VITE_RAILWAY_API_URL || 'https://corteandestilo-production.up.railway.app/api'
 ).trim().replace(/\/$/, '');
+const ENABLE_DIRECT_RAILWAY_FALLBACK =
+  String(import.meta.env.VITE_ENABLE_DIRECT_RAILWAY_FALLBACK || '').toLowerCase() === 'true';
 
 // Crear instancia de axios
 const api = axios.create({
@@ -350,19 +352,10 @@ export const reportesService = {
       const response = await api.get('/reportes/cierre-caja/', { params });
       return response.data;
     } catch (error) {
-      // Mitigacion: reintento directo a Railway si el rewrite de Vercel responde 503.
-      if (!isLocalHost && error?.response?.status === 503) {
-        const token = localStorage.getItem('access_token');
-        const fallback = await axios.get(
-          `${DIRECT_RAILWAY_API_URL}/reportes/cierre-caja/`,
-          {
-            params,
-            headers: {
-              ...(token ? { Authorization: `Bearer ${token}` } : {}),
-            },
-          }
-        );
-        return fallback.data;
+      // Reintento sobre la misma ruta proxied para evitar CORS en respuestas 503 cross-origin.
+      if (error?.response?.status === 503) {
+        const retry = await api.get('/reportes/cierre-caja/', { params });
+        return retry.data;
       }
       throw error;
     }
@@ -463,9 +456,9 @@ export const reportesService = {
       const response = await api.post('/reportes/estilistas/liquidar-dia-v2/', payload);
       return response.data;
     } catch (error) {
-      // Mitigacion: algunos despliegues en Vercel devuelven 503 intermitente en rewrites POST.
-      // Reintentamos directo al backend Railway conservando el token JWT.
-      if (!isLocalHost && error?.response?.status === 503) {
+      // Solo usar fallback cross-origin si se habilita explicitamente por variable de entorno.
+      // Algunos 503 de edge no incluyen CORS y el navegador bloquea la respuesta.
+      if (!isLocalHost && ENABLE_DIRECT_RAILWAY_FALLBACK && error?.response?.status === 503) {
         const token = localStorage.getItem('access_token');
         const fallback = await axios.post(
           `${DIRECT_RAILWAY_API_URL}/reportes/estilistas/liquidar-dia-v2/`,
