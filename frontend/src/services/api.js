@@ -3,7 +3,9 @@ import axios from 'axios';
 const isLocalHost =
   typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname);
 const envApiUrl = (import.meta.env.VITE_API_URL || '').trim();
-const API_URL = envApiUrl || (isLocalHost ? 'http://localhost:8000/api' : '/api');
+const API_URL = isLocalHost
+  ? (envApiUrl || 'http://localhost:8000/api')
+  : '/api';
 
 // Crear instancia de axios
 const api = axios.create({
