@@ -6,6 +6,9 @@ const envApiUrl = (import.meta.env.VITE_API_URL || '').trim();
 const API_URL = isLocalHost
   ? (envApiUrl || 'http://localhost:8000/api')
   : '/api';
+const DIRECT_RAILWAY_API_URL = (
+  import.meta.env.VITE_RAILWAY_API_URL || 'https://corteandestilo-production.up.railway.app/api'
+).trim().replace(/\/$/, '');
 
 // Crear instancia de axios
 const api = axios.create({
@@ -427,7 +430,7 @@ export const reportesService = {
   },
 
   liquidarDiaV2: async ({ estilista_id, fecha, pago_efectivo, pago_nequi, pago_daviplata, pago_otros, abono_puesto, notas }) => {
-    const response = await api.post('/reportes/estilistas/liquidar-dia-v2/', {
+    const payload = {
       estilista_id,
       fecha,
       pago_efectivo,
@@ -436,8 +439,30 @@ export const reportesService = {
       pago_otros,
       abono_puesto,
       notas,
-    });
-    return response.data;
+    };
+
+    try {
+      const response = await api.post('/reportes/estilistas/liquidar-dia-v2/', payload);
+      return response.data;
+    } catch (error) {
+      // Mitigacion: algunos despliegues en Vercel devuelven 503 intermitente en rewrites POST.
+      // Reintentamos directo al backend Railway conservando el token JWT.
+      if (!isLocalHost && error?.response?.status === 503) {
+        const token = localStorage.getItem('access_token');
+        const fallback = await axios.post(
+          `${DIRECT_RAILWAY_API_URL}/reportes/estilistas/liquidar-dia-v2/`,
+          payload,
+          {
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+          }
+        );
+        return fallback.data;
+      }
+      throw error;
+    }
   },
 
   getConsumoEmpleadoDeudas: async (params) => {
