@@ -3785,7 +3785,8 @@ def reporte_cierre_caja(request):
     ingresos_servicios_tarjeta = Decimal(kpis.get('ingresos_servicios_totales', 0) or 0)
     ingresos_espacios_tarjeta = ingresos_espacios
     total_ingresos = ingresos_productos_tarjeta + ingresos_servicios_tarjeta + ingresos_espacios_tarjeta
-    liquidacion_empleados = tot_salidas_medios
+    medios_totales = data_bi.get('cierre_medios', {}).get('totales', {})
+    liquidacion_empleados = Decimal(str(medios_totales.get('salidas', 0) or 0))
     ganancia_total = total_ingresos - liquidacion_empleados
     suma_componentes = ingresos_servicios_tarjeta + ingresos_productos_tarjeta + ingresos_espacios_tarjeta
 
