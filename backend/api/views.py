@@ -2649,7 +2649,18 @@ def liquidar_dia_v2(request):
     total_pagado = pago_efectivo + pago_nequi + pago_daviplata + pago_otros
     
     # ============ [1] CALCULAR LIQUIDACIÓN ============
-    calc = calcular_liquidacion_dia_estilista(estilista, fecha)
+    try:
+        calc = calcular_liquidacion_dia_estilista(estilista, fecha)
+    except (OperationalError, ProgrammingError) as e:
+        return Response(
+            {'error': f'No se pudo calcular la liquidación por un problema de base de datos: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+    except Exception as e:
+        return Response(
+            {'error': f'No se pudo calcular la liquidación: {str(e)}'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
     ganancias = calc['ganancias_totales']
     descuento = calc['descuento_puesto']
     pagable = calc['total_pagable']
