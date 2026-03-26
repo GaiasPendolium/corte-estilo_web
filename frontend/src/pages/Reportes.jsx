@@ -523,6 +523,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
               )}
               {(biData?.estilistas || []).map((item) => {
                 const deudaPuestoRango = Number(item.deuda_total_acumulada || 0);
+                const deudaPuestoHistorica = Number(item.deuda_puesto_historica || 0);
                 const valorTotalEmpleado = Number((item.valor_total_empleado ?? item.ganancias_servicios ?? item.facturacion_servicios) || 0);
                 const comisionesEmpleado = Number(item.comision_ventas_producto || 0);
                 const gananciasTotales = valorTotalEmpleado + comisionesEmpleado;
@@ -538,14 +539,12 @@ const aplicarEstadoLiquidacion = async (fila) => {
                   : tipoCobro === 'porcentaje_neto'
                     ? `Cobro porcentaje: ${valorCobroCfg}%`
                     : 'Sin cobro de puesto';
-                const pendientePuestoDia = tieneServiciosHoy ? Math.max(descuentoVisible - abonoPuestoDigitado, 0) : 0;
+                const saldoPuestoPendientePreview = Math.max((deudaPuestoHistorica + descuentoVisible) - abonoPuestoDigitado, 0);
                 // Para UN DÍA: confiar SOLO en estadoDiaPorEstilista (del endpoint específico del día)
                 // Para RANGO: usar el estado del BI basado en múltiples días
                 const estadoActual = (fechaInicio === fechaFin)
                   ? (estadoDiaPorEstilista[item.estilista_id] || 'pendiente')
                   : (item.estado_pago_rango || item.estado_pago_dia || 'pendiente');
-                // Saldo pendiente solo se muestra si el estado es "debe"
-                const saldoPuestePendiente = (estadoActual === 'debe') ? (deudaPuestoRango + descuentoVisible) : 0;
                 const valorALiquidarVisible = estadoActual === 'cancelado' ? 0 : netoGanado;
                 const descuentoPuestoValidado = estadoActual === 'cancelado' ? 0 : descuentoVisible;
                 const deudaPuestoVisible = deudaPuestoRango;
@@ -559,10 +558,10 @@ const aplicarEstadoLiquidacion = async (fila) => {
                       <div>{formatMoney(descuentoPuestoValidado)}</div>
                       <div className="text-[11px] leading-tight text-slate-500">{descripcionCobroPuesto}</div>
                       <div className="text-[11px] leading-tight text-amber-600">
-                        Saldo pendiente: {formatMoney(saldoPuestePendiente)}
-                        {estadoActual === 'debe' && deudaPuestoRango > 0 && (
+                        Saldo pendiente: {formatMoney(saldoPuestoPendientePreview)}
+                        {(deudaPuestoHistorica > 0 || descuentoVisible > 0 || abonoPuestoDigitado > 0) && (
                           <div className="text-[10px] leading-tight text-amber-500">
-                            ({formatMoney(deudaPuestoRango)} anterior + {formatMoney(descuentoVisible)} hoy)
+                            ({formatMoney(deudaPuestoHistorica)} anterior + {formatMoney(descuentoVisible)} hoy - {formatMoney(abonoPuestoDigitado)} abonado)
                           </div>
                         )}
                       </div>
