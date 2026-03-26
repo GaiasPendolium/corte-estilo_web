@@ -3590,6 +3590,10 @@ def reporte_cierre_caja(request):
         valor_compra = valor_compra_total * factor_pago
         ganancia = valor_venta - valor_compra
 
+        # Debe cuadrar con la tabla de detalle (que si incluye consumo abonado).
+        ventas_productos_total += valor_venta
+        costo_productos_total += valor_compra
+
         detalle_productos.append(
             {
                 'fecha_hora': timezone.localtime(venta.fecha_hora).strftime('%Y-%m-%d %H:%M:%S') if venta.fecha_hora else None,
