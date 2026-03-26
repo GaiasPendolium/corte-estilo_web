@@ -3781,14 +3781,22 @@ def reporte_cierre_caja(request):
             }
         )
 
+    # Tarjetas de cierre de caja:
+    # - Ingreso por Servicios: solo lo que gana el establecimiento.
+    # - Ingreso por Productos: valor total vendido (no utilidad neta).
     ingresos_productos_tarjeta = ventas_productos_total
-    ingresos_servicios_tarjeta = Decimal(kpis.get('ingresos_servicios_totales', 0) or 0)
+    ingresos_servicios_tarjeta = ingresos_servicios_establecimiento
     ingresos_espacios_tarjeta = ingresos_espacios
-    total_ingresos = ingresos_productos_tarjeta + ingresos_servicios_tarjeta + ingresos_espacios_tarjeta
+    suma_componentes = ingresos_servicios_tarjeta + ingresos_productos_tarjeta + ingresos_espacios_tarjeta
+
+    # Consistencia de formulas solicitadas:
+    #   Ganancia Total = Ingreso Productos + Ingreso Servicios + Ingreso Espacios
+    #   Ganancia Total = Ingresos Totales - Liquidacion Empleado
+    # => Ingresos Totales = Ganancia Total + Liquidacion Empleado
     medios_totales = data_bi.get('cierre_medios', {}).get('totales', {})
     liquidacion_empleados = Decimal(str(medios_totales.get('salidas', 0) or 0))
-    ganancia_total = total_ingresos - liquidacion_empleados
-    suma_componentes = ingresos_servicios_tarjeta + ingresos_productos_tarjeta + ingresos_espacios_tarjeta
+    ganancia_total = suma_componentes
+    total_ingresos = ganancia_total + liquidacion_empleados
 
     return Response(
         {
@@ -3803,7 +3811,7 @@ def reporte_cierre_caja(request):
                 'ingresos_productos_utilidad': float(ingresos_productos_tarjeta),
                 'ingresos_espacios': float(ingresos_espacios_tarjeta),
                 'suma_componentes_ganancia': float(suma_componentes),
-                'diferencia_cuadre': float(ganancia_total - (suma_componentes - liquidacion_empleados)),
+                'diferencia_cuadre': float(ganancia_total - suma_componentes),
             },
             'medios': {
                 'detalle': data_bi.get('cierre_medios', {}).get('detalle', []),
