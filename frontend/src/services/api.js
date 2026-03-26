@@ -6,11 +6,6 @@ const envApiUrl = (import.meta.env.VITE_API_URL || '').trim();
 const API_URL = isLocalHost
   ? (envApiUrl || 'http://localhost:8000/api')
   : '/api';
-const DIRECT_RAILWAY_API_URL = (
-  import.meta.env.VITE_RAILWAY_API_URL || 'https://corteandestilo-production.up.railway.app/api'
-).trim().replace(/\/$/, '');
-const ENABLE_DIRECT_RAILWAY_FALLBACK =
-  String(import.meta.env.VITE_ENABLE_DIRECT_RAILWAY_FALLBACK || '').toLowerCase() === 'true';
 
 // Crear instancia de axios
 const api = axios.create({
@@ -452,28 +447,8 @@ export const reportesService = {
       notas,
     };
 
-    try {
-      const response = await api.post('/reportes/estilistas/liquidar-dia-v2/', payload);
-      return response.data;
-    } catch (error) {
-      // Solo usar fallback cross-origin si se habilita explicitamente por variable de entorno.
-      // Algunos 503 de edge no incluyen CORS y el navegador bloquea la respuesta.
-      if (!isLocalHost && ENABLE_DIRECT_RAILWAY_FALLBACK && error?.response?.status === 503) {
-        const token = localStorage.getItem('access_token');
-        const fallback = await axios.post(
-          `${DIRECT_RAILWAY_API_URL}/reportes/estilistas/liquidar-dia-v2/`,
-          payload,
-          {
-            headers: {
-              'Content-Type': 'application/json',
-              ...(token ? { Authorization: `Bearer ${token}` } : {}),
-            },
-          }
-        );
-        return fallback.data;
-      }
-      throw error;
-    }
+    const response = await api.post('/reportes/estilistas/liquidar-dia-v2/', payload);
+    return response.data;
   },
 
   getConsumoEmpleadoDeudas: async (params) => {
