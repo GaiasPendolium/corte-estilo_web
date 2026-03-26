@@ -2705,6 +2705,7 @@ def liquidar_dia_v2(request):
     
     # ============ [4] GUARDAR ============
     tabla_diaria_no_disponible = False
+    guardado_legacy_sql = False
     estado_resultante = 'pendiente'
     estado_anterior = 'pendiente'
     try:
@@ -3019,9 +3020,16 @@ def estado_pago_estilista_historial(request):
                 limit=limit,
             )
         except Exception:
+            # Degradar sin romper frontend: retornar lista vacia con advertencia.
+            registros = []
             return Response(
-                {'error': 'Debes aplicar migraciones del backend para habilitar historial de estados.'},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                {
+                    'fecha_inicio': fecha_inicio.strftime('%Y-%m-%d'),
+                    'fecha_fin': fecha_fin.strftime('%Y-%m-%d'),
+                    'estilista_id': int(estilista_id_raw) if estilista_id_raw else None,
+                    'items': registros,
+                    'warning': 'Historial no disponible temporalmente. Verifica migraciones de backend.',
+                }
             )
 
     return Response(
