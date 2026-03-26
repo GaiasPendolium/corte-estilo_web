@@ -3781,15 +3781,13 @@ def reporte_cierre_caja(request):
             }
         )
 
-    total_ingresos = Decimal(kpis.get('venta_neta_total', 0) or 0)
-    utilidad_productos = ventas_productos_total - costo_productos_total
-    suma_componentes = ingresos_servicios_establecimiento + utilidad_productos + ingresos_espacios
-    # La ganancia total debe cuadrar por ambas vías:
-    # 1) Ingresos Totales - Liquidacion Empleado
-    # 2) Ingreso por Servicios + Ingreso por Productos + Ingreso por Espacios
-    ganancia_total = suma_componentes
-    liquidacion_empleados = total_ingresos - ganancia_total
-    liquidacion_empleados_real = Decimal(kpis.get('pago_total_estilistas', 0) or 0)
+    ingresos_productos_tarjeta = ventas_productos_total
+    ingresos_servicios_tarjeta = Decimal(kpis.get('ingresos_servicios_totales', 0) or 0)
+    ingresos_espacios_tarjeta = ingresos_espacios
+    total_ingresos = ingresos_productos_tarjeta + ingresos_servicios_tarjeta + ingresos_espacios_tarjeta
+    liquidacion_empleados = tot_salidas_medios
+    ganancia_total = total_ingresos - liquidacion_empleados
+    suma_componentes = ingresos_servicios_tarjeta + ingresos_productos_tarjeta + ingresos_espacios_tarjeta
 
     return Response(
         {
@@ -3799,13 +3797,12 @@ def reporte_cierre_caja(request):
             'resumen': {
                 'total_ingresos': float(total_ingresos),
                 'liquidacion_empleados': float(liquidacion_empleados),
-                'liquidacion_empleados_real': float(liquidacion_empleados_real),
                 'ganancia_total': float(ganancia_total),
-                'ingresos_servicios_establecimiento': float(ingresos_servicios_establecimiento),
-                'ingresos_productos_utilidad': float(utilidad_productos),
-                'ingresos_espacios': float(ingresos_espacios),
+                'ingresos_servicios_establecimiento': float(ingresos_servicios_tarjeta),
+                'ingresos_productos_utilidad': float(ingresos_productos_tarjeta),
+                'ingresos_espacios': float(ingresos_espacios_tarjeta),
                 'suma_componentes_ganancia': float(suma_componentes),
-                'diferencia_cuadre': float(ganancia_total - suma_componentes),
+                'diferencia_cuadre': float(ganancia_total - (suma_componentes - liquidacion_empleados)),
             },
             'medios': {
                 'detalle': data_bi.get('cierre_medios', {}).get('detalle', []),
