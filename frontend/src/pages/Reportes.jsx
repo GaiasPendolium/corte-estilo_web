@@ -525,19 +525,27 @@ const aplicarEstadoLiquidacion = async (fila) => {
                 const valorTotalEmpleado = Number((item.valor_total_empleado ?? item.ganancias_servicios ?? item.facturacion_servicios) || 0);
                 const comisionesEmpleado = Number(item.comision_ventas_producto || 0);
                 const gananciasTotales = valorTotalEmpleado + comisionesEmpleado;
-                const descuentoPuesto = Number(item.descuento_espacio || 0);
                 const tieneServiciosHoy = gananciasTotales > 0;
-                const descuentoVisible = tieneServiciosHoy ? descuentoPuesto : 0;
-                const netoGanado = Math.max(gananciasTotales - descuentoVisible, 0);
-                const abonoPuestoDigitado = Number(abonoPuestoPorEstilista[item.estilista_id] || 0);
                 const tipoCobro = item.tipo_cobro_espacio || 'sin_cobro';
                 const valorCobroCfg = Number(item.valor_cobro_espacio || 0);
+                const cobroPuestoActual = (() => {
+                  if (!tieneServiciosHoy) return 0;
+                  if (tipoCobro === 'costo_fijo_neto') {
+                    return Math.max(valorCobroCfg, 0);
+                  }
+                  if (tipoCobro === 'porcentaje_neto') {
+                    return Math.max((valorTotalEmpleado * valorCobroCfg) / 100, 0);
+                  }
+                  return 0;
+                })();
+                const descuentoVisible = cobroPuestoActual;
+                const netoGanado = Math.max(gananciasTotales - descuentoVisible, 0);
+                const abonoPuestoDigitado = Number(abonoPuestoPorEstilista[item.estilista_id] || 0);
                 const descripcionCobroPuesto = tipoCobro === 'costo_fijo_neto'
                   ? `Cobro fijo: ${formatMoney(valorCobroCfg)}`
                   : tipoCobro === 'porcentaje_neto'
-                    ? `Cobro porcentaje: ${valorCobroCfg}%`
+                    ? `Cobro porcentaje: (${formatMoney(cobroPuestoActual)}) ${valorCobroCfg}%`
                     : 'Sin cobro de puesto';
-                const saldoPuestoPendientePreview = Math.max((deudaPuestoHistorica + descuentoVisible) - abonoPuestoDigitado, 0);
                 // Para UN DÍA: confiar SOLO en estadoDiaPorEstilista (del endpoint específico del día)
                 // Para RANGO: usar el estado del BI basado en múltiples días
                 const estadoActual = (fechaInicio === fechaFin)
