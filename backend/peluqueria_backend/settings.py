@@ -66,17 +66,32 @@ TEMPLATES = [
     },
 ]
 
-# CORS Configuration
-CORS_ALLOWED_ORIGINS = config(
+# CORS/CSRF Configuration
+def _csv_env(name, default=''):
+    raw = config(name, default=default)
+    values = []
+    for part in str(raw).split(','):
+        value = part.strip().strip('"').strip("'")
+        if value.endswith('/'):
+            value = value[:-1]
+        if value:
+            values.append(value)
+    return values
+
+
+CORS_ALLOWED_ORIGINS = _csv_env(
     'CORS_ALLOWED_ORIGINS',
-    default='http://localhost:5173,http://localhost:3000,http://127.0.0.1:3000,http://127.0.0.1:5173',
-    cast=lambda v: [s.strip() for s in v.split(',')]
+    default='http://localhost:5173,http://localhost:3000,http://127.0.0.1:3000,http://127.0.0.1:5173,https://corte-estilo-web.vercel.app',
 )
 
-CORS_ALLOWED_ORIGIN_REGEXES = config(
+CORS_ALLOWED_ORIGIN_REGEXES = _csv_env(
     'CORS_ALLOWED_ORIGIN_REGEXES',
     default=r'^https://.*\.vercel\.app$',
-    cast=lambda v: [s.strip() for s in v.split(',') if s.strip()]
+)
+
+CSRF_TRUSTED_ORIGINS = _csv_env(
+    'CSRF_TRUSTED_ORIGINS',
+    default='https://*.vercel.app,http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173',
 )
 
 CORS_ALLOW_CREDENTIALS = True

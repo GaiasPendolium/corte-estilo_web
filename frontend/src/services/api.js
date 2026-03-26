@@ -1,9 +1,9 @@
 import axios from 'axios';
 
-const DEFAULT_PROD_API_URL = 'https://corteandestilo-production.up.railway.app/api';
 const isLocalHost =
   typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname);
-const API_URL = import.meta.env.VITE_API_URL || (isLocalHost ? 'http://localhost:8000/api' : DEFAULT_PROD_API_URL);
+const envApiUrl = (import.meta.env.VITE_API_URL || '').trim();
+const API_URL = envApiUrl || (isLocalHost ? 'http://localhost:8000/api' : '/api');
 
 // Crear instancia de axios
 const api = axios.create({
