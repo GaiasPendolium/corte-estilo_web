@@ -714,6 +714,8 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
         numero_factura = servicio.numero_factura or f"FS-{timezone.now().strftime('%Y%m%d')}-{servicio.id:06d}"
 
         cliente = servicio.cliente.nombre if servicio.cliente else 'Cliente no registrado'
+        montos_principal = self._resolver_montos_servicio(servicio)
+        valor_principal_total = float(servicio.neto_servicio or servicio.precio_cobrado or 0)
 
         detalle_servicios = [
             {
@@ -802,9 +804,10 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
             if pct_est > 100:
                 pct_est = 100
 
-            comision_empleado = valor_adicional * (1 - (pct_est / 100.0)) if aplica_pct else valor_adicional
+            valor_est = valor_adicional * (pct_est / 100.0) if aplica_pct else 0.0
+            comision_empleado = valor_adicional - valor_est
             comisiones_adicionales.append(
-                f"- {adicional.servicio.nombre} ({adicional.estilista.nombre}): ${comision_empleado:.2f}"
+                f"- {adicional.servicio.nombre} ({adicional.estilista.nombre}): empleado ${comision_empleado:.2f} | establecimiento ${valor_est:.2f}"
             )
 
         bloque_comision = ''
@@ -825,12 +828,14 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
             if pct_prod > 100:
                 pct_prod = 100
             comision_prod = total_prod * (pct_prod / 100.0)
+            valor_est_prod = total_prod - comision_prod
             bloque_comision_producto = (
                 "\nComision producto adicional:\n"
-                f"- {servicio.adicional_otro_producto.nombre} ({servicio.adicional_otro_estilista.nombre}): ${comision_prod:.2f}"
+                f"- {servicio.adicional_otro_producto.nombre} ({servicio.adicional_otro_estilista.nombre}): empleado ${comision_prod:.2f} | establecimiento ${valor_est_prod:.2f}"
             )
 
         return (
+            f"CORTE Y ESTILO\n"
             f"Factura: {numero_factura}\n"
             f"Tipo: Servicio\n"
             f"Fecha: {timezone.localtime(servicio.fecha_hora).strftime('%Y-%m-%d %H:%M')}\n"
@@ -838,6 +843,10 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
             f"Facturado por: {(servicio.usuario.username if servicio.usuario else 'No especificado')}\n"
             f"\n"
             f"{tabla_texto}\n"
+            f"\nReparto servicio principal:\n"
+            f"- Total servicio: ${valor_principal_total:.2f}\n"
+            f"- Para empleado: ${float(montos_principal['monto_estilista']):.2f}\n"
+            f"- Para establecimiento: ${float(montos_principal['monto_establecimiento']):.2f}\n"
             f"{bloque_comision}\n"
             f"{bloque_comision_producto}\n"
             f"Total: ${total_cobrado:.2f}\n"
