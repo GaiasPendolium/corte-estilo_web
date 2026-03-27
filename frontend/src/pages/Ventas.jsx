@@ -3,6 +3,7 @@ import { FiCopy, FiEdit2, FiPlus, FiRefreshCw, FiSearch, FiTrash2, FiEye, FiX } 
 import { toast } from 'react-toastify';
 import { estilistasService, productosService, serviciosRealizadosService, ventasService, serviciosService } from '../services/api';
 import ModalForm from '../components/ModalForm';
+import DraggableSearchKeyboard from '../components/DraggableSearchKeyboard';
 import useAuthStore from '../store/authStore';
 import { qzTrayService } from '../services/printing/qzTrayService';
 import { ticketPrintService } from '../services/printing/ticketPrintService';
@@ -126,6 +127,7 @@ const Ventas = () => {
   const [sugerenciasProducto, setSugerenciasProducto] = useState([]);
   const [productoSeleccionado, setProductoSeleccionado] = useState(null);
   const [servicioEditando, setServicioEditando] = useState(null);
+  const [searchKeyboard, setSearchKeyboard] = useState({ visible: false, field: '' });
 
   const [form, setForm] = useState({
     cliente_nombre: '',
@@ -495,6 +497,35 @@ const Ventas = () => {
       toast.success('Comando de apertura enviado al cajon');
     } catch (error) {
       toast.error(error.message || 'No se pudo abrir el cajon SAT');
+    }
+  };
+
+  const abrirSearchKeyboard = (field) => {
+    setSearchKeyboard({ visible: true, field });
+  };
+
+  const cerrarSearchKeyboard = () => {
+    setSearchKeyboard({ visible: false, field: '' });
+  };
+
+  const obtenerValorSearchKeyboard = () => {
+    if (searchKeyboard.field === 'filtro_usuario') return String(filtroUsuario || '');
+    if (searchKeyboard.field === 'filtro_empleado') return String(filtroEmpleado || '');
+    if (searchKeyboard.field === 'busqueda_producto') return String(busquedaProducto || '');
+    return '';
+  };
+
+  const asignarValorSearchKeyboard = (value) => {
+    if (searchKeyboard.field === 'filtro_usuario') {
+      setFiltroUsuario(value);
+      return;
+    }
+    if (searchKeyboard.field === 'filtro_empleado') {
+      setFiltroEmpleado(value);
+      return;
+    }
+    if (searchKeyboard.field === 'busqueda_producto') {
+      setBusquedaProducto(value);
     }
   };
 
@@ -868,22 +899,42 @@ const Ventas = () => {
         <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3">
           <input className="input-field" type="date" value={fechaInicio} onChange={(e) => setFechaInicio(e.target.value)} />
           <input className="input-field" type="date" value={fechaFin} onChange={(e) => setFechaFin(e.target.value)} />
-          <input
-            className="input-field"
-            placeholder="Filtrar por usuario que facturó"
-            inputMode="search"
-            enterKeyHint="search"
-            value={filtroUsuario}
-            onChange={(e) => setFiltroUsuario(e.target.value)}
-          />
-          <input
-            className="input-field"
-            placeholder="Filtrar por empleado"
-            inputMode="search"
-            enterKeyHint="search"
-            value={filtroEmpleado}
-            onChange={(e) => setFiltroEmpleado(e.target.value)}
-          />
+          <div className="relative">
+            <input
+              className="input-field pr-14"
+              placeholder="Filtrar por usuario que facturó"
+              inputMode="search"
+              enterKeyHint="search"
+              value={filtroUsuario}
+              onChange={(e) => setFiltroUsuario(e.target.value)}
+            />
+            <button
+              type="button"
+              className="absolute right-2 top-1/2 -translate-y-1/2 btn-secondary !px-2 !py-1"
+              onClick={() => abrirSearchKeyboard('filtro_usuario')}
+              title="Teclado"
+            >
+              ⌨
+            </button>
+          </div>
+          <div className="relative">
+            <input
+              className="input-field pr-14"
+              placeholder="Filtrar por empleado"
+              inputMode="search"
+              enterKeyHint="search"
+              value={filtroEmpleado}
+              onChange={(e) => setFiltroEmpleado(e.target.value)}
+            />
+            <button
+              type="button"
+              className="absolute right-2 top-1/2 -translate-y-1/2 btn-secondary !px-2 !py-1"
+              onClick={() => abrirSearchKeyboard('filtro_empleado')}
+              title="Teclado"
+            >
+              ⌨
+            </button>
+          </div>
           <button
             className="btn-secondary"
             onClick={() => {
@@ -1235,20 +1286,30 @@ const Ventas = () => {
       >
       <form className="grid grid-cols-1 md:grid-cols-4 gap-3" onSubmit={guardarVenta}>
         <h2 className="card-header md:col-span-4">Factura de producto</h2>
-        <input
-          className="input-field md:col-span-3"
-          placeholder="Buscar producto por marca, descripción, código o nombre"
-          inputMode="search"
-          enterKeyHint="search"
-          value={busquedaProducto}
-          onChange={(e) => setBusquedaProducto(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              buscarProducto();
-            }
-          }}
-        />
+        <div className="md:col-span-3 relative">
+          <input
+            className="input-field pr-14"
+            placeholder="Buscar producto por marca, descripción, código o nombre"
+            inputMode="search"
+            enterKeyHint="search"
+            value={busquedaProducto}
+            onChange={(e) => setBusquedaProducto(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                buscarProducto();
+              }
+            }}
+          />
+          <button
+            type="button"
+            className="absolute right-2 top-1/2 -translate-y-1/2 btn-secondary !px-2 !py-1"
+            onClick={() => abrirSearchKeyboard('busqueda_producto')}
+            title="Teclado"
+          >
+            ⌨
+          </button>
+        </div>
         <button type="button" className="btn-secondary inline-flex items-center justify-center gap-2" onClick={buscarProducto}>
           <FiSearch /> Buscar
         </button>
@@ -1707,6 +1768,14 @@ const Ventas = () => {
       </div>
       </>
       )}
+
+      <DraggableSearchKeyboard
+        visible={searchKeyboard.visible}
+        value={obtenerValorSearchKeyboard()}
+        onChange={asignarValorSearchKeyboard}
+        onClose={cerrarSearchKeyboard}
+        title="Teclado de búsqueda"
+      />
     </div>
   );
 };

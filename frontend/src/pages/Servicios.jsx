@@ -10,6 +10,7 @@ import {
   serviciosService,
 } from '../services/api';
 import ModalForm from '../components/ModalForm';
+import DraggableSearchKeyboard from '../components/DraggableSearchKeyboard';
 import { ticketPrintService } from '../services/printing/ticketPrintService';
 import { customerDisplayService } from '../services/customerDisplayService';
 import useAuthStore from '../store/authStore';
@@ -147,32 +148,11 @@ const formatCOP = (value) => moneyFormatterCOP.format(toPesoInt(value));
 
 const sanitizePesoInput = (value) => String(value ?? '').replace(/[^\d]/g, '');
 
-const SEARCH_KEYBOARD_ROWS = [
-  ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'],
-  ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
-  ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', 'Ñ'],
-  ['Z', 'X', 'C', 'V', 'B', 'N', 'M', 'Á', 'É', 'Í', 'Ó', 'Ú'],
-];
-
 const minimoConDescuentoEmpleado = (precioBase) => {
   const base = toPesoInt(precioBase);
   if (base <= 0) return 0;
   return Math.ceil(base * 0.8);
 };
-
-const KeyboardIcon = ({ size = 24 }) => (
-  <span
-    className="inline-flex items-center justify-center rounded-md bg-indigo-200 text-indigo-900"
-    style={{ width: size + 10, height: size + 10 }}
-    aria-hidden="true"
-  >
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="2" y="5" width="20" height="14" rx="2" ry="2" />
-      <path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 13h.01M10 13h.01M14 13h.01M18 13h.01" />
-      <path d="M7 16h10" />
-    </svg>
-  </span>
-);
 
 const Servicios = () => {
   const { user } = useAuthStore();
@@ -213,7 +193,7 @@ const Servicios = () => {
   const [productoAdicionalBusqueda, setProductoAdicionalBusqueda] = useState('');
   const [productoAdicionalSugerencias, setProductoAdicionalSugerencias] = useState([]);
   const [keypad, setKeypad] = useState({ visible: false, field: '', itemKey: null });
-  const [searchKeyboard, setSearchKeyboard] = useState({ visible: false, field: '', upper: true });
+  const [searchKeyboard, setSearchKeyboard] = useState({ visible: false, field: '' });
 
   const [ventaForm, setVentaForm] = useState({
     cliente_nombre: '',
@@ -858,11 +838,11 @@ const Servicios = () => {
   };
 
   const abrirSearchKeyboard = (field) => {
-    setSearchKeyboard((prev) => ({ ...prev, visible: true, field }));
+    setSearchKeyboard({ visible: true, field });
   };
 
   const cerrarSearchKeyboard = () => {
-    setSearchKeyboard((prev) => ({ ...prev, visible: false, field: '' }));
+    setSearchKeyboard({ visible: false, field: '' });
   };
 
   const obtenerValorSearchKeyboard = () => {
@@ -881,28 +861,6 @@ const Servicios = () => {
       setProductoAdicionalBusqueda(value);
       setFinalizacion((p) => ({ ...p, adicional_otro_producto: '' }));
     }
-  };
-
-  const pulsarSearchKeyboard = (token) => {
-    const actual = obtenerValorSearchKeyboard();
-    if (token === 'SHIFT') {
-      setSearchKeyboard((prev) => ({ ...prev, upper: !prev.upper }));
-      return;
-    }
-    if (token === 'C') {
-      asignarValorSearchKeyboard('');
-      return;
-    }
-    if (token === 'DEL') {
-      asignarValorSearchKeyboard(actual.slice(0, -1));
-      return;
-    }
-    if (token === 'SPACE') {
-      asignarValorSearchKeyboard(`${actual} `);
-      return;
-    }
-    const char = searchKeyboard.upper ? token : token.toLowerCase();
-    asignarValorSearchKeyboard(`${actual}${char}`);
   };
 
   const cerrarKeypad = () => {
@@ -1199,7 +1157,7 @@ const Servicios = () => {
                   className="btn-secondary !px-5 !py-3 inline-flex items-center gap-3 text-lg font-bold border-2 border-indigo-300 bg-indigo-50 text-indigo-900 hover:bg-indigo-100"
                   onClick={() => abrirSearchKeyboard('venta_busqueda')}
                 >
-                  <KeyboardIcon size={24} />
+                  <span className="text-2xl" aria-hidden="true">⌨</span>
                   <span>Abrir teclado A-Z</span>
                 </button>
               </div>
@@ -1721,7 +1679,7 @@ const Servicios = () => {
                           className="btn-secondary !px-5 !py-3 inline-flex items-center gap-3 text-lg font-bold border-2 border-indigo-300 bg-indigo-50 text-indigo-900 hover:bg-indigo-100"
                           onClick={() => abrirSearchKeyboard('producto_adicional_busqueda')}
                         >
-                          <KeyboardIcon size={24} />
+                          <span className="text-2xl" aria-hidden="true">⌨</span>
                           <span>Abrir teclado A-Z</span>
                         </button>
                       </div>
@@ -1834,44 +1792,13 @@ const Servicios = () => {
         </div>
       )}
 
-      {searchKeyboard.visible && (
-        <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4" onClick={cerrarSearchKeyboard}>
-          <div className="w-full max-w-4xl rounded-2xl bg-white shadow-2xl border border-slate-200 p-6" onClick={(e) => e.stopPropagation()}>
-            <p className="text-base text-slate-500 mb-1">Teclado alfanumérico</p>
-            <p className="text-xl font-semibold text-slate-900 mb-4 break-words min-h-[2rem]">{obtenerValorSearchKeyboard() || ' '}</p>
-
-            <div className="space-y-2">
-              {SEARCH_KEYBOARD_ROWS.map((row, idx) => (
-                <div key={`qwerty-row-${idx}`} className="grid gap-2" style={{ gridTemplateColumns: `repeat(${row.length}, minmax(0, 1fr))` }}>
-                  {row.map((token) => (
-                    <button
-                      key={token}
-                      type="button"
-                      className="btn-secondary !py-4 !text-lg"
-                      onClick={() => pulsarSearchKeyboard(token)}
-                    >
-                      {searchKeyboard.upper ? token : token.toLowerCase()}
-                    </button>
-                  ))}
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-3 grid grid-cols-4 gap-3">
-              <button type="button" className="btn-secondary !py-4 !text-base" onClick={() => pulsarSearchKeyboard('SHIFT')}>
-                {searchKeyboard.upper ? 'Minúsc' : 'Mayúsc'}
-              </button>
-              <button type="button" className="btn-secondary !py-4 !text-base" onClick={() => pulsarSearchKeyboard('SPACE')}>Espacio</button>
-              <button type="button" className="btn-secondary !py-4 !text-base" onClick={() => pulsarSearchKeyboard('DEL')}>Borrar</button>
-              <button type="button" className="btn-danger !py-4 !text-base" onClick={() => pulsarSearchKeyboard('C')}>Limpiar</button>
-            </div>
-
-            <div className="mt-3">
-              <button type="button" className="btn-primary !py-4 !text-lg w-full" onClick={cerrarSearchKeyboard}>Aceptar</button>
-            </div>
-          </div>
-        </div>
-      )}
+      <DraggableSearchKeyboard
+        visible={searchKeyboard.visible}
+        value={obtenerValorSearchKeyboard()}
+        onChange={asignarValorSearchKeyboard}
+        onClose={cerrarSearchKeyboard}
+        title="Teclado de búsqueda"
+      />
 
       {showConfirmacionFinalizar && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">

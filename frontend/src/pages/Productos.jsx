@@ -3,6 +3,7 @@ import { FiEdit2, FiPlus, FiRefreshCw, FiSearch, FiTrash2 } from 'react-icons/fi
 import { toast } from 'react-toastify';
 import { productosService, serviciosService } from '../services/api';
 import ModalForm from '../components/ModalForm';
+import DraggableSearchKeyboard from '../components/DraggableSearchKeyboard';
 import useAuthStore from '../store/authStore';
 import { canManageCatalog } from '../utils/roles';
 
@@ -101,6 +102,7 @@ const Productos = () => {
   const [servicioEditingId, setServicioEditingId] = useState(null);
   const [servicioForm, setServicioForm] = useState({ nombre: '', descripcion: '', precio: '0', duracion_minutos: '', es_adicional: false });
   const [filtroServicio, setFiltroServicio] = useState('');
+  const [searchKeyboard, setSearchKeyboard] = useState({ visible: false, field: '' });
 
   const cargarProductos = async () => {
     try {
@@ -380,6 +382,30 @@ const Productos = () => {
     );
   }, [filtroServicio, serviciosCatalogo]);
 
+  const abrirSearchKeyboard = (field) => {
+    setSearchKeyboard({ visible: true, field });
+  };
+
+  const cerrarSearchKeyboard = () => {
+    setSearchKeyboard({ visible: false, field: '' });
+  };
+
+  const obtenerValorSearchKeyboard = () => {
+    if (searchKeyboard.field === 'codigo_busqueda') return String(codigoBusqueda || '');
+    if (searchKeyboard.field === 'filtro_servicio') return String(filtroServicio || '');
+    return '';
+  };
+
+  const asignarValorSearchKeyboard = (value) => {
+    if (searchKeyboard.field === 'codigo_busqueda') {
+      setCodigoBusqueda(value);
+      return;
+    }
+    if (searchKeyboard.field === 'filtro_servicio') {
+      setFiltroServicio(value);
+    }
+  };
+
   return (
     <div className="space-y-6 fade-in">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -433,18 +459,28 @@ const Productos = () => {
       <div className="card">
         <h2 className="card-header">Búsqueda por lector de código de barras</h2>
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3 relative">
-          <input
-            className="input-field md:col-span-3"
-            placeholder="Escanea o escribe código, marca, descripción o nombre"
-            value={codigoBusqueda}
-            onChange={(e) => setCodigoBusqueda(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                buscarPorCodigo();
-              }
-            }}
-          />
+          <div className="md:col-span-3 relative">
+            <input
+              className="input-field pr-14"
+              placeholder="Escanea o escribe código, marca, descripción o nombre"
+              value={codigoBusqueda}
+              onChange={(e) => setCodigoBusqueda(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  buscarPorCodigo();
+                }
+              }}
+            />
+            <button
+              type="button"
+              className="absolute right-2 top-1/2 -translate-y-1/2 btn-secondary !px-2 !py-1"
+              onClick={() => abrirSearchKeyboard('codigo_busqueda')}
+              title="Teclado"
+            >
+              ⌨
+            </button>
+          </div>
           <button className="btn-primary inline-flex items-center justify-center gap-2" onClick={buscarPorCodigo}>
             <FiSearch /> Buscar
           </button>
@@ -682,12 +718,22 @@ const Productos = () => {
         {!puedeEditar && <p className="text-gray-600 mb-3">Perfil con acceso de solo lectura para servicios.</p>}
 
         <div className="mb-4 grid grid-cols-1 md:grid-cols-3 gap-3">
-          <input
-            className="input-field md:col-span-2"
-            placeholder="Buscar servicio por descripción o nombre"
-            value={filtroServicio}
-            onChange={(e) => setFiltroServicio(e.target.value)}
-          />
+          <div className="md:col-span-2 relative">
+            <input
+              className="input-field pr-14"
+              placeholder="Buscar servicio por descripción o nombre"
+              value={filtroServicio}
+              onChange={(e) => setFiltroServicio(e.target.value)}
+            />
+            <button
+              type="button"
+              className="absolute right-2 top-1/2 -translate-y-1/2 btn-secondary !px-2 !py-1"
+              onClick={() => abrirSearchKeyboard('filtro_servicio')}
+              title="Teclado"
+            >
+              ⌨
+            </button>
+          </div>
           <button className="btn-secondary" onClick={() => setFiltroServicio('')}>Limpiar búsqueda</button>
         </div>
 
@@ -761,6 +807,14 @@ const Productos = () => {
       </ModalForm>
       </>
       )}
+
+      <DraggableSearchKeyboard
+        visible={searchKeyboard.visible}
+        value={obtenerValorSearchKeyboard()}
+        onChange={asignarValorSearchKeyboard}
+        onClose={cerrarSearchKeyboard}
+        title="Teclado de búsqueda"
+      />
     </div>
   );
 };
