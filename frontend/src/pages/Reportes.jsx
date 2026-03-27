@@ -612,19 +612,30 @@ const aplicarEstadoLiquidacion = async (fila) => {
               )}
               {(biData?.estilistas || []).map((item) => {
                 const deudaPuestoHistorica = Number(item.deuda_puesto_historica || 0);
-                const valorTotalEmpleado = Number((item.valor_total_empleado ?? item.ganancias_servicios ?? item.facturacion_servicios) || 0);
+                const valorTotalEmpleadoNeto = Number((item.valor_total_empleado ?? item.ganancias_servicios ?? item.facturacion_servicios) || 0);
                 const comisionesEmpleado = Number(item.comision_ventas_producto || 0);
-                const gananciasTotales = valorTotalEmpleado + comisionesEmpleado;
                 const tipoCobro = item.tipo_cobro_espacio || 'sin_cobro';
                 const valorCobroCfg = Number(item.valor_cobro_espacio || 0);
-                const descuentoVisible = Math.max(Number(item.descuento_espacio ?? item.total_deducciones ?? 0), 0);
+                const descuentoBackend = Math.max(Number(item.descuento_espacio ?? item.total_deducciones ?? 0), 0);
+                const descuentoDerivadoPorcentaje = (
+                  tipoCobro === 'porcentaje_neto'
+                  && descuentoBackend <= 0
+                  && valorCobroCfg > 0
+                  && valorCobroCfg < 100
+                  && valorTotalEmpleadoNeto > 0
+                )
+                  ? Math.max((valorTotalEmpleadoNeto * valorCobroCfg) / (100 - valorCobroCfg), 0)
+                  : 0;
+                const descuentoVisible = descuentoBackend > 0 ? descuentoBackend : descuentoDerivadoPorcentaje;
+                const valorTotalEmpleado = valorTotalEmpleadoNeto + descuentoVisible;
+                const gananciasTotales = valorTotalEmpleado + comisionesEmpleado;
                 const netoBackend = Number(item.pago_neto_pendiente ?? item.pago_neto_estilista ?? (gananciasTotales - descuentoVisible));
                 const netoGanado = netoBackend;
                 const abonoPuestoDigitado = Number(abonoPuestoPorEstilista[item.estilista_id] || 0);
                 const descripcionCobroPuesto = tipoCobro === 'costo_fijo_neto'
                   ? `Cobro fijo: ${formatMoney(descuentoVisible || valorCobroCfg)}`
                   : tipoCobro === 'porcentaje_neto'
-                    ? `Cobro porcentaje: ya incluido en base (${valorCobroCfg}%)`
+                    ? `Cobro porcentaje: (${formatMoney(descuentoVisible)}) ${valorCobroCfg}%`
                     : 'Sin cobro de puesto';
                 // Para UN DÍA: confiar SOLO en estadoDiaPorEstilista (del endpoint específico del día)
                 // Para RANGO: usar el estado del BI basado en múltiples días
