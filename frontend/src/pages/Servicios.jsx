@@ -1,5 +1,5 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
-import { FiPlus, FiRefreshCw, FiTrash2 } from 'react-icons/fi';
+import { FiCheckCircle, FiDollarSign, FiPlus, FiRefreshCw, FiScissors, FiTrash2 } from 'react-icons/fi';
 import { toast } from 'react-toastify';
 import {
   clientesService,
@@ -92,6 +92,14 @@ const formatServiceSearchLabel = (servicio) => {
   return [servicio.descripcion, servicio.nombre].filter(Boolean).join(' - ') || servicio.nombre || 'Servicio';
 };
 
+const formatServiceCompactLabel = (servicio) => {
+  return servicio?.nombre || servicio?.descripcion || 'Servicio';
+};
+
+const formatProductCompactLabel = (producto) => {
+  return [producto?.marca, producto?.nombre || producto?.descripcion].filter(Boolean).join(' - ') || producto?.nombre || 'Producto';
+};
+
 const serviceMatchesSearch = (servicio, query) => {
   const q = normalizeSearchText(query);
   if (!q) return true;
@@ -144,13 +152,6 @@ const minimoConDescuentoEmpleado = (precioBase) => {
   return Math.ceil(base * 0.8);
 };
 
-const INITIAL_INICIO = {
-  estilista: '',
-  servicio: '',
-  servicio_busqueda: '',
-  notas: '',
-};
-
 const Servicios = () => {
   const { user } = useAuthStore();
   const puedeFacturar = true; // Todos los roles pueden registrar ventas y servicios (recepcion incluida)
@@ -159,7 +160,6 @@ const Servicios = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showNuevoClienteModal, setShowNuevoClienteModal] = useState(false);
-  const [showIniciarModal, setShowIniciarModal] = useState(false);
   const [showFinalizarModal, setShowFinalizarModal] = useState(false);
   const [showConfirmacionFinalizar, setShowConfirmacionFinalizar] = useState(false);
 
@@ -171,11 +171,11 @@ const Servicios = () => {
   const [serviciosEnProceso, setServiciosEnProceso] = useState([]);
 
   const [nuevoCliente, setNuevoCliente] = useState({ nombre: '', telefono: '', fecha_nacimiento: '' });
-  const [inicioServicio, setInicioServicio] = useState(INITIAL_INICIO);
-  const [sugerenciasServicio, setSugerenciasServicio] = useState([]);
 
   const [servicioFinalizarId, setServicioFinalizarId] = useState('');
   const [finalizacion, setFinalizacion] = useState({
+    estilista: '',
+    servicio: '',
     precio_cobrado: '',
     medio_pago: 'efectivo',
     valor_recibido: '',
@@ -188,9 +188,9 @@ const Servicios = () => {
     adicional_otro_estilista: '',
     notas: '',
   });
-  const [adicionalActivoKey, setAdicionalActivoKey] = useState(null);
   const [productoAdicionalBusqueda, setProductoAdicionalBusqueda] = useState('');
   const [productoAdicionalSugerencias, setProductoAdicionalSugerencias] = useState([]);
+  const [keypad, setKeypad] = useState({ visible: false, field: '', itemKey: null });
 
   const [ventaForm, setVentaForm] = useState({
     cliente_nombre: '',
@@ -274,19 +274,6 @@ const Servicios = () => {
   }, []);
 
   useEffect(() => {
-    const q = inicioServicio.servicio_busqueda.trim().toLowerCase();
-    if (!q) {
-      setSugerenciasServicio([]);
-      return;
-    }
-    setSugerenciasServicio(
-      servicios
-        .filter((s) => (s.nombre || '').toLowerCase().includes(q) || (s.descripcion || '').toLowerCase().includes(q))
-        .slice(0, 8)
-    );
-  }, [inicioServicio.servicio_busqueda, servicios]);
-
-  useEffect(() => {
     const q = ventaBusqueda.trim().toLowerCase();
     if (!q) {
       setVentaSugerencias([]);
@@ -315,29 +302,24 @@ const Servicios = () => {
     [estadoEstilistas]
   );
 
-  const estilistaSeleccionadoInicio = useMemo(
-    () => estilistas.find((e) => e.id === Number(inicioServicio.estilista)),
-    [estilistas, inicioServicio.estilista]
-  );
-
-  const servicioSeleccionadoInicio = useMemo(
-    () => servicios.find((s) => s.id === Number(inicioServicio.servicio)),
-    [servicios, inicioServicio.servicio]
-  );
-
   const servicioEnProcesoSeleccionado = useMemo(
     () => serviciosEnProceso.find((s) => String(s.id) === String(servicioFinalizarId)),
     [serviciosEnProceso, servicioFinalizarId]
   );
 
+  const servicioPrincipalSeleccionado = useMemo(() => {
+    if (servicioEnProcesoSeleccionado?.servicio_nombre) return servicioEnProcesoSeleccionado;
+    return servicios.find((s) => Number(s.id) === Number(finalizacion.servicio || 0)) || null;
+  }, [servicioEnProcesoSeleccionado, servicios, finalizacion.servicio]);
+
   const servicioPrincipalEsShampoo = useMemo(
-    () => isShampooServiceName(servicioEnProcesoSeleccionado?.servicio_nombre),
-    [servicioEnProcesoSeleccionado]
+    () => isShampooServiceName(servicioPrincipalSeleccionado?.servicio_nombre || servicioPrincipalSeleccionado?.nombre),
+    [servicioPrincipalSeleccionado]
   );
 
   const servicioPrincipalEsDepilacion = useMemo(
-    () => isDepilationServiceName(servicioEnProcesoSeleccionado?.servicio_nombre),
-    [servicioEnProcesoSeleccionado]
+    () => isDepilationServiceName(servicioPrincipalSeleccionado?.servicio_nombre || servicioPrincipalSeleccionado?.nombre),
+    [servicioPrincipalSeleccionado]
   );
 
   const serviciosAdicionalesConfigurados = useMemo(
@@ -461,9 +443,26 @@ const Servicios = () => {
     return true;
   };
 
-  const abrirInicioDesdePanel = (estilistaId) => {
-    setInicioServicio({ ...INITIAL_INICIO, estilista: String(estilistaId) });
-    setShowIniciarModal(true);
+  const abrirFacturacionDirecta = (estilistaId) => {
+    setServicioFinalizarId('');
+    setShowFinalizarModal(true);
+    setFinalizacion({
+      estilista: String(estilistaId || ''),
+      servicio: '',
+      precio_cobrado: '',
+      medio_pago: 'efectivo',
+      valor_recibido: '',
+      tipo_reparto_establecimiento: '',
+      valor_reparto_establecimiento: '30',
+      tiene_adicionales: false,
+      adicionales_servicio_items: [],
+      adicional_otro_producto: '',
+      adicional_otro_cantidad: '1',
+      adicional_otro_estilista: '',
+      notas: '',
+    });
+    setProductoAdicionalBusqueda('');
+    setProductoAdicionalSugerencias([]);
   };
 
   const prepararFinalizacion = (srv) => {
@@ -501,6 +500,8 @@ const Servicios = () => {
     setServicioFinalizarId(String(srv.id));
     setShowFinalizarModal(true);
     setFinalizacion({
+      estilista: srv.estilista ? String(srv.estilista) : '',
+      servicio: srv.servicio ? String(srv.servicio) : '',
       precio_cobrado: srv.precio_cobrado || '',
       medio_pago: srv.medio_pago || 'efectivo',
       valor_recibido: '',
@@ -514,9 +515,8 @@ const Servicios = () => {
       notas: srv.notas || '',
     });
     const productoSrv = productos.find((p) => Number(p.id) === Number(srv.adicional_otro_producto || 0));
-    setProductoAdicionalBusqueda(productoSrv ? formatProductSearchLabel(productoSrv) : '');
+    setProductoAdicionalBusqueda(productoSrv ? formatProductCompactLabel(productoSrv) : '');
     setProductoAdicionalSugerencias([]);
-    setAdicionalActivoKey(null);
   };
 
   const prepararFinalizacionPorTarjeta = (tarjeta) => {
@@ -549,9 +549,6 @@ const Servicios = () => {
       ...prev,
       adicionales_servicio_items: (prev.adicionales_servicio_items || []).filter((item) => item.key !== key),
     }));
-    if (adicionalActivoKey === key) {
-      setAdicionalActivoKey(null);
-    }
   };
 
   const seleccionarServicioAdicional = (key, servicio) => {
@@ -601,44 +598,15 @@ const Servicios = () => {
     }
   };
 
-  const iniciarServicio = async (e) => {
-    e.preventDefault();
-    if (!inicioServicio.estilista || !inicioServicio.servicio) {
-      toast.warning('Selecciona empleado y servicio');
-      return;
-    }
-
-    if (estilistasOcupados.has(Number(inicioServicio.estilista))) {
-      toast.warning('Ese empleado ya está ocupado');
-      return;
-    }
-
-    try {
-      setSaving(true);
-
-      await serviciosRealizadosService.create({
-        estilista: Number(inicioServicio.estilista),
-        servicio: Number(inicioServicio.servicio),
-        estado: 'en_proceso',
-        precio_cobrado: 0,
-        notas: inicioServicio.notas || null,
-      });
-
-      toast.success('Servicio iniciado, empleado en estado ocupado');
-      setInicioServicio(INITIAL_INICIO);
-      setShowIniciarModal(false);
-      await cargarTodo();
-    } catch (error) {
-      toast.error('No se pudo iniciar el servicio');
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const solicitarConfirmacionFinalizar = (e) => {
     e.preventDefault();
-    if (!servicioFinalizarId) {
-      toast.warning('Selecciona un servicio en proceso para finalizar');
+    if (!servicioFinalizarId && (!finalizacion.estilista || !finalizacion.servicio)) {
+      toast.warning('Selecciona empleado y servicio para facturar');
+      return;
+    }
+
+    if (!servicioFinalizarId && estilistasOcupados.has(Number(finalizacion.estilista))) {
+      toast.warning('Ese empleado ya está ocupado, finaliza primero su servicio en proceso.');
       return;
     }
     if (!finalizacion.precio_cobrado) {
@@ -772,7 +740,7 @@ const Servicios = () => {
           ? Number(finalizacion.valor_reparto_establecimiento || 0)
           : null);
 
-      const res = await serviciosRealizadosService.finalizar(servicioFinalizarId, {
+      const payloadFinalizacion = {
         precio_cobrado: toPesoInt(finalizacion.precio_cobrado),
         medio_pago: finalizacion.medio_pago,
         tipo_reparto_establecimiento: tipoRepartoPrincipal || null,
@@ -788,7 +756,16 @@ const Servicios = () => {
         adicional_otro_descuento_empleado: false,
         adicional_otro_precio_unitario: null,
         notas: finalizacion.notas || null,
-      });
+      };
+
+      const res = servicioFinalizarId
+        ? await serviciosRealizadosService.finalizar(servicioFinalizarId, payloadFinalizacion)
+        : await serviciosRealizadosService.create({
+            ...payloadFinalizacion,
+            estilista: Number(finalizacion.estilista),
+            servicio: Number(finalizacion.servicio),
+            estado: 'finalizado',
+          });
 
       const estilistaFinalizado = estilistas.find((e) => e.id === Number(res?.estilista));
       const usaCobroFijoEspacio = (estilistaFinalizado?.tipo_cobro_espacio || '') === 'costo_fijo_neto';
@@ -817,6 +794,8 @@ const Servicios = () => {
       setServicioFinalizarId('');
       setShowFinalizarModal(false);
       setFinalizacion({
+        estilista: '',
+        servicio: '',
         precio_cobrado: '',
         medio_pago: 'efectivo',
         valor_recibido: '',
@@ -831,7 +810,6 @@ const Servicios = () => {
       });
       setProductoAdicionalBusqueda('');
       setProductoAdicionalSugerencias([]);
-      setAdicionalActivoKey(null);
       await cargarTodo();
     } catch (error) {
       const msg = error?.response?.data?.error || 'No se pudo finalizar el servicio';
@@ -839,6 +817,57 @@ const Servicios = () => {
     } finally {
       setSaving(false);
     }
+  };
+
+  const abrirKeypad = (field, itemKey = null) => {
+    setKeypad({ visible: true, field, itemKey });
+  };
+
+  const cerrarKeypad = () => {
+    setKeypad({ visible: false, field: '', itemKey: null });
+  };
+
+  const obtenerValorKeypad = () => {
+    if (!keypad.field) return '';
+    if (keypad.field === 'precio_cobrado') return String(finalizacion.precio_cobrado || '');
+    if (keypad.field === 'valor_recibido') return String(finalizacion.valor_recibido || '');
+    if (keypad.field === 'adicional_valor' && keypad.itemKey) {
+      const item = (finalizacion.adicionales_servicio_items || []).find((x) => x.key === keypad.itemKey);
+      return String(item?.valor || '');
+    }
+    return '';
+  };
+
+  const asignarValorKeypad = (value) => {
+    const limpio = sanitizePesoInput(value);
+    if (keypad.field === 'precio_cobrado') {
+      setFinalizacion((p) => ({ ...p, precio_cobrado: limpio }));
+      return;
+    }
+    if (keypad.field === 'valor_recibido') {
+      setFinalizacion((p) => ({ ...p, valor_recibido: limpio }));
+      return;
+    }
+    if (keypad.field === 'adicional_valor' && keypad.itemKey) {
+      actualizarFilaAdicional(keypad.itemKey, { valor: limpio });
+    }
+  };
+
+  const pulsarKeypad = (token) => {
+    const actual = obtenerValorKeypad();
+    if (token === 'C') {
+      asignarValorKeypad('');
+      return;
+    }
+    if (token === 'DEL') {
+      asignarValorKeypad(actual.slice(0, -1));
+      return;
+    }
+    if (token === '000') {
+      asignarValorKeypad(`${actual}000`);
+      return;
+    }
+    asignarValorKeypad(`${actual}${token}`);
   };
 
   const seleccionarProductoCaja = (producto) => {
@@ -1196,7 +1225,7 @@ const Servicios = () => {
       {modoVista === 'servicios' && (
       <>
       <div className="card border border-dashed border-gray-300 bg-gray-50">
-        <p className="text-gray-700">Tip: usa los botones en cada tarjeta para iniciar o finalizar servicio rápidamente.</p>
+        <p className="text-gray-700">Facturación rápida: selecciona empleado libre y registra el servicio en un solo paso.</p>
       </div>
 
       <div className="card">
@@ -1211,12 +1240,12 @@ const Servicios = () => {
               )}
               <div className="mt-3">
                 {item.estado === 'libre' ? (
-                  <button className="btn-primary !px-3 !py-2 w-full" onClick={() => abrirInicioDesdePanel(item.estilista_id)}>
-                    Iniciar servicio
+                  <button className="btn-primary !px-3 !py-2 w-full inline-flex items-center justify-center gap-2" onClick={() => abrirFacturacionDirecta(item.estilista_id)}>
+                    <FiScissors /> Facturar servicio
                   </button>
                 ) : (
-                  <button className="btn-danger !px-3 !py-2 w-full" onClick={() => prepararFinalizacionPorTarjeta(item)}>
-                    Finalizar servicio
+                  <button className="btn-danger !px-3 !py-2 w-full inline-flex items-center justify-center gap-2" onClick={() => prepararFinalizacionPorTarjeta(item)}>
+                    <FiCheckCircle /> Finalizar servicio
                   </button>
                 )}
               </div>
@@ -1281,80 +1310,56 @@ const Servicios = () => {
       </ModalForm>
 
       <ModalForm
-        isOpen={showIniciarModal}
-        onClose={() => setShowIniciarModal(false)}
-        title="Iniciar servicio"
-        subtitle="Selecciona el servicio"
+        isOpen={showFinalizarModal}
+        onClose={() => setShowFinalizarModal(false)}
+        title="Finalizar servicio"
+        subtitle="Facturación rápida con adicionales"
         size="lg"
       >
-        <form className="grid grid-cols-1 md:grid-cols-3 gap-3" onSubmit={iniciarServicio}>
-          <select className="input-field" value={inicioServicio.estilista} onChange={(e) => setInicioServicio((p) => ({ ...p, estilista: e.target.value }))}>
-            <option value="">Selecciona empleado</option>
+        <form className="grid grid-cols-1 md:grid-cols-3 gap-3" onSubmit={solicitarConfirmacionFinalizar}>
+          <select
+            className="input-field"
+            value={finalizacion.estilista || ''}
+            disabled={Boolean(servicioFinalizarId)}
+            onChange={(e) => setFinalizacion((p) => ({ ...p, estilista: e.target.value }))}
+          >
+            <option value="">Empleado</option>
             {estilistas.map((e) => (
               <option key={e.id} value={e.id}>{e.nombre}</option>
             ))}
           </select>
 
-          <div className="md:col-span-2 relative">
-            <input
-              className="input-field"
-              placeholder="Buscar servicio por descripción o nombre"
-              inputMode="search"
-              enterKeyHint="search"
-              value={inicioServicio.servicio_busqueda}
-              onChange={(e) => setInicioServicio((p) => ({ ...p, servicio_busqueda: e.target.value, servicio: '' }))}
-            />
-            {sugerenciasServicio.length > 0 && (
-              <div className="absolute z-20 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg max-h-56 overflow-auto">
-                {sugerenciasServicio.map((s) => (
-                  <button
-                    key={s.id}
-                    type="button"
-                    className="w-full text-left px-3 py-2 hover:bg-gray-50"
-                    onClick={() => setInicioServicio((p) => ({ ...p, servicio: String(s.id), servicio_busqueda: formatServiceSearchLabel(s) }))}
-                  >
-                    {formatServiceSearchLabel(s)}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <input className="input-field md:col-span-3" placeholder="Notas (opcional)" value={inicioServicio.notas} onChange={(e) => setInicioServicio((p) => ({ ...p, notas: e.target.value }))} />
-
-          <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900 md:col-span-3">
-            <p><strong>Empleado:</strong> {estilistaSeleccionadoInicio?.nombre || 'Sin seleccionar'}</p>
-            <p><strong>Servicio:</strong> {servicioSeleccionadoInicio?.nombre || 'Sin seleccionar'}</p>
-          </div>
-
-          <div className="md:col-span-3 flex gap-2">
-            <button className="btn-primary" type="submit" disabled={saving}>Iniciar servicio</button>
-            <button className="btn-secondary" type="button" onClick={() => setShowIniciarModal(false)}>Cancelar</button>
-          </div>
-        </form>
-      </ModalForm>
-
-      <ModalForm
-        isOpen={showFinalizarModal}
-        onClose={() => setShowFinalizarModal(false)}
-        title="Finalizar servicio"
-        subtitle="Confirma pago y adicionales"
-        size="lg"
-      >
-        <form className="grid grid-cols-1 md:grid-cols-3 gap-3" onSubmit={solicitarConfirmacionFinalizar}>
-          <select className="input-field" value={servicioFinalizarId} onChange={(e) => setServicioFinalizarId(e.target.value)}>
-            <option value="">Servicio en proceso a finalizar</option>
-            {serviciosEnProceso.map((srv) => (
-              <option key={srv.id} value={srv.id}>{srv.estilista_nombre} - {srv.servicio_nombre}</option>
+          <select
+            className="input-field"
+            value={finalizacion.servicio || ''}
+            disabled={Boolean(servicioFinalizarId)}
+            onChange={(e) => setFinalizacion((p) => ({ ...p, servicio: e.target.value }))}
+          >
+            <option value="">Servicio</option>
+            {servicios.filter((s) => !Boolean(s.es_adicional)).map((srv) => (
+              <option key={srv.id} value={srv.id}>{formatServiceCompactLabel(srv)}</option>
             ))}
           </select>
 
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 md:col-span-2">
-            <p><strong>Servicio:</strong> {servicioEnProcesoSeleccionado?.servicio_nombre || 'Sin seleccionar'}</p>
+            <p><strong>Servicio:</strong> {servicioPrincipalSeleccionado?.servicio_nombre || servicioPrincipalSeleccionado?.nombre || 'Sin seleccionar'}</p>
             <p><strong>Cliente:</strong> {servicioEnProcesoSeleccionado?.cliente_nombre || 'No registrado'}</p>
           </div>
 
-          <input className="input-field" type="number" min="0" step="1" placeholder="Total servicio" value={finalizacion.precio_cobrado} onChange={(e) => setFinalizacion((p) => ({ ...p, precio_cobrado: sanitizePesoInput(e.target.value) }))} />
+          <div className="md:col-span-2 flex gap-2">
+            <input
+              className="input-field"
+              type="text"
+              inputMode="numeric"
+              readOnly
+              placeholder="Total servicio"
+              value={finalizacion.precio_cobrado || ''}
+              onClick={() => abrirKeypad('precio_cobrado')}
+            />
+            <button type="button" className="btn-secondary !px-3 inline-flex items-center gap-1" onClick={() => abrirKeypad('precio_cobrado')}>
+              <FiDollarSign />
+            </button>
+          </div>
 
           <select className="input-field" value={finalizacion.medio_pago} onChange={(e) => setFinalizacion((p) => ({ ...p, medio_pago: e.target.value }))}>
             {mediosPago.map((m) => (
@@ -1363,15 +1368,20 @@ const Servicios = () => {
           </select>
 
           {finalizacion.medio_pago === 'efectivo' && (
-            <input
-              className="input-field"
-              type="number"
-              min="0"
-              step="1"
-              placeholder="Valor recibido"
-              value={finalizacion.valor_recibido || ''}
-              onChange={(e) => setFinalizacion((p) => ({ ...p, valor_recibido: sanitizePesoInput(e.target.value) }))}
-            />
+            <div className="flex gap-2">
+              <input
+                className="input-field"
+                type="text"
+                inputMode="numeric"
+                readOnly
+                placeholder="Valor recibido"
+                value={finalizacion.valor_recibido || ''}
+                onClick={() => abrirKeypad('valor_recibido')}
+              />
+              <button type="button" className="btn-secondary !px-3 inline-flex items-center gap-1" onClick={() => abrirKeypad('valor_recibido')}>
+                <FiDollarSign />
+              </button>
+            </div>
           )}
 
           <input className="input-field" placeholder="Notas finales (opcional)" value={finalizacion.notas} onChange={(e) => setFinalizacion((p) => ({ ...p, notas: e.target.value }))} />
@@ -1450,42 +1460,29 @@ const Servicios = () => {
 
                 <div className="space-y-3">
                   {(finalizacion.adicionales_servicio_items || []).map((item) => {
-                    const sugerenciasFila = serviciosAdicionalesConfigurados
-                      .filter((s) => serviceMatchesSearch(s, item.busqueda || ''))
-                      .slice(0, 8);
-
                     return (
                       <div key={item.key} className="rounded-lg border border-blue-200 bg-white p-3">
                         <div className="grid grid-cols-1 md:grid-cols-12 gap-2">
-                          <div className="md:col-span-5 relative">
-                            <input
+                          <div className="md:col-span-5">
+                            <select
                               className="input-field"
-                              placeholder="Buscar servicio adicional"
-                              inputMode="search"
-                              enterKeyHint="search"
-                              value={item.busqueda || ''}
-                              onFocus={() => setAdicionalActivoKey(item.key)}
-                              onBlur={() => setTimeout(() => setAdicionalActivoKey((curr) => (curr === item.key ? null : curr)), 120)}
-                              onChange={(e) => actualizarFilaAdicional(item.key, { busqueda: e.target.value, id: '' })}
-                            />
-                            {adicionalActivoKey === item.key && sugerenciasFila.length > 0 && (
-                              <div className="absolute z-20 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg max-h-56 overflow-auto">
-                                {sugerenciasFila.map((srvAd) => (
-                                  <button
-                                    key={srvAd.id}
-                                    type="button"
-                                    className="w-full text-left px-3 py-2 hover:bg-gray-50"
-                                    onMouseDown={(e) => e.preventDefault()}
-                                    onClick={() => {
-                                      seleccionarServicioAdicional(item.key, srvAd);
-                                      setAdicionalActivoKey(null);
-                                    }}
-                                  >
-                                    {formatServiceSearchLabel(srvAd)} - {formatCOP(srvAd.precio || 0)}
-                                  </button>
-                                ))}
-                              </div>
-                            )}
+                              value={item.id || ''}
+                              onChange={(e) => {
+                                const srvAd = serviciosAdicionalesConfigurados.find((s) => Number(s.id) === Number(e.target.value));
+                                if (srvAd) {
+                                  seleccionarServicioAdicional(item.key, srvAd);
+                                } else {
+                                  actualizarFilaAdicional(item.key, { id: '', busqueda: '' });
+                                }
+                              }}
+                            >
+                              <option value="">Servicio adicional</option>
+                              {serviciosAdicionalesConfigurados.map((srvAd) => (
+                                <option key={srvAd.id} value={srvAd.id}>
+                                  {formatServiceCompactLabel(srvAd)} - {formatCOP(srvAd.precio || 0)}
+                                </option>
+                              ))}
+                            </select>
                           </div>
 
                           <div className="md:col-span-4">
@@ -1502,16 +1499,19 @@ const Servicios = () => {
                             </select>
                           </div>
 
-                          <div className="md:col-span-2">
+                          <div className="md:col-span-2 flex gap-2">
                             <input
                               className="input-field"
-                              type="number"
-                              min="0"
-                              step="1"
+                              type="text"
+                              inputMode="numeric"
+                              readOnly
                               placeholder="Valor"
                               value={item.valor || ''}
-                              onChange={(e) => actualizarFilaAdicional(item.key, { valor: sanitizePesoInput(e.target.value) })}
+                              onClick={() => abrirKeypad('adicional_valor', item.key)}
                             />
+                            <button type="button" className="btn-secondary !px-2" onClick={() => abrirKeypad('adicional_valor', item.key)}>
+                              <FiDollarSign />
+                            </button>
                           </div>
 
                           <div className="md:col-span-1 flex items-center justify-center">
@@ -1598,12 +1598,12 @@ const Servicios = () => {
                                 disabled={estadoStock.key === 'agotado'}
                                 onClick={() => {
                                   setFinalizacion((prev) => ({ ...prev, adicional_otro_producto: String(p.id) }));
-                                  setProductoAdicionalBusqueda(formatProductSearchLabel(p));
+                                  setProductoAdicionalBusqueda(formatProductCompactLabel(p));
                                   setProductoAdicionalSugerencias([]);
                                 }}
                               >
                                 <div className="flex items-center justify-between gap-2">
-                                  <span>{formatProductSearchLabel(p)} - {formatCOP(p.precio_venta || 0)} (stock {p.stock})</span>
+                                  <span>{formatProductCompactLabel(p)} - {formatCOP(p.precio_venta || 0)} (stock {p.stock})</span>
                                   <span className={`text-xs px-2 py-1 rounded-full border ${estadoStock.badgeClass}`}>{estadoStock.label}</span>
                                 </div>
                               </button>
@@ -1651,7 +1651,7 @@ const Servicios = () => {
                       const valorComision = totalSel * (pctComision / 100);
                       return (
                         <div className="mt-3 rounded border border-indigo-200 bg-white p-2 text-xs text-indigo-900">
-                          <p>Producto: <strong>{formatProductSearchLabel(productoSel)}</strong></p>
+                          <p>Producto: <strong>{formatProductCompactLabel(productoSel)}</strong></p>
                           <p>Total producto adicional: <strong>{formatCOP(totalSel)}</strong></p>
                           <p>Comisión ({pctComision}%): <strong>{formatCOP(valorComision)}</strong></p>
                         </div>
@@ -1669,6 +1669,31 @@ const Servicios = () => {
           </div>
         </form>
       </ModalForm>
+
+      {keypad.visible && (
+        <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4" onClick={cerrarKeypad}>
+          <div className="w-full max-w-xs rounded-2xl bg-white shadow-2xl border border-slate-200 p-4" onClick={(e) => e.stopPropagation()}>
+            <p className="text-sm text-slate-500 mb-1">Teclado numérico</p>
+            <p className="text-2xl font-bold text-slate-900 mb-3">{formatCOP(obtenerValorKeypad() || 0)}</p>
+            <div className="grid grid-cols-3 gap-2">
+              {['7', '8', '9', '4', '5', '6', '1', '2', '3', '000', '0', 'DEL'].map((token) => (
+                <button
+                  key={token}
+                  type="button"
+                  className="btn-secondary !py-3"
+                  onClick={() => pulsarKeypad(token)}
+                >
+                  {token}
+                </button>
+              ))}
+            </div>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <button type="button" className="btn-danger !py-3" onClick={() => pulsarKeypad('C')}>Limpiar</button>
+              <button type="button" className="btn-primary !py-3" onClick={cerrarKeypad}>Aceptar</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showConfirmacionFinalizar && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
