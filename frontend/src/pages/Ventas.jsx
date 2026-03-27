@@ -70,6 +70,16 @@ const formatCOP = (valor) =>
     maximumFractionDigits: 0,
   });
 
+const formatDateTimeLocalInput = (value) => {
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) {
+    return String(value).replace(' ', 'T').slice(0, 16);
+  }
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+
 const esServicioShampooNombre = (nombre) => String(nombre || '').toLowerCase().includes('shampoo');
 
 const Ventas = () => {
@@ -113,6 +123,7 @@ const Ventas = () => {
   const [servicioForm, setServicioForm] = useState({
     servicio: '',
     estilista: '',
+    fecha_hora: '',
     precio_cobrado: '',
     medio_pago: 'efectivo',
     tiene_adicionales: false,
@@ -126,6 +137,7 @@ const Ventas = () => {
     numero_factura: '',
     cliente_nombre: '',
     estilista: '',
+    fecha_hora: '',
     medio_pago: 'efectivo',
     items: [],
   });
@@ -298,6 +310,7 @@ const Ventas = () => {
       numero_factura: venta.numero_factura || ventaBase.numero_factura || '',
       cliente_nombre: venta.cliente_nombre || ventaBase.cliente_nombre || '',
       estilista: venta.items?.[0]?.estilista ? String(venta.items[0].estilista) : (venta.estilista ? String(venta.estilista) : ''),
+      fecha_hora: formatDateTimeLocalInput(venta.fecha_hora || ventaBase.fecha_hora),
       medio_pago: venta.medio_pago || ventaBase.medio_pago || 'efectivo',
       items: (venta.items || [ventaBase]).map((x) => ({
         producto: x.producto,
@@ -392,6 +405,7 @@ const Ventas = () => {
         numero_factura: invoiceEditForm.numero_factura,
         cliente_nombre: invoiceEditForm.cliente_nombre || null,
         estilista: invoiceEditForm.estilista ? Number(invoiceEditForm.estilista) : null,
+        fecha_hora: invoiceEditForm.fecha_hora || null,
         medio_pago: tipoFacturaEditando === 'consumo_empleado' ? 'efectivo' : invoiceEditForm.medio_pago,
         items,
       });
@@ -474,6 +488,7 @@ const Ventas = () => {
       setServicioForm({
         servicio: servicio?.servicio ? String(servicio.servicio) : '',
         estilista: servicio?.estilista ? String(servicio.estilista) : '',
+        fecha_hora: formatDateTimeLocalInput(servicio?.fecha_hora),
         precio_cobrado: String(servicio?.precio_cobrado || ''),
         medio_pago: servicio?.medio_pago || 'efectivo',
         tiene_adicionales: Boolean(servicio?.tiene_adicionales),
@@ -596,6 +611,7 @@ const Ventas = () => {
         estado: 'finalizado',
         servicio: servicioForm.servicio ? Number(servicioForm.servicio) : servicioEditando.servicio,
         estilista: servicioForm.estilista ? Number(servicioForm.estilista) : servicioEditando.estilista,
+        fecha_hora: servicioForm.fecha_hora || null,
         precio_cobrado: Number(servicioForm.precio_cobrado || 0),
         medio_pago: servicioForm.medio_pago,
         tiene_adicionales: Boolean(servicioForm.tiene_adicionales),
@@ -1052,6 +1068,12 @@ const Ventas = () => {
             <input className="input-field" value={invoiceEditForm.numero_factura || ''} readOnly />
             <input
               className="input-field"
+              type="datetime-local"
+              value={invoiceEditForm.fecha_hora || ''}
+              onChange={(e) => setInvoiceEditForm((p) => ({ ...p, fecha_hora: e.target.value }))}
+            />
+            <input
+              className="input-field"
               placeholder={tipoFacturaEditando === 'consumo_empleado' ? 'Detalle opcional' : 'Cliente (opcional)'}
               value={invoiceEditForm.cliente_nombre || ''}
               onChange={(e) => setInvoiceEditForm((p) => ({ ...p, cliente_nombre: e.target.value }))}
@@ -1287,7 +1309,7 @@ const Ventas = () => {
         size="xl"
       >
         <form className="space-y-3" onSubmit={guardarServicioEditado}>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <select className="input-field" value={servicioForm.servicio} onChange={(e) => setServicioForm((p) => ({ ...p, servicio: e.target.value }))}>
               <option value="">Servicio principal</option>
               {serviciosCatalogo.filter((s) => !s.es_adicional).map((s) => (
@@ -1300,6 +1322,12 @@ const Ventas = () => {
                 <option key={e.id} value={e.id}>{e.nombre}</option>
               ))}
             </select>
+            <input
+              className="input-field"
+              type="datetime-local"
+              value={servicioForm.fecha_hora || ''}
+              onChange={(e) => setServicioForm((p) => ({ ...p, fecha_hora: e.target.value }))}
+            />
           </div>
           <input className="input-field" type="number" min="0" step="0.01" placeholder="Total cobrado" value={servicioForm.precio_cobrado} onChange={(e) => setServicioForm((p) => ({ ...p, precio_cobrado: e.target.value }))} />
           <select className="input-field" value={servicioForm.medio_pago} onChange={(e) => setServicioForm((p) => ({ ...p, medio_pago: e.target.value }))}>

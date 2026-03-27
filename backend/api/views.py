@@ -8,6 +8,7 @@ from django.db.models import Sum, Count, Q, F
 from django.db import transaction, connection
 from django.db.utils import OperationalError, ProgrammingError
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from django.http import HttpResponse
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -45,6 +46,77 @@ def _fecha_operativa_desde_dt(fecha_hora):
     if timezone.is_aware(fecha_hora):
         return timezone.localtime(fecha_hora).date()
     return fecha_hora.date()
+
+
+def _normalizar_fecha_hora_request(fecha_hora_raw):
+    """Parsea fecha/hora de request y la normaliza a datetime aware local."""
+    if fecha_hora_raw in (None, ''):
+        return None
+
+    dt = None
+    if isinstance(fecha_hora_raw, datetime):
+        dt = fecha_hora_raw
+    else:
+        raw = str(fecha_hora_raw).strip()
+        dt = parse_datetime(raw)
+        if dt is None:
+            try:
+                dt = datetime.fromisoformat(raw.replace('Z', '+00:00'))
+            except Exception:
+                dt = None
+
+    if dt is None:
+        raise ValueError('Formato de fecha_hora inválido. Usa ISO 8601 (YYYY-MM-DDTHH:MM).')
+
+    if timezone.is_naive(dt):
+        dt = timezone.make_aware(dt, timezone.get_current_timezone())
+    return dt
+
+
+def _monto_estilista_resuelto(srv):
+    """
+    Calcula monto del estilista con fallback para registros legacy.
+
+    Algunos servicios antiguos quedaron con monto_estilista=0 aunque tenían precio.
+    Para esos casos se reconstruye una estimación consistente con las reglas actuales.
+    """
+    monto = Decimal(srv.monto_estilista or 0)
+    if monto > 0:
+        return monto
+
+    neto = Decimal(srv.neto_servicio or srv.precio_cobrado or 0)
+    if neto <= 0:
+        return Decimal(0)
+
+    tipo_reparto = str(srv.tipo_reparto_establecimiento or '').strip().lower()
+    monto_establecimiento = Decimal(srv.monto_establecimiento or 0)
+
+    # Si el servicio sí tiene reparto explícito, usarlo como fuente de verdad.
+    if tipo_reparto in {'porcentaje', 'monto'} or monto_establecimiento > 0:
+        monto_calc = neto - monto_establecimiento
+        if monto_calc < 0:
+            return Decimal(0)
+        if monto_calc > neto:
+            return neto
+        return monto_calc
+
+    nombre_servicio = str(getattr(getattr(srv, 'servicio', None), 'nombre', '') or '').lower()
+    if 'shampoo' in nombre_servicio:
+        return Decimal(0)
+
+    # Fallback por configuración del estilista cuando no quedó reparto persistido.
+    tipo_cobro = str(getattr(getattr(srv, 'estilista', None), 'tipo_cobro_espacio', '') or '').strip().lower()
+    valor_cobro = Decimal(getattr(getattr(srv, 'estilista', None), 'valor_cobro_espacio', 0) or 0)
+    if tipo_cobro == 'porcentaje_neto':
+        if valor_cobro < 0:
+            valor_cobro = Decimal(0)
+        if valor_cobro > 100:
+            valor_cobro = Decimal(100)
+        monto_est = (neto * valor_cobro) / Decimal(100)
+        monto_calc = neto - monto_est
+        return max(monto_calc, Decimal(0))
+
+    return neto
 
 
 def _insertar_historial_legacy(estilista_id, fecha, estado_anterior, estado_nuevo, notas, usuario_id, monto_liquidado):
@@ -169,12 +241,14 @@ def calcular_liquidacion_dia_estilista(estilista, fecha_dia):
     """
     
     # ============ [1] SERVICIOS BASE (PAGABLE AL EMPLEADO) ============
-    servicios_dia = ServicioRealizado.objects.filter(
+    servicios_dia = ServicioRealizado.objects.select_related('servicio', 'estilista').filter(
         estado='finalizado',
         estilista=estilista,
         fecha_hora__date=fecha_dia,
     )
-    servicios_base = Decimal(servicios_dia.aggregate(total=Sum('monto_estilista'))['total'] or 0)
+    servicios_base = Decimal(0)
+    for srv in servicios_dia:
+        servicios_base += _monto_estilista_resuelto(srv)
     
     # ============ [2] COMISIONES POR SERVICIOS ADICIONALES ============
     adicionales_dia = ServicioRealizadoAdicional.objects.filter(
@@ -837,7 +911,13 @@ class VentaProductoViewSet(viewsets.ModelViewSet):
         deuda_obj = ventas_actuales[0].deuda_consumo
         cliente_nombre = request.data.get('cliente_nombre')
         estilista_id = request.data.get('estilista')
+        fecha_hora_raw = request.data.get('fecha_hora')
         medio_pago = (request.data.get('medio_pago') or ventas_actuales[0].medio_pago or 'efectivo').strip().lower()
+
+        try:
+            fecha_hora_editada = _normalizar_fecha_hora_request(fecha_hora_raw)
+        except ValueError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         if medio_pago not in {'nequi', 'daviplata', 'efectivo', 'otros'}:
             return Response({'error': 'Medio de pago inválido.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -856,6 +936,7 @@ class VentaProductoViewSet(viewsets.ModelViewSet):
 
         nuevas_ventas = []
         total_transaccion = Decimal(0)
+        fecha_referencia = fecha_hora_editada or ventas_actuales[0].fecha_hora or timezone.now()
 
         with transaction.atomic():
             # Revertir inventario de items actuales
@@ -894,6 +975,7 @@ class VentaProductoViewSet(viewsets.ModelViewSet):
                     cantidad=qty,
                     precio_unitario=precio,
                     total=total_item,
+                    fecha_hora=fecha_referencia,
                     cliente_nombre=cliente_nombre,
                     medio_pago=medio_pago,
                     tipo_operacion=tipo_operacion,
@@ -916,7 +998,7 @@ class VentaProductoViewSet(viewsets.ModelViewSet):
                 )
 
             # Regenerar texto de factura homogéneo para todos los items
-            ahora = timezone.localtime()
+            fecha_referencia_local = timezone.localtime(fecha_referencia)
             if tipo_operacion == 'consumo_empleado':
                 empleado_nombre = nuevas_ventas[0].estilista.nombre if nuevas_ventas and nuevas_ventas[0].estilista else 'Empleado no registrado'
                 cliente_txt = empleado_nombre
@@ -936,7 +1018,7 @@ class VentaProductoViewSet(viewsets.ModelViewSet):
             factura_texto = (
                 f"Factura: {numero_factura}\n"
                 f"Tipo: {'Consumo Empleado' if tipo_operacion == 'consumo_empleado' else 'Producto'}\n"
-                f"Fecha: {ahora.strftime('%Y-%m-%d %H:%M')}\n"
+                f"Fecha: {fecha_referencia_local.strftime('%Y-%m-%d %H:%M')}\n"
                 f"Cliente: {cliente_txt}\n"
                 f"{linea_medio_pago}"
                 f"Items:\n" + "\n".join(lineas) + "\n"
@@ -950,8 +1032,9 @@ class VentaProductoViewSet(viewsets.ModelViewSet):
 
             if tipo_operacion == 'consumo_empleado' and deuda_obj:
                 deuda_obj.total_cargo = total_transaccion
+                deuda_obj.fecha_hora = fecha_referencia
                 _recalcular_estado_deuda(deuda_obj)
-                deuda_obj.save(update_fields=['total_cargo', 'saldo_pendiente', 'estado'])
+                deuda_obj.save(update_fields=['total_cargo', 'saldo_pendiente', 'estado', 'fecha_hora'])
 
         output_serializer = self.get_serializer(nuevas_ventas, many=True)
         return Response(
@@ -1400,7 +1483,7 @@ def _calcular_datos_bi(request):
 
         # Calcular totales de servicios
         total_servicios_precio_cobrado = Decimal(servicios_est.aggregate(total=Sum('precio_cobrado'))['total'] or 0)
-        total_servicios_pagables_est = Decimal(servicios_est.aggregate(total=Sum('monto_estilista'))['total'] or 0)
+        total_servicios_pagables_est = sum((_monto_estilista_resuelto(srv) for srv in servicios_est), Decimal(0))
         adicionales_estilista = [ad for ad in adicionales_asignados_lista if ad.estilista_id == estilista.id]
         total_adicionales_asignados_bruto_est = Decimal(0)
         total_adicionales_asignados_est = Decimal(0)
@@ -1444,7 +1527,7 @@ def _calcular_datos_bi(request):
         servicios_por_dia = {}
         for srv in servicios_est:
             fecha_srv = _fecha_operativa_desde_dt(srv.fecha_hora)
-            servicios_por_dia[fecha_srv] = servicios_por_dia.get(fecha_srv, Decimal(0)) + Decimal(srv.monto_estilista or 0)
+            servicios_por_dia[fecha_srv] = servicios_por_dia.get(fecha_srv, Decimal(0)) + _monto_estilista_resuelto(srv)
 
         for ad in adicionales_estilista:
             fecha_ad = _fecha_operativa_desde_dt(ad.servicio_realizado.fecha_hora)
@@ -1773,7 +1856,7 @@ def _calcular_datos_bi(request):
             },
         )
 
-        base_emp = Decimal(srv.monto_estilista or 0)
+        base_emp = _monto_estilista_resuelto(srv)
         base_est = Decimal(srv.monto_establecimiento or 0)
         total_cliente = Decimal(srv.precio_cobrado or 0) + Decimal(srv.valor_adicionales or 0)
         total_empleado = base_emp + ad_info['empleado'] + prod_info['empleado']
