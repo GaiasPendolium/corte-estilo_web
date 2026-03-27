@@ -312,14 +312,20 @@ const Servicios = () => {
     return servicios.find((s) => Number(s.id) === Number(finalizacion.servicio || 0)) || null;
   }, [servicioEnProcesoSeleccionado, servicios, finalizacion.servicio]);
 
+  const servicioPrincipalCatalogo = useMemo(() => {
+    const idSrv = Number(servicioEnProcesoSeleccionado?.servicio || finalizacion.servicio || 0);
+    if (!idSrv) return null;
+    return servicios.find((s) => Number(s.id) === idSrv) || null;
+  }, [servicioEnProcesoSeleccionado, finalizacion.servicio, servicios]);
+
   const servicioPrincipalEsShampoo = useMemo(
     () => isShampooServiceName(servicioPrincipalSeleccionado?.servicio_nombre || servicioPrincipalSeleccionado?.nombre),
     [servicioPrincipalSeleccionado]
   );
 
-  const servicioPrincipalEsDepilacion = useMemo(
-    () => isDepilationServiceName(servicioPrincipalSeleccionado?.servicio_nombre || servicioPrincipalSeleccionado?.nombre),
-    [servicioPrincipalSeleccionado]
+  const servicioPrincipalPermiteReparto = useMemo(
+    () => Boolean(servicioPrincipalCatalogo?.es_adicional) && !servicioPrincipalEsShampoo,
+    [servicioPrincipalCatalogo, servicioPrincipalEsShampoo]
   );
 
   const serviciosAdicionalesConfigurados = useMemo(
@@ -614,10 +620,10 @@ const Servicios = () => {
       return;
     }
 
-    if (servicioPrincipalEsDepilacion && finalizacion.tipo_reparto_establecimiento === 'porcentaje') {
+    if (servicioPrincipalPermiteReparto && finalizacion.tipo_reparto_establecimiento === 'porcentaje') {
       const pct = Number(finalizacion.valor_reparto_establecimiento || 0);
       if (!Number.isFinite(pct) || pct <= 0 || pct > 100) {
-        toast.warning('Para depilación, el porcentaje de ganancia del establecimiento debe ser mayor a 0 y menor o igual a 100.');
+        toast.warning('El porcentaje de ganancia del establecimiento debe ser mayor a 0 y menor o igual a 100.');
         return;
       }
     }
@@ -733,10 +739,10 @@ const Servicios = () => {
         : null;
       const tipoRepartoPrincipal = servicioPrincipalEsShampoo
         ? 'porcentaje'
-        : (servicioPrincipalEsDepilacion ? finalizacion.tipo_reparto_establecimiento : '');
+        : (servicioPrincipalPermiteReparto ? finalizacion.tipo_reparto_establecimiento : '');
       const valorRepartoPrincipal = servicioPrincipalEsShampoo
         ? 100
-        : (servicioPrincipalEsDepilacion && finalizacion.tipo_reparto_establecimiento === 'porcentaje'
+        : (servicioPrincipalPermiteReparto && finalizacion.tipo_reparto_establecimiento === 'porcentaje'
           ? Number(finalizacion.valor_reparto_establecimiento || 0)
           : null);
 
@@ -1336,7 +1342,7 @@ const Servicios = () => {
             onChange={(e) => setFinalizacion((p) => ({ ...p, servicio: e.target.value }))}
           >
             <option value="">Servicio</option>
-            {servicios.filter((s) => !Boolean(s.es_adicional)).map((srv) => (
+            {servicios.filter((s) => (s.activo ?? true)).map((srv) => (
               <option key={srv.id} value={srv.id}>{formatServiceCompactLabel(srv)}</option>
             ))}
           </select>
@@ -1392,7 +1398,7 @@ const Servicios = () => {
             </div>
           )}
 
-          {servicioPrincipalEsDepilacion && !servicioPrincipalEsShampoo && (
+          {servicioPrincipalPermiteReparto && !servicioPrincipalEsShampoo && (
             <>
               <label className="md:col-span-3 inline-flex items-center gap-2 text-sm text-gray-700">
                 <input
@@ -1408,7 +1414,7 @@ const Servicios = () => {
                     }))
                   }
                 />
-                Aplicar ganancia para establecimiento en servicio principal (depilación)
+                Aplicar ganancia para establecimiento en servicio principal
               </label>
               <input
                 className="input-field"
@@ -1426,8 +1432,9 @@ const Servicios = () => {
             </>
           )}
 
-          <label className="md:col-span-3 inline-flex items-center gap-2 text-sm text-gray-700">
+          <label className="md:col-span-3 flex items-start gap-3 rounded-xl border-2 border-indigo-300 bg-indigo-50 p-4 shadow-sm cursor-pointer">
             <input
+              className="mt-1 h-5 w-5"
               type="checkbox"
               checked={finalizacion.tiene_adicionales}
               onChange={(e) =>
@@ -1441,7 +1448,12 @@ const Servicios = () => {
                 }))
               }
             />
-            Este servicio tiene adicionales (servicio y/o producto)
+            <div className="flex-1">
+              <p className="text-base font-bold text-indigo-900 inline-flex items-center gap-2">
+                <FiPlus className="text-indigo-700" /> Este servicio tiene adicionales
+              </p>
+              <p className="text-sm text-indigo-800 mt-1">Activa esta opción para agregar servicios o productos adicionales en la misma factura.</p>
+            </div>
           </label>
 
           {finalizacion.tiene_adicionales && (
