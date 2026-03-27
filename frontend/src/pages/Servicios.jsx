@@ -1429,8 +1429,9 @@ const Servicios = () => {
 
           {servicioPrincipalPermiteReparto && !servicioPrincipalEsShampoo && (
             <>
-              <label className="md:col-span-3 inline-flex items-center gap-2 text-sm text-gray-700">
+              <label className="md:col-span-3 flex items-start gap-3 rounded-xl border-2 border-emerald-300 bg-emerald-50 p-4 shadow-sm cursor-pointer">
                 <input
+                  className="mt-1 h-5 w-5"
                   type="checkbox"
                   checked={finalizacion.tipo_reparto_establecimiento === 'porcentaje'}
                   onChange={(e) =>
@@ -1443,7 +1444,14 @@ const Servicios = () => {
                     }))
                   }
                 />
-                Aplicar ganancia para establecimiento en servicio principal
+                <div className="flex-1">
+                  <p className="text-base font-bold text-emerald-900 inline-flex items-center gap-2">
+                    <FiDollarSign className="text-emerald-700" /> Aplicar ganancia para establecimiento en servicio principal
+                  </p>
+                  <p className="text-sm text-emerald-800 mt-1">
+                    Activa esta opción para asignar porcentaje de ganancia al establecimiento en este servicio.
+                  </p>
+                </div>
               </label>
               <input
                 className="input-field"
