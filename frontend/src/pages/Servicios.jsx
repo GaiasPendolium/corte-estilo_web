@@ -13,6 +13,7 @@ import ModalForm from '../components/ModalForm';
 import { ticketPrintService } from '../services/printing/ticketPrintService';
 import { customerDisplayService } from '../services/customerDisplayService';
 import useAuthStore from '../store/authStore';
+import { printThermalTicket } from '../utils/thermalTicketPrint';
 
 // Todos los perfiles autenticados pueden registrar ventas y servicios (operación diaria)
 // Solo admin/gerente pueden EDITAR o ELIMINAR del historial (controlado en Ventas.jsx y backend)
@@ -791,10 +792,15 @@ const Servicios = () => {
       }
 
       try {
-        await ticketPrintService.printServiceSaleAndOpenDrawer(res);
-        toast.success('Ticket de servicio impreso y caja abierta');
+        printThermalTicket({ type: 'servicio', data: res });
+        toast.success('Ticket térmico de servicio listo para imprimir');
       } catch (printError) {
-        toast.error(printError.message || 'El servicio se finalizo, pero no se pudo imprimir el ticket');
+        try {
+          await ticketPrintService.printServiceSaleAndOpenDrawer(res);
+          toast.success('Ticket de servicio impreso y caja abierta');
+        } catch (fallbackError) {
+          toast.error(fallbackError.message || 'El servicio se finalizo, pero no se pudo imprimir el ticket');
+        }
       }
 
       setServicioFinalizarId('');
@@ -1016,11 +1022,34 @@ const Servicios = () => {
 
       try {
         if (ventaPrincipal) {
-          await ticketPrintService.printProductSaleAndOpenDrawer(ventaPrincipal);
-          toast.success('Ticket impreso y caja abierta');
+          const ventaParaImprimir = {
+            ...ventaPrincipal,
+            numero_factura: transaccion?.numero_factura || ventaPrincipal.numero_factura,
+            fecha_hora: ventaPrincipal.fecha_hora || new Date().toISOString(),
+            cliente_nombre: ventaForm.cliente_nombre || ventaPrincipal.cliente_nombre,
+            estilista_nombre: estilistas.find((e) => Number(e.id) === Number(ventaForm.estilista))?.nombre || ventaPrincipal.estilista_nombre,
+            medio_pago: esConsumoEmpleado ? 'efectivo' : ventaForm.medio_pago,
+            total: totalCobroVenta,
+            items: itemsParaRegistrar.map((item) => ({
+              producto_nombre: item.producto?.nombre || item.producto?.descripcion || 'Producto',
+              cantidad: item.cantidad,
+              precio_unitario: item.precio_unitario,
+              total: Number(item.cantidad || 0) * Number(item.precio_unitario || 0),
+            })),
+          };
+
+          printThermalTicket({ type: 'venta', data: ventaParaImprimir });
+          toast.success('Ticket térmico listo para imprimir');
         }
       } catch (printError) {
-        toast.error(printError.message || 'La(s) venta(s) se guardaron, pero no se pudo imprimir el ticket');
+        try {
+          if (ventaPrincipal) {
+            await ticketPrintService.printProductSaleAndOpenDrawer(ventaPrincipal);
+            toast.success('Ticket impreso y caja abierta');
+          }
+        } catch (fallbackError) {
+          toast.error(fallbackError.message || 'La(s) venta(s) se guardaron, pero no se pudo imprimir el ticket');
+        }
       }
 
       setVentaForm({ cliente_nombre: '', estilista: '', medio_pago: 'efectivo', valor_recibido: '', cantidad: '1', precio_unitario: '' });
