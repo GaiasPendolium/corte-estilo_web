@@ -8,7 +8,7 @@ import { qzTrayService } from '../services/printing/qzTrayService';
 import { ticketPrintService } from '../services/printing/ticketPrintService';
 import { customerDisplayService } from '../services/customerDisplayService';
 import { canManageInvoices } from '../utils/roles';
-import { printThermalTicket } from '../utils/thermalTicketPrint';
+import { buildThermalTicketPreview, printThermalTicket } from '../utils/thermalTicketPrint';
 
 const MEDIOS_PAGO = [
   { value: 'nequi', label: 'Nequi' },
@@ -105,6 +105,16 @@ const Ventas = () => {
   const [ventaVisualizar, setVentaVisualizar] = useState(null);
   const [servicioVisualizar, setServicioVisualizar] = useState(null);
   const [showVisualizarFactura, setShowVisualizarFactura] = useState(false);
+
+  const previewVentaHtml = useMemo(() => {
+    if (!ventaVisualizar) return '';
+    return buildThermalTicketPreview({ type: 'venta', data: ventaVisualizar });
+  }, [ventaVisualizar]);
+
+  const previewServicioHtml = useMemo(() => {
+    if (!servicioVisualizar) return '';
+    return buildThermalTicketPreview({ type: 'servicio', data: servicioVisualizar });
+  }, [servicioVisualizar]);
 
   const [productos, setProductos] = useState([]);
   const [serviciosCatalogo, setServiciosCatalogo] = useState([]);
@@ -440,21 +450,42 @@ const Ventas = () => {
   };
 
   const reimprimirVenta = async (venta) => {
-    const ventaBase = (venta.items && venta.items[0]) ? venta.items[0] : venta;
     try {
+      const hasQzPrinter = Boolean(qzTrayService.getSelectedPrinter());
+      if (hasQzPrinter) {
+        await ticketPrintService.reprintProductSale(venta);
+        toast.success('Ticket reenviado a impresora POS');
+        return;
+      }
       imprimirFacturaHtml({ tipo: 'venta', data: venta, estilistas });
       toast.success('Factura abierta para impresión');
     } catch (error) {
-      toast.error(error.message || 'No se pudo abrir la impresión de la factura');
+      try {
+        imprimirFacturaHtml({ tipo: 'venta', data: venta, estilistas });
+        toast.info('No se pudo usar POS. Se abrió impresión del navegador.');
+      } catch (fallbackError) {
+        toast.error(fallbackError.message || error.message || 'No se pudo abrir la impresión de la factura');
+      }
     }
   };
 
   const reimprimirServicio = async (servicio) => {
     try {
+      const hasQzPrinter = Boolean(qzTrayService.getSelectedPrinter());
+      if (hasQzPrinter) {
+        await ticketPrintService.reprintServiceSale(servicio);
+        toast.success('Ticket reenviado a impresora POS');
+        return;
+      }
       imprimirFacturaHtml({ tipo: 'servicio', data: servicio, estilistas });
       toast.success('Factura abierta para impresión');
     } catch (error) {
-      toast.error(error.message || 'No se pudo abrir la impresión de la factura');
+      try {
+        imprimirFacturaHtml({ tipo: 'servicio', data: servicio, estilistas });
+        toast.info('No se pudo usar POS. Se abrió impresión del navegador.');
+      } catch (fallbackError) {
+        toast.error(fallbackError.message || error.message || 'No se pudo abrir la impresión de la factura');
+      }
     }
   };
 
@@ -957,14 +988,15 @@ const Ventas = () => {
                     </div>
                   )}
 
-                  {ventaVisualizar.factura_texto && (
+                  {previewVentaHtml && (
                     <div>
                       <p className="text-sm text-gray-600 mb-2">Factura para compartir:</p>
-                      <div className="bg-gray-50 rounded border border-gray-200 p-3 text-sm whitespace-pre-wrap font-mono text-gray-700 max-h-64 overflow-y-auto">
-                        <div className="flex justify-center mb-3 pb-3 border-b border-gray-300">
-                          <img src="/corte_estilo_logo.png" alt="Logo" className="h-12 object-contain" />
-                        </div>
-                        {ventaVisualizar.factura_texto}
+                      <div className="bg-gray-50 rounded border border-gray-200 p-3 max-h-72 overflow-y-auto">
+                        <div
+                          className="mx-auto"
+                          style={{ width: '80mm', maxWidth: '100%' }}
+                          dangerouslySetInnerHTML={{ __html: previewVentaHtml }}
+                        />
                       </div>
                     </div>
                   )}
@@ -1050,14 +1082,15 @@ const Ventas = () => {
                     );
                   })()}
 
-                  {servicioVisualizar.factura_texto && (
+                  {previewServicioHtml && (
                     <div>
                       <p className="text-sm text-gray-600 mb-2">Factura para compartir:</p>
-                      <div className="bg-gray-50 rounded border border-gray-200 p-3 text-sm whitespace-pre-wrap font-mono text-gray-700 max-h-64 overflow-y-auto">
-                        <div className="flex justify-center mb-3 pb-3 border-b border-gray-300">
-                          <img src="/corte_estilo_logo.png" alt="Logo" className="h-12 object-contain" />
-                        </div>
-                        {servicioVisualizar.factura_texto}
+                      <div className="bg-gray-50 rounded border border-gray-200 p-3 max-h-72 overflow-y-auto">
+                        <div
+                          className="mx-auto"
+                          style={{ width: '80mm', maxWidth: '100%' }}
+                          dangerouslySetInnerHTML={{ __html: previewServicioHtml }}
+                        />
                       </div>
                     </div>
                   )}

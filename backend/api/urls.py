@@ -10,7 +10,7 @@ from .views import (
     bi_export_pdf, bi_resumen_diario, estado_pago_estilista_dia,
     estado_pago_estilista_historial, bi_desglose_estilista, bi_desglose_estilista_debug,
     reporte_consumo_empleado, abonar_consumo_empleado, editar_abono_consumo_empleado, reporte_cierre_caja,
-    liquidar_dia_v2, eliminar_estado_pago_historial
+    liquidar_dia_v2, eliminar_estado_pago_historial, qz_certificate, qz_sign
 )
 
 # Crear router para los viewsets
@@ -28,6 +28,10 @@ urlpatterns = [
     # Autenticación JWT
     path('auth/login/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('auth/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+
+    # QZ Tray signing
+    path('qz/certificate/', qz_certificate, name='qz-certificate'),
+    path('qz/sign/', qz_sign, name='qz-sign'),
     
     # Reportes y estadísticas
     path('reportes/estadisticas/', estadisticas_generales, name='estadisticas-generales'),

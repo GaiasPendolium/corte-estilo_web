@@ -1,5 +1,5 @@
 from rest_framework import viewsets, status, filters, serializers
-from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.decorators import action, api_view, permission_classes, authentication_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.exceptions import PermissionDenied
@@ -12,9 +12,13 @@ from django.utils.dateparse import parse_datetime
 from django.http import HttpResponse
 from datetime import datetime, timedelta
 from decimal import Decimal
+import base64
 import csv
 import io
+import os
 import uuid
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding
 
 from .models import (
     Usuario, Estilista, Servicio, Cliente, Producto,
@@ -32,6 +36,72 @@ from .serializers import (
 
 def _es_admin_o_gerente(user):
     return getattr(user, 'rol', None) in ['administrador', 'gerente']
+
+
+def _qz_allowed_origins():
+    raw = os.environ.get('QZ_ALLOWED_ORIGINS', '').strip()
+    if not raw:
+        return []
+    return [item.strip().rstrip('/') for item in raw.split(',') if item.strip()]
+
+
+def _qz_check_origin(request):
+    allowed = _qz_allowed_origins()
+    if not allowed:
+        return None
+
+    origin = (request.headers.get('Origin') or '').strip().rstrip('/')
+    if origin in allowed:
+        return None
+
+    return HttpResponse('Origin no autorizado para firma QZ', status=403, content_type='text/plain; charset=utf-8')
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+@authentication_classes([])
+def qz_certificate(request):
+    blocked = _qz_check_origin(request)
+    if blocked:
+        return blocked
+
+    cert = os.environ.get('QZ_CERT_PEM', '').strip()
+    if not cert:
+        return HttpResponse('QZ_CERT_PEM no configurado', status=500, content_type='text/plain; charset=utf-8')
+
+    return HttpResponse(f'{cert}\n', content_type='text/plain; charset=utf-8')
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+@authentication_classes([])
+def qz_sign(request):
+    blocked = _qz_check_origin(request)
+    if blocked:
+        return blocked
+
+    to_sign = request.data.get('toSign', '')
+    if not isinstance(to_sign, str) or not to_sign:
+        return HttpResponse('Campo toSign requerido', status=400, content_type='text/plain; charset=utf-8')
+
+    private_key_pem = os.environ.get('QZ_PRIVATE_KEY_PEM', '').strip()
+    if not private_key_pem:
+        return HttpResponse('QZ_PRIVATE_KEY_PEM no configurado', status=500, content_type='text/plain; charset=utf-8')
+
+    try:
+        private_key = serialization.load_pem_private_key(
+            private_key_pem.encode('utf-8'),
+            password=None,
+        )
+        signature = private_key.sign(
+            to_sign.encode('utf-8'),
+            padding.PKCS1v15(),
+            hashes.SHA256(),
+        )
+        signature_b64 = base64.b64encode(signature).decode('ascii')
+        return HttpResponse(signature_b64, content_type='text/plain; charset=utf-8')
+    except Exception:
+        return HttpResponse('No se pudo firmar la solicitud', status=500, content_type='text/plain; charset=utf-8')
 
 
 def _es_recepcion(user):

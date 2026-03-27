@@ -70,7 +70,7 @@ const buildProductItems = (data) => {
   };
 };
 
-const buildTicketHtml = ({ type, data }) => {
+const buildTicketDocumentHtml = ({ type, data }) => {
   const isService = type === 'servicio';
   const factura = data?.numero_factura || data?.id || '-';
   const info = isService ? buildServiceItems(data) : buildProductItems(data);
@@ -209,18 +209,60 @@ const buildTicketHtml = ({ type, data }) => {
   `;
 };
 
+export const buildThermalTicketPreview = ({ type, data }) => {
+  const html = buildTicketDocumentHtml({ type, data });
+  const bodyMatch = html.match(/<body>([\s\S]*)<\/body>/i);
+  const styleMatch = html.match(/<style>([\s\S]*)<\/style>/i);
+  const body = bodyMatch ? bodyMatch[1] : '';
+  const styles = styleMatch ? styleMatch[1] : '';
+  return `<style>${styles}</style>${body}`;
+};
+
 export const printThermalTicket = ({ type, data }) => {
-  const html = buildTicketHtml({ type, data });
-  const printWin = window.open('', '_blank', 'noopener,noreferrer,width=360,height=900');
-  if (!printWin) {
-    throw new Error('El navegador bloqueó la ventana de impresión. Habilita ventanas emergentes.');
+  const html = buildTicketDocumentHtml({ type, data });
+
+  const iframe = document.createElement('iframe');
+  iframe.style.position = 'fixed';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '0';
+  iframe.style.height = '0';
+  iframe.style.border = '0';
+  iframe.style.visibility = 'hidden';
+  iframe.setAttribute('aria-hidden', 'true');
+
+  document.body.appendChild(iframe);
+
+  const doc = iframe.contentDocument || iframe.contentWindow?.document;
+  if (!doc) {
+    if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+    throw new Error('No se pudo preparar la impresión del ticket.');
   }
 
-  printWin.document.open();
-  printWin.document.write(html);
-  printWin.document.close();
-  printWin.focus();
-  setTimeout(() => {
-    printWin.print();
-  }, 250);
+  doc.open();
+  doc.write(html);
+  doc.close();
+
+  const cleanup = () => {
+    if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+  };
+
+  const triggerPrint = () => {
+    try {
+      iframe.contentWindow?.focus();
+      iframe.contentWindow?.print();
+    } finally {
+      setTimeout(cleanup, 1000);
+    }
+  };
+
+  const logo = doc.querySelector('img.logo');
+  if (logo && !logo.complete) {
+    logo.addEventListener('load', () => setTimeout(triggerPrint, 80), { once: true });
+    logo.addEventListener('error', () => setTimeout(triggerPrint, 80), { once: true });
+    setTimeout(triggerPrint, 500);
+    return;
+  }
+
+  setTimeout(triggerPrint, 100);
 };

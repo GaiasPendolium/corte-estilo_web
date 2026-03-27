@@ -70,7 +70,7 @@ const configureSecurity = () => {
       .catch(reject);
   });
 
-  qz.security.setSignatureAlgorithm('SHA512');
+  qz.security.setSignatureAlgorithm('SHA256');
   qz.security.setSignaturePromise((toSign) => (resolve, reject) => {
     if (!QZ_SIGN_ENDPOINT) {
       resolve();
