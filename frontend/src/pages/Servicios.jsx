@@ -1182,10 +1182,12 @@ const Servicios = () => {
               <div className="mt-2 flex justify-end">
                 <button
                   type="button"
-                  className="btn-secondary !px-4 !py-2 inline-flex items-center gap-2 text-base font-semibold"
+                  className="btn-secondary !px-5 !py-3 inline-flex items-center gap-3 text-lg font-bold border-2 border-indigo-300 bg-indigo-50 text-indigo-900 hover:bg-indigo-100"
                   onClick={() => abrirSearchKeyboard('venta_busqueda')}
                 >
-                  <FiKeyboard size={20} /> Teclado A-Z
+                  <span className="text-2xl leading-none" aria-hidden="true">⌨</span>
+                  <FiKeyboard size={24} />
+                  <span>Abrir teclado A-Z</span>
                 </button>
               </div>
               {ventaSugerencias.length > 0 && (
@@ -1703,10 +1705,12 @@ const Servicios = () => {
                       <div className="mt-2 flex justify-end">
                         <button
                           type="button"
-                          className="btn-secondary !px-4 !py-2 inline-flex items-center gap-2 text-base font-semibold"
+                          className="btn-secondary !px-5 !py-3 inline-flex items-center gap-3 text-lg font-bold border-2 border-indigo-300 bg-indigo-50 text-indigo-900 hover:bg-indigo-100"
                           onClick={() => abrirSearchKeyboard('producto_adicional_busqueda')}
                         >
-                          <FiKeyboard size={20} /> Teclado A-Z
+                          <span className="text-2xl leading-none" aria-hidden="true">⌨</span>
+                          <FiKeyboard size={24} />
+                          <span>Abrir teclado A-Z</span>
                         </button>
                       </div>
                       {productoAdicionalSugerencias.length > 0 && (
@@ -1820,9 +1824,9 @@ const Servicios = () => {
 
       {searchKeyboard.visible && (
         <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4" onClick={cerrarSearchKeyboard}>
-          <div className="w-full max-w-xl rounded-2xl bg-white shadow-2xl border border-slate-200 p-4" onClick={(e) => e.stopPropagation()}>
-            <p className="text-sm text-slate-500 mb-1">Teclado alfanumérico</p>
-            <p className="text-base font-semibold text-slate-900 mb-3 break-words min-h-[1.5rem]">{obtenerValorSearchKeyboard() || ' '}</p>
+          <div className="w-full max-w-4xl rounded-2xl bg-white shadow-2xl border border-slate-200 p-6" onClick={(e) => e.stopPropagation()}>
+            <p className="text-base text-slate-500 mb-1">Teclado alfanumérico</p>
+            <p className="text-xl font-semibold text-slate-900 mb-4 break-words min-h-[2rem]">{obtenerValorSearchKeyboard() || ' '}</p>
 
             <div className="space-y-2">
               {SEARCH_KEYBOARD_ROWS.map((row, idx) => (
@@ -1831,7 +1835,7 @@ const Servicios = () => {
                     <button
                       key={token}
                       type="button"
-                      className="btn-secondary !py-3"
+                      className="btn-secondary !py-4 !text-lg"
                       onClick={() => pulsarSearchKeyboard(token)}
                     >
                       {searchKeyboard.upper ? token : token.toLowerCase()}
@@ -1841,17 +1845,17 @@ const Servicios = () => {
               ))}
             </div>
 
-            <div className="mt-2 grid grid-cols-4 gap-2">
-              <button type="button" className="btn-secondary !py-3" onClick={() => pulsarSearchKeyboard('SHIFT')}>
+            <div className="mt-3 grid grid-cols-4 gap-3">
+              <button type="button" className="btn-secondary !py-4 !text-base" onClick={() => pulsarSearchKeyboard('SHIFT')}>
                 {searchKeyboard.upper ? 'Minúsc' : 'Mayúsc'}
               </button>
-              <button type="button" className="btn-secondary !py-3" onClick={() => pulsarSearchKeyboard('SPACE')}>Espacio</button>
-              <button type="button" className="btn-secondary !py-3" onClick={() => pulsarSearchKeyboard('DEL')}>Borrar</button>
-              <button type="button" className="btn-danger !py-3" onClick={() => pulsarSearchKeyboard('C')}>Limpiar</button>
+              <button type="button" className="btn-secondary !py-4 !text-base" onClick={() => pulsarSearchKeyboard('SPACE')}>Espacio</button>
+              <button type="button" className="btn-secondary !py-4 !text-base" onClick={() => pulsarSearchKeyboard('DEL')}>Borrar</button>
+              <button type="button" className="btn-danger !py-4 !text-base" onClick={() => pulsarSearchKeyboard('C')}>Limpiar</button>
             </div>
 
-            <div className="mt-2">
-              <button type="button" className="btn-primary !py-3 w-full" onClick={cerrarSearchKeyboard}>Aceptar</button>
+            <div className="mt-3">
+              <button type="button" className="btn-primary !py-4 !text-lg w-full" onClick={cerrarSearchKeyboard}>Aceptar</button>
             </div>
           </div>
         </div>
