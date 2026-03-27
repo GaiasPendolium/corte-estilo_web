@@ -777,6 +777,10 @@ const Ventas = () => {
     () => serviciosFiltrados.reduce((acc, s) => acc + (Number(s.precio_cobrado || 0) + Number(s.valor_adicionales || 0)), 0),
     [serviciosFiltrados]
   );
+  const totalServiciosEmpleado = useMemo(
+    () => serviciosFiltrados.reduce((acc, s) => acc + Number(s.monto_estilista || 0), 0),
+    [serviciosFiltrados]
+  );
 
   return (
     <div className="space-y-6 fade-in">
@@ -1047,8 +1051,12 @@ const Ventas = () => {
           <p className="text-2xl font-bold text-gray-900">${ticketPromedio.toFixed(2)}</p>
         </div>
         <div className="card">
-          <p className="text-sm text-gray-500">Total servicios facturados</p>
+          <p className="text-sm text-gray-500">Total cobrado cliente (servicios)</p>
           <p className="text-2xl font-bold text-gray-900">${totalServicios.toFixed(2)}</p>
+        </div>
+        <div className="card">
+          <p className="text-sm text-gray-500">Total base empleado (servicios)</p>
+          <p className="text-2xl font-bold text-gray-900">${totalServiciosEmpleado.toFixed(2)}</p>
         </div>
         <div className="card">
           <p className="text-sm text-gray-500">Total consumo empleado</p>
@@ -1493,7 +1501,8 @@ const Ventas = () => {
                   <th className="px-6 py-3 text-left">Cliente</th>
                   <th className="px-6 py-3 text-left">Empleado (servicio)</th>
                   <th className="px-6 py-3 text-left">Usuario facturó</th>
-                  <th className="px-6 py-3 text-left">Total</th>
+                  <th className="px-6 py-3 text-left">Base empleado</th>
+                  <th className="px-6 py-3 text-left">Total cliente</th>
                   <th className="px-6 py-3 text-right">Acción</th>
                 </tr>
               </thead>
@@ -1506,6 +1515,7 @@ const Ventas = () => {
                     <td className="table-cell">{s.cliente_nombre || '-'}</td>
                     <td className="table-cell">{s.estilista_nombre || '-'}</td>
                     <td className="table-cell">{s.usuario_nombre || '-'}</td>
+                    <td className="table-cell">${Number(s.monto_estilista || 0).toFixed(2)}</td>
                     <td className="table-cell">${(Number(s.precio_cobrado || 0) + Number(s.valor_adicionales || 0)).toFixed(2)}</td>
                     <td className="table-cell">
                       <div className="flex justify-end gap-2">

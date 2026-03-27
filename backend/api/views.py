@@ -119,6 +119,26 @@ def _monto_estilista_resuelto(srv):
     return neto
 
 
+def _descuento_puesto_dia(estilista, base_servicio_dia):
+    """
+    Calcula descuento diario de puesto sin doble descuento.
+
+    Regla clave: para porcentaje_neto el valor ya viene descontado en
+    `monto_estilista` durante la facturación del servicio, por lo que aquí no se
+    vuelve a descontar.
+    """
+    tipo = str(getattr(estilista, 'tipo_cobro_espacio', '') or '').strip().lower()
+    valor_cfg = Decimal(getattr(estilista, 'valor_cobro_espacio', 0) or 0)
+
+    if tipo == 'costo_fijo_neto':
+        return max(Decimal(0), valor_cfg)
+
+    if tipo == 'porcentaje_neto':
+        return Decimal(0)
+
+    return Decimal(0)
+
+
 def _insertar_historial_legacy(estilista_id, fecha, estado_anterior, estado_nuevo, notas, usuario_id, monto_liquidado):
     """Inserta historial en esquema antiguo (sin columnas abono_puesto/pendiente_puesto)."""
     with connection.cursor() as cursor:
@@ -281,17 +301,7 @@ def calcular_liquidacion_dia_estilista(estilista, fecha_dia):
     ganancias_totales = servicios_base + comisiones_adicionales + comisiones_ventas
     
     # ============ [2] DESCUENTO POR PUESTO ============
-    descuento_puesto = Decimal(0)
-    if estilista.tipo_cobro_espacio == 'sin_cobro':
-        descuento_puesto = Decimal(0)
-    elif estilista.tipo_cobro_espacio == 'porcentaje_neto':
-        # Porcentaje sobre servicios BASE (no sobre ganancias)
-        pct = Decimal(estilista.valor_cobro_espacio or 0)
-        pct = max(Decimal(0), min(Decimal(100), pct))  # Clamp 0-100
-        descuento_puesto = (servicios_base * pct) / Decimal(100)
-    elif estilista.tipo_cobro_espacio == 'costo_fijo_neto':
-        # Monto fijo
-        descuento_puesto = max(Decimal(0), Decimal(estilista.valor_cobro_espacio or 0))
+    descuento_puesto = _descuento_puesto_dia(estilista, servicios_base)
     
     # [2] TOTAL PAGABLE = GANANCIAS - DESCUENTO
     total_pagable = max(ganancias_totales - descuento_puesto, Decimal(0))
@@ -1558,13 +1568,7 @@ def _calcular_datos_bi(request):
             base_servicio_dia = servicios_por_dia.get(dia, Decimal(0))
             comision_dia = comision_por_dia.get(dia, Decimal(0))
 
-            descuento_dia = Decimal(0)
-            if estilista.tipo_cobro_espacio == 'porcentaje_neto':
-                descuento_dia = (base_servicio_dia * Decimal(estilista.valor_cobro_espacio or 0)) / Decimal(100)
-                if descuento_dia > base_servicio_dia:
-                    descuento_dia = base_servicio_dia
-            elif estilista.tipo_cobro_espacio == 'costo_fijo_neto':
-                descuento_dia = Decimal(estilista.valor_cobro_espacio or 0)
+            descuento_dia = _descuento_puesto_dia(estilista, base_servicio_dia)
 
             neto_dia = (base_servicio_dia - descuento_dia) + comision_dia
             estado_dia = estados_pago_map.get((estilista.id, dia), 'pendiente')
@@ -1642,13 +1646,7 @@ def _calcular_datos_bi(request):
             if estado_dia == 'cancelado':
                 continue
             base_servicio_dia = servicios_por_dia.get(dia, Decimal(0))
-            descuento_dia = Decimal(0)
-            if estilista.tipo_cobro_espacio == 'porcentaje_neto':
-                descuento_dia = (base_servicio_dia * Decimal(estilista.valor_cobro_espacio or 0)) / Decimal(100)
-                if descuento_dia > base_servicio_dia:
-                    descuento_dia = base_servicio_dia
-            elif estilista.tipo_cobro_espacio == 'costo_fijo_neto':
-                descuento_dia = Decimal(estilista.valor_cobro_espacio or 0)
+            descuento_dia = _descuento_puesto_dia(estilista, base_servicio_dia)
             deuda_rango_pendiente += max(descuento_dia, Decimal(0))
 
         deuda_total_acumulada = deuda_puesto_historial + deuda_rango_pendiente
@@ -3443,13 +3441,7 @@ def bi_desglose_estilista_debug(request):
         base_servicio_dia = servicios_por_dia.get(dia, Decimal(0))
         comision_dia = comision_por_dia.get(dia, Decimal(0))
         
-        descuento_dia = Decimal(0)
-        if estilista.tipo_cobro_espacio == 'porcentaje_neto':
-            descuento_dia = (base_servicio_dia * Decimal(estilista.valor_cobro_espacio or 0)) / Decimal(100)
-            if descuento_dia > base_servicio_dia:
-                descuento_dia = base_servicio_dia
-        elif estilista.tipo_cobro_espacio == 'costo_fijo_neto':
-            descuento_dia = Decimal(estilista.valor_cobro_espacio or 0)
+        descuento_dia = _descuento_puesto_dia(estilista, base_servicio_dia)
         
         neto_dia = (base_servicio_dia - descuento_dia) + comision_dia
         estado_dia = estados_pago_map.get((estilista.id, dia), 'pendiente')
@@ -3609,13 +3601,7 @@ def bi_desglose_estilista(request):
         base_servicio_dia = servicios_por_dia.get(dia, Decimal(0))
         comision_dia = comision_por_dia.get(dia, Decimal(0))
         
-        descuento_dia = Decimal(0)
-        if estilista.tipo_cobro_espacio == 'porcentaje_neto':
-            descuento_dia = (base_servicio_dia * Decimal(estilista.valor_cobro_espacio or 0)) / Decimal(100)
-            if descuento_dia > base_servicio_dia:
-                descuento_dia = base_servicio_dia
-        elif estilista.tipo_cobro_espacio == 'costo_fijo_neto':
-            descuento_dia = Decimal(estilista.valor_cobro_espacio or 0)
+        descuento_dia = _descuento_puesto_dia(estilista, base_servicio_dia)
         
         neto_dia = (base_servicio_dia - descuento_dia) + comision_dia
         estado_dia = estados_pago_map.get((estilista.id, dia), 'pendiente')

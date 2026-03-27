@@ -615,26 +615,16 @@ const aplicarEstadoLiquidacion = async (fila) => {
                 const valorTotalEmpleado = Number((item.valor_total_empleado ?? item.ganancias_servicios ?? item.facturacion_servicios) || 0);
                 const comisionesEmpleado = Number(item.comision_ventas_producto || 0);
                 const gananciasTotales = valorTotalEmpleado + comisionesEmpleado;
-                const tieneServiciosHoy = gananciasTotales > 0;
                 const tipoCobro = item.tipo_cobro_espacio || 'sin_cobro';
                 const valorCobroCfg = Number(item.valor_cobro_espacio || 0);
-                const cobroPuestoActual = (() => {
-                  if (!tieneServiciosHoy) return 0;
-                  if (tipoCobro === 'costo_fijo_neto') {
-                    return Math.max(valorCobroCfg, 0);
-                  }
-                  if (tipoCobro === 'porcentaje_neto') {
-                    return Math.max((valorTotalEmpleado * valorCobroCfg) / 100, 0);
-                  }
-                  return 0;
-                })();
-                const descuentoVisible = cobroPuestoActual;
-                const netoGanado = Math.max(gananciasTotales - descuentoVisible, 0);
+                const descuentoVisible = Math.max(Number(item.descuento_espacio ?? item.total_deducciones ?? 0), 0);
+                const netoBackend = Number(item.pago_neto_pendiente ?? item.pago_neto_estilista ?? (gananciasTotales - descuentoVisible));
+                const netoGanado = netoBackend;
                 const abonoPuestoDigitado = Number(abonoPuestoPorEstilista[item.estilista_id] || 0);
                 const descripcionCobroPuesto = tipoCobro === 'costo_fijo_neto'
-                  ? `Cobro fijo: ${formatMoney(valorCobroCfg)}`
+                  ? `Cobro fijo: ${formatMoney(descuentoVisible || valorCobroCfg)}`
                   : tipoCobro === 'porcentaje_neto'
-                    ? `Cobro porcentaje: (${formatMoney(cobroPuestoActual)}) ${valorCobroCfg}%`
+                    ? `Cobro porcentaje: ya incluido en base (${valorCobroCfg}%)`
                     : 'Sin cobro de puesto';
                 // Para UN DÍA: confiar SOLO en estadoDiaPorEstilista (del endpoint específico del día)
                 // Para RANGO: usar el estado del BI basado en múltiples días
