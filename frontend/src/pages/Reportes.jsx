@@ -612,22 +612,12 @@ const aplicarEstadoLiquidacion = async (fila) => {
               )}
               {(biData?.estilistas || []).map((item) => {
                 const deudaPuestoHistorica = Number(item.deuda_puesto_historica || 0);
-                const valorTotalEmpleadoNeto = Number((item.valor_total_empleado ?? item.ganancias_servicios ?? item.facturacion_servicios) || 0);
+                const valorTotalEmpleado = Number((item.valor_total_empleado ?? item.facturacion_servicios ?? item.ganancias_servicios) || 0);
                 const comisionesEmpleado = Number(item.comision_ventas_producto || 0);
                 const tipoCobro = item.tipo_cobro_espacio || 'sin_cobro';
                 const valorCobroCfg = Number(item.valor_cobro_espacio || 0);
                 const descuentoBackend = Math.max(Number(item.descuento_espacio ?? item.total_deducciones ?? 0), 0);
-                const descuentoDerivadoPorcentaje = (
-                  tipoCobro === 'porcentaje_neto'
-                  && descuentoBackend <= 0
-                  && valorCobroCfg > 0
-                  && valorCobroCfg < 100
-                  && valorTotalEmpleadoNeto > 0
-                )
-                  ? Math.max((valorTotalEmpleadoNeto * valorCobroCfg) / (100 - valorCobroCfg), 0)
-                  : 0;
-                const descuentoVisible = descuentoBackend > 0 ? descuentoBackend : descuentoDerivadoPorcentaje;
-                const valorTotalEmpleado = valorTotalEmpleadoNeto + descuentoVisible;
+                const descuentoVisible = descuentoBackend;
                 const gananciasTotales = valorTotalEmpleado + comisionesEmpleado;
                 const netoBackend = Number(item.pago_neto_pendiente ?? item.pago_neto_estilista ?? (gananciasTotales - descuentoVisible));
                 const netoGanado = netoBackend;

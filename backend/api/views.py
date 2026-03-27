@@ -75,15 +75,11 @@ def _normalizar_fecha_hora_request(fecha_hora_raw):
 
 def _monto_estilista_resuelto(srv):
     """
-    Calcula monto del estilista con fallback para registros legacy.
+    Calcula monto del estilista usando la regla vigente.
 
-    Algunos servicios antiguos quedaron con monto_estilista=0 aunque tenían precio.
-    Para esos casos se reconstruye una estimación consistente con las reglas actuales.
+    Para servicios sin reparto explícito, el valor completo pertenece al empleado.
+    Solo Shampoo o un reparto explícito generan ganancia directa del establecimiento.
     """
-    monto = Decimal(srv.monto_estilista or 0)
-    if monto > 0:
-        return monto
-
     neto = Decimal(srv.neto_servicio or srv.precio_cobrado or 0)
     if neto <= 0:
         return Decimal(0)
@@ -105,6 +101,29 @@ def _monto_estilista_resuelto(srv):
         return monto_calc
 
     return neto
+
+
+def _monto_establecimiento_resuelto(srv):
+    """Calcula la porción del establecimiento con la misma regla vigente."""
+    neto = Decimal(srv.neto_servicio or srv.precio_cobrado or 0)
+    if neto <= 0:
+        return Decimal(0)
+
+    tipo_reparto = str(srv.tipo_reparto_establecimiento or '').strip().lower()
+    monto_establecimiento = Decimal(srv.monto_establecimiento or 0)
+    nombre_servicio = str(getattr(getattr(srv, 'servicio', None), 'nombre', '') or '').lower()
+
+    if 'shampoo' in nombre_servicio:
+        return neto
+
+    if tipo_reparto in {'porcentaje', 'monto'}:
+        if monto_establecimiento < 0:
+            return Decimal(0)
+        if monto_establecimiento > neto:
+            return neto
+        return monto_establecimiento
+
+    return Decimal(0)
 
 
 def _descuento_puesto_dia(estilista, base_servicio_dia):
@@ -1849,7 +1868,7 @@ def _calcular_datos_bi(request):
         )
 
         base_emp = _monto_estilista_resuelto(srv)
-        base_est = Decimal(srv.monto_establecimiento or 0)
+        base_est = _monto_establecimiento_resuelto(srv)
         total_cliente = Decimal(srv.precio_cobrado or 0) + Decimal(srv.valor_adicionales or 0)
         total_empleado = base_emp + ad_info['empleado'] + prod_info['empleado']
         total_establecimiento = base_est + ad_info['establecimiento'] + prod_info['establecimiento']
@@ -3931,7 +3950,7 @@ def reporte_cierre_caja(request):
             prod_est = bruto_prod - ((bruto_prod * pct_prod) / Decimal(100))
 
         valor_servicio = Decimal(srv.precio_cobrado or 0) + Decimal(srv.valor_adicionales or 0)
-        ganancia_est = Decimal(srv.monto_establecimiento or 0) + Decimal(ad_info['establecimiento'] or 0) + prod_est
+        ganancia_est = _monto_establecimiento_resuelto(srv) + Decimal(ad_info['establecimiento'] or 0) + prod_est
 
         if ganancia_est <= 0:
             continue
@@ -4278,7 +4297,7 @@ def bi_resumen_diario(request):
         costo_productos += Decimal(v.producto.precio_compra or 0) * Decimal(v.cantidad)
 
     utilidad_productos = ventas_total - costo_productos
-    comision_servicios_est = Decimal(servicios.aggregate(total=Sum('monto_establecimiento'))['total'] or 0)
+    comision_servicios_est = sum((_monto_establecimiento_resuelto(srv) for srv in servicios), Decimal(0))
 
     texto = (
         f"Resumen diario {hoy}\n"
