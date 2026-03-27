@@ -69,7 +69,7 @@ const configureSecurity = () => {
       return;
     }
 
-    fetch(`${QZ_SIGN_ENDPOINT}/certificate`, { cache: 'no-store' })
+    fetch(`${QZ_SIGN_ENDPOINT}/certificate/`, { cache: 'no-store' })
       .then((response) => {
         if (!response.ok) throw new Error('No se pudo obtener certificado de firma de QZ');
         return response.text();
@@ -85,7 +85,7 @@ const configureSecurity = () => {
       return;
     }
 
-    fetch(`${QZ_SIGN_ENDPOINT}/sign`, {
+    fetch(`${QZ_SIGN_ENDPOINT}/sign/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ toSign }),
