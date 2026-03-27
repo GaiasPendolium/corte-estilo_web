@@ -34,9 +34,22 @@ def _es_admin_o_gerente(user):
     return getattr(user, 'rol', None) in ['administrador', 'gerente']
 
 
+def _es_recepcion(user):
+    rol_user = (getattr(user, 'rol', '') or '').strip().lower()
+    return rol_user in {'recepcion', 'recepcionista', 'recepción'}
+
+
 def _validar_edicion_admin_gerente(user, recurso):
     if not _es_admin_o_gerente(user):
         raise PermissionDenied(f'Solo administrador o gerente puede modificar {recurso}.')
+
+
+def _sanitizar_bi_para_recepcion(data):
+    """Oculta datos de módulos restringidos para recepción."""
+    if not isinstance(data, dict):
+        return data
+    data['productos_bajo_stock'] = []
+    return data
 
 
 def _fecha_operativa_desde_dt(fecha_hora):
@@ -2199,8 +2212,7 @@ def _sincronizar_deuda_desde_items(deuda):
 @permission_classes([IsAuthenticated])
 def reporte_consumo_empleado(request):
     """Resumen de deudas por consumo de empleado en un rango de fechas."""
-    rol_user = (getattr(request.user, 'rol', '') or '').strip().lower()
-    if rol_user in {'recepcion', 'recepcionista', 'recepción'}:
+    if _es_recepcion(request.user):
         raise PermissionDenied('Recepción no tiene acceso a consumo de empleado y cartera.')
 
     fecha_inicio, fecha_fin = _resolver_rango_fechas(request)
@@ -2373,8 +2385,7 @@ def reporte_consumo_empleado(request):
 @permission_classes([IsAuthenticated])
 def abonar_consumo_empleado(request):
     """Registra un abono y lo distribuye en las deudas pendientes más antiguas."""
-    rol_user = (getattr(request.user, 'rol', '') or '').strip().lower()
-    if rol_user in {'recepcion', 'recepcionista', 'recepción'}:
+    if _es_recepcion(request.user):
         raise PermissionDenied('Recepción no tiene permiso para registrar abonos de cartera.')
 
     estilista_id = request.data.get('estilista_id')
@@ -2480,8 +2491,7 @@ def abonar_consumo_empleado(request):
 @permission_classes([IsAuthenticated])
 def editar_abono_consumo_empleado(request, abono_id):
     """Permite corregir un abono registrado por error y recalcula la deuda asociada."""
-    rol_user = (getattr(request.user, 'rol', '') or '').strip().lower()
-    if rol_user in {'recepcion', 'recepcionista', 'recepción'}:
+    if _es_recepcion(request.user):
         raise PermissionDenied('Recepción no tiene permiso para editar abonos de cartera.')
 
     try:
@@ -3663,6 +3673,8 @@ def bi_desglose_estilista(request):
 def bi_resumen(request):
     """Vista API que retorna datos de BI como JSON"""
     data = _calcular_datos_bi(request)
+    if _es_recepcion(request.user):
+        data = _sanitizar_bi_para_recepcion(data)
     return Response(data)
 
 
@@ -4032,6 +4044,9 @@ def reporte_cierre_caja(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def bi_export_csv(request):
+    if _es_recepcion(request.user):
+        raise PermissionDenied('Recepción no tiene permiso para exportar BI completo.')
+
     try:
         data = _calcular_datos_bi(request)
 
@@ -4126,6 +4141,9 @@ def bi_export_csv(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def bi_export_pdf(request):
+    if _es_recepcion(request.user):
+        raise PermissionDenied('Recepción no tiene permiso para exportar BI completo.')
+
     try:
         data = _calcular_datos_bi(request)
     except Exception as e:

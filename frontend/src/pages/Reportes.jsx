@@ -102,15 +102,19 @@ const Reportes = () => {
   const cargarTodo = useCallback(async () => {
     try {
       setLoading(true);
-      const [cierreResp, biResp, carteraResp] = await Promise.all([
+      const [cierreResp, biResp] = await Promise.all([
         reportesService.getCierreCaja(paramsBase),
         reportesService.getBIResumen(paramsBase),
-        reportesService.getConsumoEmpleadoDeudas({
+      ]);
+
+      let carteraResp = null;
+      if (!esRecepcion) {
+        carteraResp = await reportesService.getConsumoEmpleadoDeudas({
           periodo,
           fecha_inicio: fechaInicio,
           fecha_fin: fechaFin,
-        }),
-      ]);
+        });
+      }
 
       setCierreCaja(cierreResp || null);
       setBiData(biResp || null);
@@ -166,7 +170,7 @@ const Reportes = () => {
     } finally {
       setLoading(false);
     }
-  }, [paramsBase, periodo, fechaInicio, fechaFin]);
+  }, [paramsBase, periodo, fechaInicio, fechaFin, esRecepcion]);
 
   useEffect(() => {
     cargarTodo();
