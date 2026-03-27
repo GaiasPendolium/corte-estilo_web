@@ -1,5 +1,5 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
-import { FiCheckCircle, FiDollarSign, FiKeyboard, FiPlus, FiRefreshCw, FiScissors, FiTrash2 } from 'react-icons/fi';
+import { FiCheckCircle, FiDollarSign, FiPlus, FiRefreshCw, FiScissors, FiTrash2 } from 'react-icons/fi';
 import { toast } from 'react-toastify';
 import {
   clientesService,
@@ -159,6 +159,20 @@ const minimoConDescuentoEmpleado = (precioBase) => {
   if (base <= 0) return 0;
   return Math.ceil(base * 0.8);
 };
+
+const KeyboardIcon = ({ size = 24 }) => (
+  <span
+    className="inline-flex items-center justify-center rounded-md bg-indigo-200 text-indigo-900"
+    style={{ width: size + 10, height: size + 10 }}
+    aria-hidden="true"
+  >
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="5" width="20" height="14" rx="2" ry="2" />
+      <path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 13h.01M10 13h.01M14 13h.01M18 13h.01" />
+      <path d="M7 16h10" />
+    </svg>
+  </span>
+);
 
 const Servicios = () => {
   const { user } = useAuthStore();
@@ -1185,8 +1199,7 @@ const Servicios = () => {
                   className="btn-secondary !px-5 !py-3 inline-flex items-center gap-3 text-lg font-bold border-2 border-indigo-300 bg-indigo-50 text-indigo-900 hover:bg-indigo-100"
                   onClick={() => abrirSearchKeyboard('venta_busqueda')}
                 >
-                  <span className="text-2xl leading-none" aria-hidden="true">⌨</span>
-                  <FiKeyboard size={24} />
+                  <KeyboardIcon size={24} />
                   <span>Abrir teclado A-Z</span>
                 </button>
               </div>
@@ -1708,8 +1721,7 @@ const Servicios = () => {
                           className="btn-secondary !px-5 !py-3 inline-flex items-center gap-3 text-lg font-bold border-2 border-indigo-300 bg-indigo-50 text-indigo-900 hover:bg-indigo-100"
                           onClick={() => abrirSearchKeyboard('producto_adicional_busqueda')}
                         >
-                          <span className="text-2xl leading-none" aria-hidden="true">⌨</span>
-                          <FiKeyboard size={24} />
+                          <KeyboardIcon size={24} />
                           <span>Abrir teclado A-Z</span>
                         </button>
                       </div>
