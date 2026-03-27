@@ -2812,8 +2812,7 @@ def liquidar_dia_v2(request):
      1. Calcula ganancias + descuento del día
      2. Valida reglas de negocio:
          - El valor a liquidar (pago al empleado) NO puede superar ganancias totales.
-         - El valor a liquidar + abono de puesto del día NO puede superar ganancias totales.
-         - Si hay deuda anterior de puesto, se permite abono extra para cubrirla.
+         - Se permite abono de puesto adelantado aunque no exista deuda previa.
      3. Guarda en tabla diaria
      4. Crea registro historial
      5. Retorna valores calculados
@@ -2895,20 +2894,9 @@ def liquidar_dia_v2(request):
             'valor_liquidar': float(total_pagado),
         }, status=status.HTTP_400_BAD_REQUEST)
 
-    # Parte del abono que corresponde al puesto del día actual
-    abono_puesto_dia = min(abono_puesto, descuento)
-    # Parte del abono que intenta cubrir deuda arrastrada
-    abono_puesto_extra = max(abono_puesto - descuento, Decimal(0))
-
-    # 2) El abono extra solo es válido si existe deuda anterior
-    if abono_puesto_extra > 0 and deuda_anterior_puesto <= 0:
-        return Response({
-            'error': (
-                f'El abono extra a puesto (${float(abono_puesto_extra):.2f}) requiere deuda anterior. '
-                'No se encontró saldo pendiente arrastrado.'
-            ),
-            'deuda_anterior_puesto': float(deuda_anterior_puesto),
-        }, status=status.HTTP_400_BAD_REQUEST)
+    # Se permite que el empleado pague abono de puesto adelantado.
+    # Si no hay deuda suficiente para aplicarlo en el saldo, el excedente queda
+    # como abono registrado del día (sin bloquear la liquidación).
     
     # ============ [3] SALDO PENDIENTE ACUMULADO DE PUESTO ============
     deuda_total_puesto = deuda_anterior_puesto + descuento
