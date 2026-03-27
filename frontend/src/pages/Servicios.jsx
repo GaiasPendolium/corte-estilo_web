@@ -1,5 +1,5 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
-import { FiCheckCircle, FiDollarSign, FiPlus, FiRefreshCw, FiScissors, FiTrash2 } from 'react-icons/fi';
+import { FiCheckCircle, FiDollarSign, FiKeyboard, FiPlus, FiRefreshCw, FiScissors, FiTrash2 } from 'react-icons/fi';
 import { toast } from 'react-toastify';
 import {
   clientesService,
@@ -150,8 +150,8 @@ const sanitizePesoInput = (value) => String(value ?? '').replace(/[^\d]/g, '');
 const SEARCH_KEYBOARD_ROWS = [
   ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'],
   ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
-  ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'],
-  ['Z', 'X', 'C', 'V', 'B', 'N', 'M'],
+  ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', 'Ñ'],
+  ['Z', 'X', 'C', 'V', 'B', 'N', 'M', 'Á', 'É', 'Í', 'Ó', 'Ú'],
 ];
 
 const minimoConDescuentoEmpleado = (precioBase) => {
@@ -199,7 +199,7 @@ const Servicios = () => {
   const [productoAdicionalBusqueda, setProductoAdicionalBusqueda] = useState('');
   const [productoAdicionalSugerencias, setProductoAdicionalSugerencias] = useState([]);
   const [keypad, setKeypad] = useState({ visible: false, field: '', itemKey: null });
-  const [searchKeyboard, setSearchKeyboard] = useState({ visible: false, field: '' });
+  const [searchKeyboard, setSearchKeyboard] = useState({ visible: false, field: '', upper: true });
 
   const [ventaForm, setVentaForm] = useState({
     cliente_nombre: '',
@@ -844,11 +844,11 @@ const Servicios = () => {
   };
 
   const abrirSearchKeyboard = (field) => {
-    setSearchKeyboard({ visible: true, field });
+    setSearchKeyboard((prev) => ({ ...prev, visible: true, field }));
   };
 
   const cerrarSearchKeyboard = () => {
-    setSearchKeyboard({ visible: false, field: '' });
+    setSearchKeyboard((prev) => ({ ...prev, visible: false, field: '' }));
   };
 
   const obtenerValorSearchKeyboard = () => {
@@ -871,6 +871,10 @@ const Servicios = () => {
 
   const pulsarSearchKeyboard = (token) => {
     const actual = obtenerValorSearchKeyboard();
+    if (token === 'SHIFT') {
+      setSearchKeyboard((prev) => ({ ...prev, upper: !prev.upper }));
+      return;
+    }
     if (token === 'C') {
       asignarValorSearchKeyboard('');
       return;
@@ -883,7 +887,8 @@ const Servicios = () => {
       asignarValorSearchKeyboard(`${actual} `);
       return;
     }
-    asignarValorSearchKeyboard(`${actual}${token}`);
+    const char = searchKeyboard.upper ? token : token.toLowerCase();
+    asignarValorSearchKeyboard(`${actual}${char}`);
   };
 
   const cerrarKeypad = () => {
@@ -1177,10 +1182,10 @@ const Servicios = () => {
               <div className="mt-2 flex justify-end">
                 <button
                   type="button"
-                  className="btn-secondary !px-3 !py-1"
+                  className="btn-secondary !px-4 !py-2 inline-flex items-center gap-2 text-base font-semibold"
                   onClick={() => abrirSearchKeyboard('venta_busqueda')}
                 >
-                  Teclado A-Z
+                  <FiKeyboard size={20} /> Teclado A-Z
                 </button>
               </div>
               {ventaSugerencias.length > 0 && (
@@ -1698,10 +1703,10 @@ const Servicios = () => {
                       <div className="mt-2 flex justify-end">
                         <button
                           type="button"
-                          className="btn-secondary !px-3 !py-1"
+                          className="btn-secondary !px-4 !py-2 inline-flex items-center gap-2 text-base font-semibold"
                           onClick={() => abrirSearchKeyboard('producto_adicional_busqueda')}
                         >
-                          Teclado A-Z
+                          <FiKeyboard size={20} /> Teclado A-Z
                         </button>
                       </div>
                       {productoAdicionalSugerencias.length > 0 && (
@@ -1829,14 +1834,17 @@ const Servicios = () => {
                       className="btn-secondary !py-3"
                       onClick={() => pulsarSearchKeyboard(token)}
                     >
-                      {token}
+                      {searchKeyboard.upper ? token : token.toLowerCase()}
                     </button>
                   ))}
                 </div>
               ))}
             </div>
 
-            <div className="mt-2 grid grid-cols-3 gap-2">
+            <div className="mt-2 grid grid-cols-4 gap-2">
+              <button type="button" className="btn-secondary !py-3" onClick={() => pulsarSearchKeyboard('SHIFT')}>
+                {searchKeyboard.upper ? 'Minúsc' : 'Mayúsc'}
+              </button>
               <button type="button" className="btn-secondary !py-3" onClick={() => pulsarSearchKeyboard('SPACE')}>Espacio</button>
               <button type="button" className="btn-secondary !py-3" onClick={() => pulsarSearchKeyboard('DEL')}>Borrar</button>
               <button type="button" className="btn-danger !py-3" onClick={() => pulsarSearchKeyboard('C')}>Limpiar</button>
