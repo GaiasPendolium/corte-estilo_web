@@ -52,6 +52,7 @@ const KpiCard = ({ title, value, hint, tone = 'slate' }) => {
 const Reportes = () => {
   const { user } = useAuthStore();
   const esAdministrador = String(user?.rol || '').toLowerCase() === 'administrador';
+  const esRecepcion = String(user?.rol || '').toLowerCase() === 'recepcion';
   const [moduloActivo, setModuloActivo] = useState('cierre');
   const [periodo, setPeriodo] = useState('mes');
   const [fechaInicio, setFechaInicio] = useState(format(firstDay, 'yyyy-MM-dd'));
@@ -77,6 +78,16 @@ const Reportes = () => {
   const [savingEstadoByEstilista, setSavingEstadoByEstilista] = useState({});
   const [historialEstados, setHistorialEstados] = useState([]);
   const [loadingHistorial, setLoadingHistorial] = useState(false);
+
+  const modulosVisibles = useMemo(() => {
+    if (!esRecepcion) return MODULOS;
+    return MODULOS.filter((mod) => mod.key === 'cierre' || mod.key === 'liquidacion');
+  }, [esRecepcion]);
+
+  useEffect(() => {
+    if (modulosVisibles.some((mod) => mod.key === moduloActivo)) return;
+    setModuloActivo(modulosVisibles[0]?.key || 'cierre');
+  }, [modulosVisibles, moduloActivo]);
 
   const paramsBase = useMemo(
     () => ({
@@ -1065,7 +1076,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
-        {MODULOS.map((mod) => (
+        {modulosVisibles.map((mod) => (
           <button
             key={mod.key}
             className={`${moduloActivo === mod.key ? 'btn-primary' : 'btn-secondary'} text-left`}
