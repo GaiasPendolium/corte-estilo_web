@@ -13,7 +13,11 @@ const DEFAULT_WS_PORT_INSECURE = Number(import.meta.env.VITE_QZ_WS_PORT_INSECURE
 
 const DEFAULT_PRINTER_NAME = (import.meta.env.VITE_QZ_DEFAULT_PRINTER || '').trim();
 const QZ_CERT_PEM = (import.meta.env.VITE_QZ_CERT_PEM || '').trim();
-const QZ_SIGN_ENDPOINT = (import.meta.env.VITE_QZ_SIGN_ENDPOINT || '').trim();
+const API_URL = (import.meta.env.VITE_API_URL || '').trim().replace(/\/$/, '');
+const QZ_SIGN_ENDPOINT = (
+  import.meta.env.VITE_QZ_SIGN_ENDPOINT
+  || (API_URL ? `${API_URL}/qz` : '')
+).trim().replace(/\/$/, '');
 
 let securityConfigured = false;
 
@@ -50,6 +54,10 @@ const normalizeError = (error, fallbackMessage) => {
 const configureSecurity = () => {
   if (securityConfigured) return;
 
+  if (!QZ_CERT_PEM && !QZ_SIGN_ENDPOINT) {
+    throw new Error('Falta configurar firma QZ: define VITE_QZ_SIGN_ENDPOINT (o VITE_API_URL) en frontend.');
+  }
+
   qz.security.setCertificatePromise((resolve, reject) => {
     if (QZ_CERT_PEM) {
       resolve(QZ_CERT_PEM);
@@ -61,7 +69,7 @@ const configureSecurity = () => {
       return;
     }
 
-    fetch(`${QZ_SIGN_ENDPOINT.replace(/\/$/, '')}/certificate`, { cache: 'no-store' })
+    fetch(`${QZ_SIGN_ENDPOINT}/certificate`, { cache: 'no-store' })
       .then((response) => {
         if (!response.ok) throw new Error('No se pudo obtener certificado de firma de QZ');
         return response.text();
@@ -77,7 +85,7 @@ const configureSecurity = () => {
       return;
     }
 
-    fetch(`${QZ_SIGN_ENDPOINT.replace(/\/$/, '')}/sign`, {
+    fetch(`${QZ_SIGN_ENDPOINT}/sign`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ toSign }),
