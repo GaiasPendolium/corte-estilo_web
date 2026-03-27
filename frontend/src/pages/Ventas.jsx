@@ -1313,7 +1313,7 @@ const Ventas = () => {
         {!loading && ventasAgrupadas.length === 0 && <p className="text-gray-600">No hay facturas de productos con los filtros actuales.</p>}
 
         {!loading && ventasAgrupadas.length > 0 && (
-          <div className="overflow-x-auto">
+          <div className="max-h-[55vh] overflow-auto rounded-lg border border-gray-100">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="table-header">
                 <tr>
