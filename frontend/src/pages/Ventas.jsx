@@ -126,6 +126,8 @@ const Ventas = () => {
     fecha_hora: '',
     precio_cobrado: '',
     medio_pago: 'efectivo',
+    tipo_reparto_establecimiento: '',
+    valor_reparto_establecimiento: '',
     tiene_adicionales: false,
     adicionales_servicio_items: [],
     adicional_otro_producto: '',
@@ -491,6 +493,8 @@ const Ventas = () => {
         fecha_hora: formatDateTimeLocalInput(servicio?.fecha_hora),
         precio_cobrado: String(servicio?.precio_cobrado || ''),
         medio_pago: servicio?.medio_pago || 'efectivo',
+        tipo_reparto_establecimiento: String(servicio?.tipo_reparto_establecimiento || ''),
+        valor_reparto_establecimiento: String(servicio?.valor_reparto_establecimiento ?? ''),
         tiene_adicionales: Boolean(servicio?.tiene_adicionales),
         adicionales_servicio_items: adicionales.map((item, idx) => ({
           _key: `${item.id || idx}`,
@@ -614,6 +618,10 @@ const Ventas = () => {
         fecha_hora: servicioForm.fecha_hora || null,
         precio_cobrado: Number(servicioForm.precio_cobrado || 0),
         medio_pago: servicioForm.medio_pago,
+        tipo_reparto_establecimiento: servicioForm.tipo_reparto_establecimiento || null,
+        valor_reparto_establecimiento: servicioForm.tipo_reparto_establecimiento
+          ? Number(servicioForm.valor_reparto_establecimiento || 0)
+          : null,
         tiene_adicionales: Boolean(servicioForm.tiene_adicionales),
         adicionales_servicio_ids: servicioForm.tiene_adicionales ? idsAdicionales : [],
         adicionales_servicio_items: servicioForm.tiene_adicionales ? adicionalesNormalizados : [],
@@ -960,6 +968,16 @@ const Ventas = () => {
 
               {servicioVisualizar && (
                 <>
+                  {(() => {
+                    const estilistaCfg = estilistas.find((e) => Number(e.id) === Number(servicioVisualizar.estilista));
+                    const tipoAuto = estilistaCfg?.tipo_cobro_espacio || 'sin_cobro';
+                    const valorAuto = Number(estilistaCfg?.valor_cobro_espacio || 0);
+                    const tipoActual = servicioVisualizar.tipo_reparto_establecimiento || '';
+                    const valorActual = Number(servicioVisualizar.valor_reparto_establecimiento || 0);
+                    const origenReparto = tipoActual
+                      ? `${tipoActual} ${tipoActual === 'porcentaje' ? `${valorActual}%` : `$${valorActual.toFixed(2)}`}`
+                      : `Automatico por empleado: ${tipoAuto}${tipoAuto === 'porcentaje_neto' ? ` ${valorAuto}%` : tipoAuto === 'costo_fijo_neto' ? ` $${valorAuto.toFixed(2)}` : ''}`;
+                    return (
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <p className="text-sm text-gray-600">Número de factura</p>
@@ -1001,6 +1019,18 @@ const Ventas = () => {
                       <p className="text-sm text-gray-600">Neto del servicio</p>
                       <p className="font-bold text-gray-900">${Number(servicioVisualizar.neto_servicio ?? servicioVisualizar.precio_cobrado ?? 0).toFixed(2)}</p>
                     </div>
+                    <div>
+                      <p className="text-sm text-gray-600">Reparto establecimiento</p>
+                      <p className="font-bold text-gray-900">{origenReparto}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-600">Valor establecimiento</p>
+                      <p className="font-bold text-gray-900">${Number(servicioVisualizar.monto_establecimiento || 0).toFixed(2)}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-600">Valor empleado</p>
+                      <p className="font-bold text-gray-900">${Number(servicioVisualizar.monto_estilista || 0).toFixed(2)}</p>
+                    </div>
                     <div className="col-span-2">
                       <p className="text-sm text-gray-600">Total cobrado al cliente</p>
                       <p className="font-bold text-lg text-green-600">${(Number(servicioVisualizar.precio_cobrado || 0) + Number(servicioVisualizar.valor_adicionales || 0)).toFixed(2)}</p>
@@ -1012,6 +1042,8 @@ const Ventas = () => {
                       </div>
                     )}
                   </div>
+                    );
+                  })()}
 
                   {servicioVisualizar.factura_texto && (
                     <div>
@@ -1343,6 +1375,26 @@ const Ventas = () => {
               <option key={m.value} value={m.value}>{m.label}</option>
             ))}
           </select>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <select
+              className="input-field"
+              value={servicioForm.tipo_reparto_establecimiento || ''}
+              onChange={(e) => setServicioForm((p) => ({ ...p, tipo_reparto_establecimiento: e.target.value }))}
+            >
+              <option value="">Automatico por configuracion del empleado</option>
+              <option value="porcentaje">Porcentaje para establecimiento</option>
+              <option value="monto">Monto fijo para establecimiento</option>
+            </select>
+            <input
+              className="input-field"
+              type="number"
+              min="0"
+              step="0.01"
+              placeholder="Valor reparto establecimiento"
+              value={servicioForm.valor_reparto_establecimiento || ''}
+              onChange={(e) => setServicioForm((p) => ({ ...p, valor_reparto_establecimiento: e.target.value }))}
+            />
+          </div>
           <label className="inline-flex items-center gap-2 text-sm text-gray-700">
             <input
               type="checkbox"

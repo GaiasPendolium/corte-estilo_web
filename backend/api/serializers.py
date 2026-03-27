@@ -228,8 +228,8 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
                     valor_num = float(valor_reparto or 0)
                 except Exception:
                     raise serializers.ValidationError({'valor_reparto_establecimiento': 'Valor de reparto inválido.'})
-                if valor_num <= 0:
-                    raise serializers.ValidationError({'valor_reparto_establecimiento': 'El valor de reparto debe ser mayor a 0.'})
+                if valor_num < 0:
+                    raise serializers.ValidationError({'valor_reparto_establecimiento': 'El valor de reparto no puede ser negativo.'})
                 if tipo_reparto_str == 'porcentaje' and valor_num > 100:
                     raise serializers.ValidationError({'valor_reparto_establecimiento': 'El porcentaje no puede ser mayor a 100.'})
 
