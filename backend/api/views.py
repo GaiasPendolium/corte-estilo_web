@@ -90,31 +90,19 @@ def _monto_estilista_resuelto(srv):
 
     tipo_reparto = str(srv.tipo_reparto_establecimiento or '').strip().lower()
     monto_establecimiento = Decimal(srv.monto_establecimiento or 0)
+    nombre_servicio = str(getattr(getattr(srv, 'servicio', None), 'nombre', '') or '').lower()
+
+    if 'shampoo' in nombre_servicio:
+        return Decimal(0)
 
     # Si el servicio sí tiene reparto explícito, usarlo como fuente de verdad.
-    if tipo_reparto in {'porcentaje', 'monto'} or monto_establecimiento > 0:
+    if tipo_reparto in {'porcentaje', 'monto'}:
         monto_calc = neto - monto_establecimiento
         if monto_calc < 0:
             return Decimal(0)
         if monto_calc > neto:
             return neto
         return monto_calc
-
-    nombre_servicio = str(getattr(getattr(srv, 'servicio', None), 'nombre', '') or '').lower()
-    if 'shampoo' in nombre_servicio:
-        return Decimal(0)
-
-    # Fallback por configuración del estilista cuando no quedó reparto persistido.
-    tipo_cobro = str(getattr(getattr(srv, 'estilista', None), 'tipo_cobro_espacio', '') or '').strip().lower()
-    valor_cobro = Decimal(getattr(getattr(srv, 'estilista', None), 'valor_cobro_espacio', 0) or 0)
-    if tipo_cobro == 'porcentaje_neto':
-        if valor_cobro < 0:
-            valor_cobro = Decimal(0)
-        if valor_cobro > 100:
-            valor_cobro = Decimal(100)
-        monto_est = (neto * valor_cobro) / Decimal(100)
-        monto_calc = neto - monto_est
-        return max(monto_calc, Decimal(0))
 
     return neto
 
@@ -123,9 +111,8 @@ def _descuento_puesto_dia(estilista, base_servicio_dia):
     """
     Calcula descuento diario de puesto sin doble descuento.
 
-    Regla clave: para porcentaje_neto el valor ya viene descontado en
-    `monto_estilista` durante la facturación del servicio, por lo que aquí no se
-    vuelve a descontar.
+    Regla clave: el porcentaje de espacio se cobra aquí, en liquidación diaria,
+    no en la factura del servicio.
     """
     tipo = str(getattr(estilista, 'tipo_cobro_espacio', '') or '').strip().lower()
     valor_cfg = Decimal(getattr(estilista, 'valor_cobro_espacio', 0) or 0)
@@ -134,7 +121,14 @@ def _descuento_puesto_dia(estilista, base_servicio_dia):
         return max(Decimal(0), valor_cfg)
 
     if tipo == 'porcentaje_neto':
-        return Decimal(0)
+        if valor_cfg < 0:
+            valor_cfg = Decimal(0)
+        if valor_cfg > 100:
+            valor_cfg = Decimal(100)
+        descuento = (Decimal(base_servicio_dia or 0) * valor_cfg) / Decimal(100)
+        if descuento > Decimal(base_servicio_dia or 0):
+            descuento = Decimal(base_servicio_dia or 0)
+        return max(descuento, Decimal(0))
 
     return Decimal(0)
 

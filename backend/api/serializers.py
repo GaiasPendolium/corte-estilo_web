@@ -172,6 +172,45 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
             pct = 100
         return float((total * pct) / 100)
 
+    def _usa_reparto_explicito(self, servicio):
+        return str(getattr(servicio, 'tipo_reparto_establecimiento', '') or '').strip().lower() in {'porcentaje', 'monto'}
+
+    def _resolver_montos_servicio(self, servicio):
+        neto = float(getattr(servicio, 'neto_servicio', None) or getattr(servicio, 'precio_cobrado', 0) or 0)
+        neto = max(neto, 0)
+        es_shampoo_principal = self._es_servicio_shampoo(getattr(servicio, 'servicio', None))
+
+        if es_shampoo_principal:
+            return {
+                'monto_establecimiento': neto,
+                'monto_estilista': 0.0,
+                'reparto_origen': 'shampoo',
+            }
+
+        if self._usa_reparto_explicito(servicio):
+            monto_establecimiento = float(getattr(servicio, 'monto_establecimiento', 0) or 0)
+            monto_establecimiento = min(max(monto_establecimiento, 0.0), neto)
+            return {
+                'monto_establecimiento': monto_establecimiento,
+                'monto_estilista': neto - monto_establecimiento,
+                'reparto_origen': 'explicito',
+            }
+
+        # Sin reparto explícito: el servicio pertenece completo al empleado.
+        return {
+            'monto_establecimiento': 0.0,
+            'monto_estilista': neto,
+            'reparto_origen': 'sin_reparto',
+        }
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        montos = self._resolver_montos_servicio(instance)
+        data['monto_establecimiento'] = montos['monto_establecimiento']
+        data['monto_estilista'] = montos['monto_estilista']
+        data['reparto_origen'] = montos['reparto_origen']
+        return data
+
     def _es_servicio_shampoo(self, servicio_obj):
         nombre = str(getattr(servicio_obj, 'nombre', '') or '').lower()
         return 'shampoo' in nombre
@@ -652,14 +691,9 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
                 valor_reparto = 0
             monto_establecimiento = valor_reparto
         else:
-            tipo_cobro = servicio.estilista.tipo_cobro_espacio or 'sin_cobro'
-            valor_cobro = float(servicio.estilista.valor_cobro_espacio or 0)
-            if tipo_cobro == 'porcentaje_neto':
-                monto_establecimiento = (neto * valor_cobro) / 100
-            elif tipo_cobro == 'costo_fijo_neto':
-                # El cobro fijo de espacio se liquida por día trabajado en Reportes BI,
-                # para evitar descontarlo múltiples veces por cada servicio del mismo día.
-                monto_establecimiento = 0
+            # Sin reparto explícito, el servicio queda 100% para el empleado.
+            # El cobro de espacio del estilista se maneja únicamente en Liquidación.
+            monto_establecimiento = 0
 
         if monto_establecimiento < 0:
             monto_establecimiento = 0
