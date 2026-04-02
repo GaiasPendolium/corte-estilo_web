@@ -77,7 +77,25 @@ const buildServiceItems = (data) => {
     });
   }
 
-  const totalServicio = principalValor + adicionales.reduce((acc, ad) => acc + Number(ad?.valor || 0), 0) + productoAdicionalTotal;
+  const valorAdicionalesTotal = Number(data?.valor_adicionales || 0);
+  const valorAdicionalesAsignados = adicionales.reduce((acc, ad) => acc + Number(ad?.valor || 0), 0);
+  const adicionalNoDesglosado = Math.max(
+    0,
+    valorAdicionalesTotal - valorAdicionalesAsignados - productoAdicionalTotal,
+  );
+
+  if (adicionalNoDesglosado > 0) {
+    // Si hay un remanente en valor_adicionales que no está en detalle,
+    // se muestra para evitar diferencias opacas en el ticket.
+    items.push({
+      servicio: 'Adicional no desglosado',
+      estilista: data?.estilista_nombre || '-',
+      valor: adicionalNoDesglosado,
+    });
+    adicionalesEstablecimiento += adicionalNoDesglosado;
+  }
+
+  const totalServicio = principalValor + valorAdicionalesTotal;
   const totalEmpleado = principalEmpleado + adicionalesEmpleado + productoAdicionalEmpleado;
   const totalEstablecimiento = principalEstablecimiento + adicionalesEstablecimiento + productoAdicionalEstablecimiento;
 
