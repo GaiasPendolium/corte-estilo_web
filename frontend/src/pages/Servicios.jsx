@@ -417,7 +417,7 @@ const Servicios = () => {
       .filter((item) => Number(item.producto?.id) === Number(productoId))
       .reduce((acc, item) => acc + Number(item.cantidad || 0), 0);
 
-  const totalFinalizacion = useMemo(() => {
+  const resumenCobroFinalizacion = useMemo(() => {
     const precioBase = toPesoInt(finalizacion.precio_cobrado || 0);
     const adicionalesServicios = finalizacion.tiene_adicionales
       ? (finalizacion.adicionales_servicio_items || []).reduce(
@@ -433,8 +433,16 @@ const Servicios = () => {
       ? cantidadProductoAdicional * toPesoInt(productoAdicionalSeleccionado.precio_venta || 0)
       : 0;
 
-    return precioBase + adicionalesServicios + totalProductoAdicional;
+    const total = precioBase + adicionalesServicios + totalProductoAdicional;
+    return {
+      precioBase,
+      adicionalesServicios,
+      totalProductoAdicional,
+      total,
+    };
   }, [finalizacion]);
+
+  const totalFinalizacion = resumenCobroFinalizacion.total;
 
   const devueltaServicio = useMemo(() => {
     if (finalizacion.medio_pago !== 'efectivo') return 0;
@@ -1759,6 +1767,27 @@ const Servicios = () => {
               </div>
             </>
           )}
+
+          <div className="md:col-span-3 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3">
+            <p className="text-sm text-emerald-900 font-semibold">Total a cobrar al cliente</p>
+            <p className="text-3xl font-extrabold text-emerald-950 mt-1">{formatCOP(totalFinalizacion)}</p>
+            <div className="mt-2 text-xs text-emerald-900 grid grid-cols-1 md:grid-cols-3 gap-1">
+              <p>Servicio base: <strong>{formatCOP(resumenCobroFinalizacion.precioBase)}</strong></p>
+              <p>Servicios adicionales: <strong>{formatCOP(resumenCobroFinalizacion.adicionalesServicios)}</strong></p>
+              <p>Producto adicional: <strong>{formatCOP(resumenCobroFinalizacion.totalProductoAdicional)}</strong></p>
+            </div>
+            {finalizacion.medio_pago === 'efectivo' && (
+              <div className="mt-2 text-xs">
+                {toPesoInt(finalizacion.valor_recibido || 0) >= totalFinalizacion ? (
+                  <p className="text-emerald-800">Devuelta estimada: <strong>{formatCOP(devueltaServicio)}</strong></p>
+                ) : (
+                  <p className="text-rose-700">
+                    Falta por recibir: <strong>{formatCOP(totalFinalizacion - toPesoInt(finalizacion.valor_recibido || 0))}</strong>
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
 
           <div className="md:col-span-3 flex gap-2">
             <button className="btn-primary" type="submit" disabled={saving}>Revisar y finalizar</button>
