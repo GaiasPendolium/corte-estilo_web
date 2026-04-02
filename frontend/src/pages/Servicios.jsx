@@ -126,6 +126,11 @@ const isDepilationServiceName = (nombre) => {
   return n.includes('depilacion') || n.includes('depilación');
 };
 
+const isPestanasServiceName = (nombre) => {
+  const n = String(nombre || '').toLowerCase();
+  return n.includes('pesta');
+};
+
 const moneyFormatterCOP = new Intl.NumberFormat('es-CO', {
   style: 'currency',
   currency: 'COP',
@@ -326,6 +331,11 @@ const Servicios = () => {
     [servicioPrincipalSeleccionado]
   );
 
+  const servicioPrincipalEsPestanas = useMemo(
+    () => isPestanasServiceName(servicioPrincipalSeleccionado?.servicio_nombre || servicioPrincipalSeleccionado?.nombre),
+    [servicioPrincipalSeleccionado]
+  );
+
   const servicioPrincipalPermiteReparto = useMemo(
     () => Boolean(servicioPrincipalCatalogo?.es_adicional) && !servicioPrincipalEsShampoo,
     [servicioPrincipalCatalogo, servicioPrincipalEsShampoo]
@@ -429,18 +439,23 @@ const Servicios = () => {
       (p) => Number(p.id) === Number(finalizacion.adicional_otro_producto || 0)
     );
     const cantidadProductoAdicional = toPositiveInt(finalizacion.adicional_otro_cantidad || 0);
+    const aplicaInsumoPestanas =
+      servicioPrincipalEsPestanas
+      && finalizacion.tipo_reparto_establecimiento === 'porcentaje'
+      && Number(finalizacion.valor_reparto_establecimiento || 0) > 0;
     const totalProductoAdicional = finalizacion.tiene_adicionales && productoAdicionalSeleccionado
       ? cantidadProductoAdicional * toPesoInt(productoAdicionalSeleccionado.precio_venta || 0)
       : 0;
 
-    const total = precioBase + adicionalesServicios + totalProductoAdicional;
+    const total = precioBase + adicionalesServicios + (aplicaInsumoPestanas ? 0 : totalProductoAdicional);
     return {
       precioBase,
       adicionalesServicios,
       totalProductoAdicional,
+      aplicaInsumoPestanas,
       total,
     };
-  }, [finalizacion]);
+  }, [finalizacion, productos, servicioPrincipalEsPestanas]);
 
   const totalFinalizacion = resumenCobroFinalizacion.total;
 
@@ -690,7 +705,12 @@ const Servicios = () => {
           return;
         }
 
-        if (!finalizacion.adicional_otro_estilista) {
+        const aplicaInsumoPestanas =
+          servicioPrincipalEsPestanas
+          && finalizacion.tipo_reparto_establecimiento === 'porcentaje'
+          && Number(finalizacion.valor_reparto_establecimiento || 0) > 0;
+
+        if (!aplicaInsumoPestanas && !finalizacion.adicional_otro_estilista) {
           toast.warning('Selecciona el empleado que gana la comisión del producto adicional');
           return;
         }
@@ -748,6 +768,10 @@ const Servicios = () => {
       const productoAdicionalId = finalizacion.tiene_adicionales && finalizacion.adicional_otro_producto
         ? Number(finalizacion.adicional_otro_producto)
         : null;
+      const aplicaInsumoPestanas =
+        servicioPrincipalEsPestanas
+        && finalizacion.tipo_reparto_establecimiento === 'porcentaje'
+        && Number(finalizacion.valor_reparto_establecimiento || 0) > 0;
       const tipoRepartoPrincipal = servicioPrincipalEsShampoo
         ? 'porcentaje'
         : (servicioPrincipalPermiteReparto ? finalizacion.tipo_reparto_establecimiento : '');
@@ -768,7 +792,7 @@ const Servicios = () => {
         adicional_shampoo: finalizacion.tiene_adicionales ? flagsLegacy.adicional_shampoo : false,
         adicional_guantes: finalizacion.tiene_adicionales ? flagsLegacy.adicional_guantes : false,
         adicional_otro_producto: productoAdicionalId,
-        adicional_otro_estilista: productoAdicionalId ? Number(finalizacion.adicional_otro_estilista) : null,
+        adicional_otro_estilista: (productoAdicionalId && !aplicaInsumoPestanas) ? Number(finalizacion.adicional_otro_estilista) : null,
         adicional_otro_cantidad: productoAdicionalId ? qtyProductoAdicional : 1,
         adicional_otro_descuento_empleado: false,
         adicional_otro_precio_unitario: null,
@@ -1656,6 +1680,11 @@ const Servicios = () => {
 
                 <div className="mt-4 rounded-lg border border-indigo-200 bg-indigo-50 p-3">
                   <p className="text-sm font-medium text-indigo-900 mb-2">Producto de venta adicional (un solo ticket)</p>
+                  {servicioPrincipalEsPestanas && finalizacion.tipo_reparto_establecimiento === 'porcentaje' && Number(finalizacion.valor_reparto_establecimiento || 0) > 0 && (
+                    <p className="text-xs text-indigo-900 mb-2">
+                      En Pestañas con ganancia de establecimiento, este producto se toma como insumo: se descuenta de inventario y del porcentaje del establecimiento, sin cobrarse adicional al cliente.
+                    </p>
+                  )}
                   <div className="grid grid-cols-1 md:grid-cols-12 gap-2">
                     <div className="md:col-span-6 relative">
                       <input
@@ -1724,9 +1753,14 @@ const Servicios = () => {
                       <select
                         className="input-field"
                         value={finalizacion.adicional_otro_estilista || ''}
+                        disabled={servicioPrincipalEsPestanas && finalizacion.tipo_reparto_establecimiento === 'porcentaje' && Number(finalizacion.valor_reparto_establecimiento || 0) > 0}
                         onChange={(e) => setFinalizacion((p) => ({ ...p, adicional_otro_estilista: e.target.value }))}
                       >
-                        <option value="">Empleado que gana comisión de producto</option>
+                        <option value="">
+                          {servicioPrincipalEsPestanas && finalizacion.tipo_reparto_establecimiento === 'porcentaje' && Number(finalizacion.valor_reparto_establecimiento || 0) > 0
+                            ? 'No aplica comisión (insumo establecimiento)'
+                            : 'Empleado que gana comisión de producto'}
+                        </option>
                         {estilistas.map((e) => (
                           <option key={e.id} value={e.id}>{e.nombre}</option>
                         ))}
@@ -1742,11 +1776,15 @@ const Servicios = () => {
                       const totalSel = qtySel * toPesoInt(productoSel.precio_venta || 0);
                       const pctComision = Number(productoSel.comision_estilista || 0);
                       const valorComision = totalSel * (pctComision / 100);
+                      const aplicaInsumoPestanas =
+                        servicioPrincipalEsPestanas
+                        && finalizacion.tipo_reparto_establecimiento === 'porcentaje'
+                        && Number(finalizacion.valor_reparto_establecimiento || 0) > 0;
                       return (
                         <div className="mt-3 rounded border border-indigo-200 bg-white p-2 text-xs text-indigo-900">
                           <p>Producto: <strong>{formatProductCompactLabel(productoSel)}</strong></p>
-                          <p>Total producto adicional: <strong>{formatCOP(totalSel)}</strong></p>
-                          <p>Comisión ({pctComision}%): <strong>{formatCOP(valorComision)}</strong></p>
+                          <p>{aplicaInsumoPestanas ? 'Costo insumo:' : 'Total producto adicional:'} <strong>{formatCOP(totalSel)}</strong></p>
+                          {!aplicaInsumoPestanas && <p>Comisión ({pctComision}%): <strong>{formatCOP(valorComision)}</strong></p>}
                         </div>
                       );
                     })()
@@ -1762,7 +1800,7 @@ const Servicios = () => {
             <div className="mt-2 text-xs text-emerald-900 grid grid-cols-1 md:grid-cols-3 gap-1">
               <p>Servicio base: <strong>{formatCOP(resumenCobroFinalizacion.precioBase)}</strong></p>
               <p>Servicios adicionales: <strong>{formatCOP(resumenCobroFinalizacion.adicionalesServicios)}</strong></p>
-              <p>Producto adicional: <strong>{formatCOP(resumenCobroFinalizacion.totalProductoAdicional)}</strong></p>
+              <p>{resumenCobroFinalizacion.aplicaInsumoPestanas ? 'Insumo (descuento establecimiento):' : 'Producto adicional:'} <strong>{formatCOP(resumenCobroFinalizacion.totalProductoAdicional)}</strong></p>
             </div>
             {finalizacion.medio_pago === 'efectivo' && (
               <div className="mt-2 text-xs">
