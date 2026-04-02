@@ -412,7 +412,10 @@ def calcular_liquidacion_dia_estilista(estilista, fecha_dia):
     ganancias_totales = servicios_base + comisiones_adicionales + comisiones_ventas
     
     # ============ [2] DESCUENTO POR PUESTO ============
-    descuento_puesto = _descuento_puesto_dia(estilista, servicios_base)
+    # La base del puesto debe usar el valor de servicios del empleado (incluye
+    # servicios adicionales asignados), pero no comisiones de ventas de producto.
+    base_puesto = servicios_base + comisiones_adicionales
+    descuento_puesto = _descuento_puesto_dia(estilista, base_puesto)
     
     # [2] TOTAL PAGABLE AL EMPLEADO = ganancias completas del día.
     # La deuda del puesto se registra por separado y puede quedar pendiente.
