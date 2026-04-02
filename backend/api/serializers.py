@@ -228,8 +228,6 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
     def get_adicional_otro_total(self, obj):
         if not obj.adicional_otro_producto_id:
             return 0
-        if self._usa_insumo_pestanas(obj):
-            return 0
         qty = int(obj.adicional_otro_cantidad or 1)
         unit = float(obj.adicional_otro_producto.precio_venta or 0)
         return float(unit * qty)
@@ -293,24 +291,6 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
     def _es_servicio_depilacion(self, servicio_obj):
         nombre = str(getattr(servicio_obj, 'nombre', '') or '').lower()
         return 'depilacion' in nombre or 'depilación' in nombre
-
-    def _es_servicio_pestanas(self, servicio_obj):
-        nombre = str(getattr(servicio_obj, 'nombre', '') or '').lower()
-        return 'pesta' in nombre
-
-    def _usa_insumo_pestanas(self, servicio):
-        if not servicio or not getattr(servicio, 'adicional_otro_producto_id', None):
-            return False
-        if not self._es_servicio_pestanas(getattr(servicio, 'servicio', None)):
-            return False
-        tipo = str(getattr(servicio, 'tipo_reparto_establecimiento', '') or '').strip().lower()
-        if tipo != 'porcentaje':
-            return False
-        try:
-            pct = float(getattr(servicio, 'valor_reparto_establecimiento', 0) or 0)
-        except Exception:
-            pct = 0
-        return pct > 0
 
     def _es_servicio_adicional_permitido(self, servicio_obj):
         if not servicio_obj:
@@ -797,27 +777,21 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
             else:
                 precio_unitario = float(servicio.adicional_otro_producto.precio_venta or 0)
                 detalle_tag = ''
-            total_producto = precio_unitario * cantidad
 
-            if self._usa_insumo_pestanas(servicio):
-                adicionales_detalle.append(
-                    f"Insumo {servicio.adicional_otro_producto.nombre} x{cantidad} = ${total_producto:.2f} (descuento establecimiento)"
+            total_adicionales += precio_unitario * cantidad
+            comision_pct = float(servicio.adicional_otro_producto.comision_estilista or 0)
+            if comision_pct < 0:
+                comision_pct = 0
+            if comision_pct > 100:
+                comision_pct = 100
+            comision_valor = (precio_unitario * cantidad) * (comision_pct / 100.0)
+            estilista_comision = servicio.adicional_otro_estilista.nombre if servicio.adicional_otro_estilista else 'Sin empleado'
+            adicionales_detalle.append(
+                (
+                    f"{servicio.adicional_otro_producto.nombre} x{cantidad} = ${(precio_unitario * cantidad):.2f}{detalle_tag}"
+                    f" (Comision {estilista_comision}: ${comision_valor:.2f})"
                 )
-            else:
-                total_adicionales += total_producto
-                comision_pct = float(servicio.adicional_otro_producto.comision_estilista or 0)
-                if comision_pct < 0:
-                    comision_pct = 0
-                if comision_pct > 100:
-                    comision_pct = 100
-                comision_valor = total_producto * (comision_pct / 100.0)
-                estilista_comision = servicio.adicional_otro_estilista.nombre if servicio.adicional_otro_estilista else 'Sin empleado'
-                adicionales_detalle.append(
-                    (
-                        f"{servicio.adicional_otro_producto.nombre} x{cantidad} = ${total_producto:.2f}{detalle_tag}"
-                        f" (Comision {estilista_comision}: ${comision_valor:.2f})"
-                    )
-                )
+            )
 
         servicio.valor_adicionales = total_adicionales
         servicio._adicionales_detalle = adicionales_detalle
@@ -883,10 +857,6 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
         if monto_establecimiento > neto:
             monto_establecimiento = neto
 
-        if self._usa_insumo_pestanas(servicio):
-            costo_insumo = float(servicio.adicional_otro_producto.precio_venta or 0) * float(servicio.adicional_otro_cantidad or 1)
-            monto_establecimiento = max(0.0, monto_establecimiento - max(costo_insumo, 0.0))
-
         servicio.neto_servicio = neto
         servicio.monto_establecimiento = monto_establecimiento
         servicio.monto_estilista = neto - monto_establecimiento
@@ -924,20 +894,18 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
                 }
             )
 
-        usa_insumo_pestanas = self._usa_insumo_pestanas(servicio)
         valor_producto_adicional = 0.0
         if servicio.adicional_otro_producto_id:
             qty_prod = int(servicio.adicional_otro_cantidad or 1)
             unit_prod = float(servicio.adicional_otro_producto.precio_venta or 0)
             valor_producto_adicional = unit_prod * qty_prod
-            if not usa_insumo_pestanas:
-                detalle_servicios.append(
-                    {
-                        'servicio': f"Producto: {servicio.adicional_otro_producto.nombre} x{qty_prod}",
-                        'estilista': servicio.adicional_otro_estilista.nombre if servicio.adicional_otro_estilista else '-',
-                        'valor': valor_producto_adicional,
-                    }
-                )
+            detalle_servicios.append(
+                {
+                    'servicio': f"Producto: {servicio.adicional_otro_producto.nombre} x{qty_prod}",
+                    'estilista': servicio.adicional_otro_estilista.nombre if servicio.adicional_otro_estilista else '-',
+                    'valor': valor_producto_adicional,
+                }
+            )
 
         if len(adicionales_asignados) == 0:
             valor_adicionales_remanente = float(servicio.valor_adicionales or 0) - valor_producto_adicional
@@ -1007,7 +975,7 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
             )
 
         bloque_comision_producto = ''
-        if servicio.adicional_otro_producto_id and servicio.adicional_otro_estilista_id and not usa_insumo_pestanas:
+        if servicio.adicional_otro_producto_id and servicio.adicional_otro_estilista_id:
             qty_prod = int(servicio.adicional_otro_cantidad or 1)
             unit_prod = float(servicio.adicional_otro_producto.precio_venta or 0)
             total_prod = unit_prod * qty_prod
@@ -1036,7 +1004,6 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
             f"- Total servicio: ${valor_principal_total:.2f}\n"
             f"- Para empleado: ${float(montos_principal['monto_estilista']):.2f}\n"
             f"- Para establecimiento: ${float(montos_principal['monto_establecimiento']):.2f}\n"
-            f"{(f'- Costo insumo (pestañas): ${valor_producto_adicional:.2f}\\n' if usa_insumo_pestanas and valor_producto_adicional > 0 else '')}"
             f"{bloque_comision}\n"
             f"{bloque_comision_producto}\n"
             f"Total: ${total_cobrado:.2f}\n"

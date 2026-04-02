@@ -126,11 +126,6 @@ const isDepilationServiceName = (nombre) => {
   return n.includes('depilacion') || n.includes('depilación');
 };
 
-const isPestanasServiceName = (nombre) => {
-  const n = String(nombre || '').toLowerCase();
-  return n.includes('pesta');
-};
-
 const moneyFormatterCOP = new Intl.NumberFormat('es-CO', {
   style: 'currency',
   currency: 'COP',
@@ -331,11 +326,6 @@ const Servicios = () => {
     [servicioPrincipalSeleccionado]
   );
 
-  const servicioPrincipalEsPestanas = useMemo(
-    () => isPestanasServiceName(servicioPrincipalSeleccionado?.servicio_nombre || servicioPrincipalSeleccionado?.nombre),
-    [servicioPrincipalSeleccionado]
-  );
-
   const servicioPrincipalPermiteReparto = useMemo(
     () => Boolean(servicioPrincipalCatalogo?.es_adicional) && !servicioPrincipalEsShampoo,
     [servicioPrincipalCatalogo, servicioPrincipalEsShampoo]
@@ -439,23 +429,18 @@ const Servicios = () => {
       (p) => Number(p.id) === Number(finalizacion.adicional_otro_producto || 0)
     );
     const cantidadProductoAdicional = toPositiveInt(finalizacion.adicional_otro_cantidad || 0);
-    const aplicaInsumoPestanas =
-      servicioPrincipalEsPestanas
-      && finalizacion.tipo_reparto_establecimiento === 'porcentaje'
-      && Number(finalizacion.valor_reparto_establecimiento || 0) > 0;
     const totalProductoAdicional = finalizacion.tiene_adicionales && productoAdicionalSeleccionado
       ? cantidadProductoAdicional * toPesoInt(productoAdicionalSeleccionado.precio_venta || 0)
       : 0;
 
-    const total = precioBase + adicionalesServicios + (aplicaInsumoPestanas ? 0 : totalProductoAdicional);
+    const total = precioBase + adicionalesServicios + totalProductoAdicional;
     return {
       precioBase,
       adicionalesServicios,
       totalProductoAdicional,
-      aplicaInsumoPestanas,
       total,
     };
-  }, [finalizacion, productos, servicioPrincipalEsPestanas]);
+  }, [finalizacion]);
 
   const totalFinalizacion = resumenCobroFinalizacion.total;
 
@@ -1777,7 +1762,7 @@ const Servicios = () => {
             <div className="mt-2 text-xs text-emerald-900 grid grid-cols-1 md:grid-cols-3 gap-1">
               <p>Servicio base: <strong>{formatCOP(resumenCobroFinalizacion.precioBase)}</strong></p>
               <p>Servicios adicionales: <strong>{formatCOP(resumenCobroFinalizacion.adicionalesServicios)}</strong></p>
-              <p>{resumenCobroFinalizacion.aplicaInsumoPestanas ? 'Insumo (descuento establecimiento):' : 'Producto adicional:'} <strong>{formatCOP(resumenCobroFinalizacion.totalProductoAdicional)}</strong></p>
+              <p>Producto adicional: <strong>{formatCOP(resumenCobroFinalizacion.totalProductoAdicional)}</strong></p>
             </div>
             {finalizacion.medio_pago === 'efectivo' && (
               <div className="mt-2 text-xs">
