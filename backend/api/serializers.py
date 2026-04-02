@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.utils import timezone
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, connection, transaction
 from .models import (
     Usuario, Estilista, Servicio, Cliente, Producto,
     ServicioRealizado, ServicioRealizadoAdicional, VentaProducto, MovimientoInventario
@@ -115,6 +115,15 @@ class ProductoSerializer(serializers.ModelSerializer):
             siguiente += 1
         return str(siguiente)
 
+    def _sync_productos_pk_sequence(self):
+        # Si la secuencia de Postgres se desincroniza, el INSERT puede intentar reusar un id existente.
+        if connection.vendor != 'postgresql':
+            return
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT setval(pg_get_serial_sequence('productos', 'id'), COALESCE(MAX(id), 1), true) FROM productos;"
+            )
+
     def create(self, validated_data):
         code = self._normalize_codigo_barras(validated_data.get('codigo_barras'))
         if code:
@@ -131,6 +140,10 @@ class ProductoSerializer(serializers.ModelSerializer):
                     return super().create(payload)
             except IntegrityError as exc:
                 msg = str(exc).lower()
+                if 'productos_pkey' in msg or 'key (id)=' in msg:
+                    self._sync_productos_pk_sequence()
+                    last_error = exc
+                    continue
                 # Si la falla no es por unicidad de codigo_barras, devolvemos la causa real.
                 if 'codigo_barras' not in msg:
                     raise serializers.ValidationError({
