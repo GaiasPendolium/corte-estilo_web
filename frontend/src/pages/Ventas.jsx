@@ -9,7 +9,7 @@ import { qzTrayService } from '../services/printing/qzTrayService';
 import { ticketPrintService } from '../services/printing/ticketPrintService';
 import { customerDisplayService } from '../services/customerDisplayService';
 import { canManageInvoices } from '../utils/roles';
-import { buildThermalTicketPreview, printThermalTicket } from '../utils/thermalTicketPrint';
+import { buildThermalTicketPreview } from '../utils/thermalTicketPrint';
 
 const MEDIOS_PAGO = [
   { value: 'nequi', label: 'Nequi' },
@@ -37,6 +37,7 @@ const productMatchesSearch = (producto, query) => {
   if (!q) return true;
 
   const index = normalizeSearchText([
+    producto.id,
     producto.codigo_barras,
     producto.marca,
     producto.descripcion,
@@ -83,10 +84,6 @@ const formatDateTimeLocalInput = (value) => {
 };
 
 const esServicioShampooNombre = (nombre) => String(nombre || '').toLowerCase().includes('shampoo');
-
-const imprimirFacturaHtml = ({ tipo, data }) => {
-  printThermalTicket({ type: tipo === 'servicio' ? 'servicio' : 'venta', data });
-};
 
 const Ventas = () => {
   const { user } = useAuthStore();
@@ -453,41 +450,19 @@ const Ventas = () => {
 
   const reimprimirVenta = async (venta) => {
     try {
-      const hasQzPrinter = Boolean(qzTrayService.getSelectedPrinter());
-      if (hasQzPrinter) {
-        await ticketPrintService.reprintProductSale(venta);
-        toast.success('Ticket reenviado a impresora POS');
-        return;
-      }
-      imprimirFacturaHtml({ tipo: 'venta', data: venta, estilistas });
-      toast.success('Factura abierta para impresión');
+      await ticketPrintService.reprintProductSale(venta);
+      toast.success('Ticket reenviado a impresora POS');
     } catch (error) {
-      try {
-        imprimirFacturaHtml({ tipo: 'venta', data: venta, estilistas });
-        toast.info('No se pudo usar POS. Se abrió impresión del navegador.');
-      } catch (fallbackError) {
-        toast.error(fallbackError.message || error.message || 'No se pudo abrir la impresión de la factura');
-      }
+      toast.error(error?.message || 'No se pudo reenviar el ticket a QZ Tray');
     }
   };
 
   const reimprimirServicio = async (servicio) => {
     try {
-      const hasQzPrinter = Boolean(qzTrayService.getSelectedPrinter());
-      if (hasQzPrinter) {
-        await ticketPrintService.reprintServiceSale(servicio);
-        toast.success('Ticket reenviado a impresora POS');
-        return;
-      }
-      imprimirFacturaHtml({ tipo: 'servicio', data: servicio, estilistas });
-      toast.success('Factura abierta para impresión');
+      await ticketPrintService.reprintServiceSale(servicio);
+      toast.success('Ticket reenviado a impresora POS');
     } catch (error) {
-      try {
-        imprimirFacturaHtml({ tipo: 'servicio', data: servicio, estilistas });
-        toast.info('No se pudo usar POS. Se abrió impresión del navegador.');
-      } catch (fallbackError) {
-        toast.error(fallbackError.message || error.message || 'No se pudo abrir la impresión de la factura');
-      }
+      toast.error(error?.message || 'No se pudo reenviar el ticket a QZ Tray');
     }
   };
 

@@ -55,6 +55,7 @@ const productMatchesSearch = (producto, query) => {
   if (!q) return true;
 
   const index = normalizeSearchText([
+    producto.id,
     producto.codigo_barras,
     producto.marca,
     producto.descripcion,
@@ -548,7 +549,8 @@ const Productos = () => {
 
         <div>
           <label className="block text-sm text-gray-600 mb-1">Código de barras</label>
-          <input className="input-field" placeholder="Ej: 7701234567890" value={form.codigo_barras} onChange={(e) => setForm((p) => ({ ...p, codigo_barras: e.target.value }))} />
+          <input className="input-field" placeholder="Opcional. Si lo dejas vacío se genera automático" value={form.codigo_barras} onChange={(e) => setForm((p) => ({ ...p, codigo_barras: e.target.value }))} />
+          <p className="text-xs text-gray-500 mt-1">Se autogenera un número único incremental si no ingresas código.</p>
         </div>
         <div>
           <label className="block text-sm text-gray-600 mb-1">Nombre <span className="text-red-500">*</span></label>

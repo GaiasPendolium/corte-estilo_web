@@ -320,7 +320,10 @@ export const printThermalTicket = ({ type, data }) => {
     if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
   };
 
+  let printed = false;
   const triggerPrint = () => {
+    if (printed) return;
+    printed = true;
     try {
       iframe.contentWindow?.focus();
       iframe.contentWindow?.print();

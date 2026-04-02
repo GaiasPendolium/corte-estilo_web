@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.utils import timezone
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from .models import (
     Usuario, Estilista, Servicio, Cliente, Producto,
     ServicioRealizado, ServicioRealizadoAdicional, VentaProducto, MovimientoInventario
@@ -94,6 +94,55 @@ class ProductoSerializer(serializers.ModelSerializer):
             'precio_compra', 'precio_venta', 'comision_estilista', 'stock',
             'stock_minimo', 'activo', 'necesita_reposicion'
         ]
+
+    def _normalize_codigo_barras(self, value):
+        code = str(value or '').strip()
+        return code or None
+
+    def _generate_next_codigo_barras(self):
+        # Toma el mayor codigo numerico existente y suma 1 para mantener secuencia.
+        codigos = Producto.objects.exclude(codigo_barras__isnull=True).values_list('codigo_barras', flat=True)
+        max_numeric = 0
+        for code in codigos:
+            s = str(code or '').strip()
+            if s.isdigit():
+                n = int(s)
+                if n > max_numeric:
+                    max_numeric = n
+
+        siguiente = max_numeric + 1 if max_numeric > 0 else 100000000001
+        while Producto.objects.filter(codigo_barras=str(siguiente)).exists():
+            siguiente += 1
+        return str(siguiente)
+
+    def create(self, validated_data):
+        code = self._normalize_codigo_barras(validated_data.get('codigo_barras'))
+        if code:
+            validated_data['codigo_barras'] = code
+            return super().create(validated_data)
+
+        # Reintento corto para evitar choques por concurrencia en codigo autogenerado.
+        last_error = None
+        for _ in range(5):
+            try:
+                payload = dict(validated_data)
+                payload['codigo_barras'] = self._generate_next_codigo_barras()
+                with transaction.atomic():
+                    return super().create(payload)
+            except IntegrityError as exc:
+                last_error = exc
+
+        raise serializers.ValidationError({
+            'codigo_barras': 'No se pudo generar un código automático único. Intenta nuevamente.'
+        }) from last_error
+
+    def update(self, instance, validated_data):
+        incoming = self._normalize_codigo_barras(validated_data.get('codigo_barras', instance.codigo_barras))
+        if not incoming:
+            validated_data['codigo_barras'] = instance.codigo_barras or self._generate_next_codigo_barras()
+        else:
+            validated_data['codigo_barras'] = incoming
+        return super().update(instance, validated_data)
 
 
 class ServicioRealizadoSerializer(serializers.ModelSerializer):

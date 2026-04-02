@@ -14,7 +14,6 @@ import DraggableSearchKeyboard from '../components/DraggableSearchKeyboard';
 import { ticketPrintService } from '../services/printing/ticketPrintService';
 import { customerDisplayService } from '../services/customerDisplayService';
 import useAuthStore from '../store/authStore';
-import { printThermalTicket } from '../utils/thermalTicketPrint';
 
 // Todos los perfiles autenticados pueden registrar ventas y servicios (operación diaria)
 // Solo admin/gerente pueden EDITAR o ELIMINAR del historial (controlado en Ventas.jsx y backend)
@@ -61,6 +60,7 @@ const productMatchesSearch = (producto, query) => {
   if (!q) return true;
 
   const index = normalizeSearchText([
+    producto.id,
     producto.codigo_barras,
     producto.marca,
     producto.descripcion,
@@ -802,15 +802,10 @@ const Servicios = () => {
       }
 
       try {
-        printThermalTicket({ type: 'servicio', data: res });
-        toast.success('Ticket térmico de servicio listo para imprimir');
+        await ticketPrintService.printServiceSaleAndOpenDrawer(res);
+        toast.success('Ticket de servicio impreso y caja abierta');
       } catch (printError) {
-        try {
-          await ticketPrintService.printServiceSaleAndOpenDrawer(res);
-          toast.success('Ticket de servicio impreso y caja abierta');
-        } catch (fallbackError) {
-          toast.error(fallbackError.message || 'El servicio se finalizo, pero no se pudo imprimir el ticket');
-        }
+        toast.error(printError.message || 'El servicio se finalizo, pero no se pudo imprimir el ticket');
       }
 
       setServicioFinalizarId('');
@@ -1074,18 +1069,11 @@ const Servicios = () => {
             })),
           };
 
-          printThermalTicket({ type: 'venta', data: ventaParaImprimir });
-          toast.success('Ticket térmico listo para imprimir');
+          await ticketPrintService.printProductSaleAndOpenDrawer(ventaParaImprimir);
+          toast.success('Ticket impreso y caja abierta');
         }
       } catch (printError) {
-        try {
-          if (ventaPrincipal) {
-            await ticketPrintService.printProductSaleAndOpenDrawer(ventaPrincipal);
-            toast.success('Ticket impreso y caja abierta');
-          }
-        } catch (fallbackError) {
-          toast.error(fallbackError.message || 'La(s) venta(s) se guardaron, pero no se pudo imprimir el ticket');
-        }
+        toast.error(printError.message || 'La(s) venta(s) se guardaron, pero no se pudo imprimir el ticket');
       }
 
       setVentaForm({ cliente_nombre: '', estilista: '', medio_pago: 'efectivo', valor_recibido: '', cantidad: '1', precio_unitario: '' });
