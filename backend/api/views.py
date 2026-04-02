@@ -380,7 +380,7 @@ def calcular_liquidacion_dia_estilista(estilista, fecha_dia):
         monto_estilista = valor_cobrado - (valor_cobrado * pct_est / Decimal(100))
         comisiones_adicionales += monto_estilista
     
-    # ============ [3] COMISIONES POR VENTA DE PRODUCTOS ============
+    # ============ [3] COMISIONES POR VENTA DE PRODUCTOS (CAJA) ============
     ventas_dia = VentaProducto.objects.select_related('producto').filter(
         estilista=estilista,
         tipo_operacion='venta',
@@ -392,6 +392,21 @@ def calcular_liquidacion_dia_estilista(estilista, fecha_dia):
         pct_comision = Decimal(venta.producto.comision_estilista or 0)
         pct_comision = max(Decimal(0), min(Decimal(100), pct_comision))  # Clamp 0-100
         comisiones_ventas += (monto_venta * pct_comision) / Decimal(100)
+
+    # ============ [4] COMISIONES POR PRODUCTO ADICIONAL EN SERVICIOS ============
+    servicios_con_producto_adicional = ServicioRealizado.objects.select_related('adicional_otro_producto').filter(
+        estado='finalizado',
+        fecha_hora__date=fecha_dia,
+        adicional_otro_producto__isnull=False,
+        adicional_otro_estilista=estilista,
+    )
+    for srv in servicios_con_producto_adicional:
+        cantidad = Decimal(srv.adicional_otro_cantidad or 1)
+        precio_venta = Decimal(srv.adicional_otro_producto.precio_venta or 0)
+        monto_venta = precio_venta * cantidad
+        pct_comision = Decimal(srv.adicional_otro_producto.comision_estilista or 0)
+        pct_comision = max(Decimal(0), min(Decimal(100), pct_comision))
+        comisiones_ventas += (monto_venta * pct_comision) / Decimal(100)
     
     # [1] GANANCIAS TOTALES = BASE + TODAS LAS COMISIONES
     ganancias_totales = servicios_base + comisiones_adicionales + comisiones_ventas
@@ -399,8 +414,9 @@ def calcular_liquidacion_dia_estilista(estilista, fecha_dia):
     # ============ [2] DESCUENTO POR PUESTO ============
     descuento_puesto = _descuento_puesto_dia(estilista, servicios_base)
     
-    # [2] TOTAL PAGABLE = GANANCIAS - DESCUENTO
-    total_pagable = max(ganancias_totales - descuento_puesto, Decimal(0))
+    # [2] TOTAL PAGABLE AL EMPLEADO = ganancias completas del día.
+    # La deuda del puesto se registra por separado y puede quedar pendiente.
+    total_pagable = max(ganancias_totales, Decimal(0))
     
     return {
         'ganancias_totales': ganancias_totales,
@@ -1561,12 +1577,20 @@ def _calcular_datos_bi(request):
     total_deuda_estilistas = Decimal(0)
 
     try:
+        estados_pago_diarios = list(
+            EstadoPagoEstilistaDia.objects.filter(fecha__gte=fecha_inicio_dt, fecha__lte=fecha_fin_dt)
+        )
+        estados_pago_obj_map = {
+            (ep.estilista_id, ep.fecha): ep
+            for ep in estados_pago_diarios
+        }
         estados_pago_map = {
-            (ep.estilista_id, ep.fecha): ep.estado
-            for ep in EstadoPagoEstilistaDia.objects.filter(fecha__gte=fecha_inicio_dt, fecha__lte=fecha_fin_dt)
+            key: ep.estado
+            for key, ep in estados_pago_obj_map.items()
         }
     except (OperationalError, ProgrammingError):
         # Fallback: si no existe tabla diaria, usar último estado del historial por estilista/fecha.
+        estados_pago_obj_map = {}
         estados_pago_map = {}
         try:
             historial_qs = EstadoPagoEstilistaHistorial.objects.filter(
@@ -1658,44 +1682,50 @@ def _calcular_datos_bi(request):
         pago_neto_periodo = Decimal(0)
         pago_neto_pendiente = Decimal(0)
         pago_neto_cancelado = Decimal(0)
+        total_pagado_empleado = Decimal(0)
+        total_abono_puesto = Decimal(0)
         dias_cancelados = 0
+        dias_con_pago = 0
 
         for dia in dias_trabajados:
             base_servicio_dia = servicios_por_dia.get(dia, Decimal(0))
             comision_dia = comision_por_dia.get(dia, Decimal(0))
-
+            ganancias_dia = base_servicio_dia + comision_dia
             descuento_dia = _descuento_puesto_dia(estilista, base_servicio_dia)
+            estado_dia_obj = estados_pago_obj_map.get((estilista.id, dia))
+            pago_empleado_dia = Decimal(0)
+            abono_puesto_dia = Decimal(0)
+            if estado_dia_obj:
+                pago_empleado_dia = (
+                    Decimal(estado_dia_obj.pago_efectivo or 0)
+                    + Decimal(estado_dia_obj.pago_nequi or 0)
+                    + Decimal(estado_dia_obj.pago_daviplata or 0)
+                    + Decimal(estado_dia_obj.pago_otros or 0)
+                )
+                abono_puesto_dia = Decimal(estado_dia_obj.abono_puesto or 0)
 
-            neto_dia = (base_servicio_dia - descuento_dia) + comision_dia
-            estado_dia = estados_pago_map.get((estilista.id, dia), 'pendiente')
+            neto_dia = ganancias_dia
 
             descuento_espacio += descuento_dia
             pago_neto_periodo += neto_dia
+            total_pagado_empleado += pago_empleado_dia
+            total_abono_puesto += abono_puesto_dia
 
-            if estado_dia == 'cancelado':
-                pago_neto_cancelado += neto_dia
+            if pago_empleado_dia > 0:
+                dias_con_pago += 1
+
+            pendiente_empleado_dia = max(ganancias_dia - pago_empleado_dia, Decimal(0))
+            pago_neto_pendiente += pendiente_empleado_dia
+            if pendiente_empleado_dia <= 0 and ganancias_dia > 0:
+                pago_neto_cancelado += ganancias_dia
                 dias_cancelados += 1
-            else:
-                pago_neto_pendiente += neto_dia
 
         total_descuentos_espacio += descuento_espacio
         total_pago_neto_estilistas += pago_neto_pendiente
         total_pago_neto_estilistas_periodo += pago_neto_periodo
-        if pago_neto_pendiente >= 0:
-            total_pago_estilistas_positivo += pago_neto_pendiente
-        else:
-            total_deuda_estilistas += abs(pago_neto_pendiente)
+        total_pago_estilistas_positivo += total_pagado_empleado
 
         total_dias = len(dias_trabajados)
-        if total_dias == 0:
-            estado_pago_rango = 'sin_movimiento'
-        elif dias_cancelados == 0:
-            estado_pago_rango = 'pendiente'
-        elif dias_cancelados == total_dias:
-            estado_pago_rango = 'cancelado'
-        else:
-            estado_pago_rango = 'parcial'
-
         # Deuda acumulada de puesto:
         # 1) base = último saldo pendiente real guardado por día (evita doble conteo histórico)
         # 2) adicional = descuentos de días posteriores al último corte que sigan pendientes.
@@ -1746,6 +1776,18 @@ def _calcular_datos_bi(request):
             deuda_rango_pendiente += max(descuento_dia, Decimal(0))
 
         deuda_total_acumulada = deuda_puesto_historial + deuda_rango_pendiente
+        total_deuda_estilistas += max(deuda_total_acumulada, Decimal(0))
+
+        if total_dias == 0:
+            estado_pago_rango = 'sin_movimiento'
+        elif pago_neto_pendiente > 0 and total_pagado_empleado > 0:
+            estado_pago_rango = 'parcial'
+        elif pago_neto_pendiente > 0:
+            estado_pago_rango = 'pendiente'
+        elif deuda_total_acumulada > 0:
+            estado_pago_rango = 'debe'
+        else:
+            estado_pago_rango = 'cancelado'
 
         estilistas_data.append(
             {
@@ -1767,6 +1809,9 @@ def _calcular_datos_bi(request):
                 'ganancias_totales_brutas': float(subtotal_ingresos_est),
                 'total_deducciones': float(descuento_espacio),
                 'descuento_espacio': float(descuento_espacio),
+                'debe_puesto_periodo': float(descuento_espacio),
+                'pagado_empleado_periodo': float(total_pagado_empleado),
+                'abono_puesto_periodo': float(total_abono_puesto),
                 'pago_neto_estilista': float(pago_neto_pendiente),
                 'pago_neto_pendiente': float(pago_neto_pendiente),
                 'pago_neto_periodo': float(pago_neto_periodo),
@@ -1855,14 +1900,15 @@ def _calcular_datos_bi(request):
             fecha__lte=fecha_fin_dt,
         )
         for ep in estados_pago_qs:
-            # Si el neto del estilista es negativo, el pago por medio representa
-            # ingreso al establecimiento (abono de deuda de espacio).
-            neto_dia_ep = _calcular_neto_dia_estilista(ep.estilista, ep.fecha)
-            bucket = ingresos_por_medio if neto_dia_ep < 0 else salidas_por_medio
-            bucket['efectivo'] += Decimal(ep.pago_efectivo or 0)
-            bucket['nequi'] += Decimal(ep.pago_nequi or 0)
-            bucket['daviplata'] += Decimal(ep.pago_daviplata or 0)
-            bucket['otros'] += Decimal(ep.pago_otros or 0)
+            salidas_por_medio['efectivo'] += Decimal(ep.pago_efectivo or 0)
+            salidas_por_medio['nequi'] += Decimal(ep.pago_nequi or 0)
+            salidas_por_medio['daviplata'] += Decimal(ep.pago_daviplata or 0)
+            salidas_por_medio['otros'] += Decimal(ep.pago_otros or 0)
+
+            medio_abono = (getattr(ep, 'medio_abono_puesto', None) or 'efectivo').strip().lower()
+            if medio_abono not in ingresos_por_medio:
+                medio_abono = 'otros'
+            ingresos_por_medio[medio_abono] += Decimal(ep.abono_puesto or 0)
     except (OperationalError, ProgrammingError):
         salidas_por_medio = {m: Decimal(0) for m in medios}
 
@@ -2652,6 +2698,8 @@ def estado_pago_estilista_dia(request):
                     'pago_nequi': float(x.pago_nequi or 0),
                     'pago_daviplata': float(x.pago_daviplata or 0),
                     'pago_otros': float(x.pago_otros or 0),
+                    'abono_puesto': float(x.abono_puesto or 0),
+                    'medio_abono_puesto': getattr(x, 'medio_abono_puesto', 'efectivo') or 'efectivo',
                     'notas': x.notas,
                 }
                 for x in EstadoPagoEstilistaDia.objects.filter(fecha=fecha)
@@ -2675,6 +2723,8 @@ def estado_pago_estilista_dia(request):
                         'pago_nequi': 0,
                         'pago_daviplata': 0,
                         'pago_otros': 0,
+                        'abono_puesto': float(getattr(h, 'abono_puesto', 0) or 0),
+                        'medio_abono_puesto': getattr(h, 'medio_abono_puesto', 'efectivo') or 'efectivo',
                         'notas': h.notas,
                     }
                 )
@@ -2754,6 +2804,7 @@ def estado_pago_estilista_dia(request):
     fecha_cursor = fecha_inicio_dt
     while fecha_cursor <= fecha_fin_dt:
         estado_anterior = 'pendiente'
+        estado_guardado = estado
 
         if not tabla_diaria_no_disponible:
             try:
@@ -2777,40 +2828,56 @@ def estado_pago_estilista_dia(request):
             try:
                 # Calcular totales del día específico
                 ganancias_totales_dia, descuento_dia, neto_dia = _calcular_totales_dia_estilista(estilista, fecha_cursor)
-                neto_ganado_dia = max(Decimal(0), neto_dia)
-                abono_aplicado = abono_puesto if estado == 'cancelado' else Decimal(0)
+                valor_total_empleado_dia = max(Decimal(0), neto_dia)
 
-                # Validación: la suma de liquidación + abono no debe exceder el neto ganado del día
-                suma_total_pagos = total_pagado + abono_aplicado
-                if suma_total_pagos > neto_ganado_dia:
+                # El pago al empleado puede llegar al 100% de sus ganancias.
+                if total_pagado > valor_total_empleado_dia:
                     return Response(
                         {
                             'error': (
-                                f'La suma de liquidación (${float(total_pagado):.2f}) + '
-                                f'abono puesto (${float(abono_aplicado):.2f}) = ${float(suma_total_pagos):.2f} '
-                                f'no puede exceder el neto ganado del día (${float(neto_ganado_dia):.2f}).'
+                                f'La liquidación al empleado (${float(total_pagado):.2f}) '
+                                f'no puede exceder el valor total ganado (${float(valor_total_empleado_dia):.2f}).'
                             )
                         },
                         status=status.HTTP_400_BAD_REQUEST,
                     )
 
-                # Actualizar tabla diaria: guarda pagos al empleado + abono y pendiente de puesto
+                # Actualizar tabla diaria: guarda pagos al empleado + abono y pendiente de puesto.
                 _, descuento_dia, _ = _calcular_totales_dia_estilista(estilista, fecha_cursor)
-                abono_puesto_dia = abono_puesto if estado == 'cancelado' else Decimal(0)
-                pendiente_puesto_dia = max(max(descuento_dia, Decimal(0)) - abono_puesto_dia, Decimal(0))
+                deuda_anterior_dia = Decimal(0)
+                ultimo_estado_anterior = EstadoPagoEstilistaDia.objects.filter(
+                    estilista=estilista,
+                    fecha__lt=fecha_cursor,
+                ).order_by('-fecha', '-actualizado_en').first()
+                if ultimo_estado_anterior:
+                    deuda_anterior_dia = Decimal(
+                        getattr(ultimo_estado_anterior, 'saldo_puesto_pendiente', None)
+                        or getattr(ultimo_estado_anterior, 'pendiente_puesto', 0)
+                        or 0
+                    )
+
+                abono_puesto_dia = abono_puesto if estado in {'cancelado', 'debe'} else Decimal(0)
+                pendiente_puesto_dia = max(deuda_anterior_dia + max(descuento_dia, Decimal(0)) - abono_puesto_dia, Decimal(0))
+                pendiente_liquidacion_dia = max(valor_total_empleado_dia - total_pagado, Decimal(0))
+                estado_guardado = 'pendiente' if pendiente_liquidacion_dia > 0 else ('debe' if pendiente_puesto_dia > 0 else 'cancelado')
                 
                 EstadoPagoEstilistaDia.objects.update_or_create(
                     estilista=estilista,
                     fecha=fecha_cursor,
                     defaults={
-                        'estado': estado,
-                        'pago_efectivo': pago_efectivo if estado == 'cancelado' else Decimal(0),
-                        'pago_nequi': pago_nequi if estado == 'cancelado' else Decimal(0),
-                        'pago_daviplata': pago_daviplata if estado == 'cancelado' else Decimal(0),
-                        'pago_otros': pago_otros if estado == 'cancelado' else Decimal(0),
-                        'neto_dia': neto_dia,
+                        'estado': estado_guardado,
+                        'ganancias_totales': valor_total_empleado_dia,
+                        'descuento_puesto': descuento_dia,
+                        'total_pagable': valor_total_empleado_dia,
+                        'pago_efectivo': pago_efectivo,
+                        'pago_nequi': pago_nequi,
+                        'pago_daviplata': pago_daviplata,
+                        'pago_otros': pago_otros,
+                        'neto_dia': valor_total_empleado_dia,
                         'notas': notas,
                         'abono_puesto': abono_puesto_dia,
+                        'medio_abono_puesto': medio_abono_puesto,
+                        'saldo_puesto_pendiente': pendiente_puesto_dia,
                         'pendiente_puesto': pendiente_puesto_dia,
                     },
                 )
@@ -2830,11 +2897,12 @@ def estado_pago_estilista_dia(request):
                         estilista=estilista,
                         fecha=fecha_cursor,
                         estado_anterior=estado_anterior,
-                        estado_nuevo=estado,
+                        estado_nuevo=estado_guardado,
                         notas=notas,
                         usuario=usuario_obj,
-                        monto_liquidado=total_pagado if estado == 'cancelado' else Decimal(0),
+                        monto_liquidado=total_pagado,
                         abono_puesto=abono_aplicado_hist,
+                        medio_abono_puesto=medio_abono_puesto,
                         pendiente_puesto=pendiente_puesto_hist,
                     )
                 except (OperationalError, ProgrammingError):
@@ -2937,6 +3005,9 @@ def liquidar_dia_v2(request):
     pago_daviplata = _to_decimal(request.data.get('pago_daviplata'))
     pago_otros = _to_decimal(request.data.get('pago_otros'))
     abono_puesto = _to_decimal(request.data.get('abono_puesto'))
+    medio_abono_puesto = (request.data.get('medio_abono_puesto') or 'efectivo').strip().lower()
+    if medio_abono_puesto not in {'efectivo', 'nequi', 'daviplata', 'otros'}:
+        medio_abono_puesto = 'efectivo'
     notas = request.data.get('notas', '').strip()[:255]
     
     total_pagado = pago_efectivo + pago_nequi + pago_daviplata + pago_otros
@@ -2976,12 +3047,12 @@ def liquidar_dia_v2(request):
         # Si la tabla diaria no está al día en producción, continuar sin romper.
         deuda_anterior_puesto = Decimal(0)
 
-    # 1) Tope principal: valor a liquidar no puede superar valor total empleado
-    if total_pagado > ganancias:
+    # 1) Tope principal: valor a liquidar no puede superar el total ganado por el empleado.
+    if total_pagado > pagable:
         return Response({
             'error': (
                 f'El valor a liquidar (${float(total_pagado):.2f}) no puede superar '
-                f'el valor total empleado (${float(ganancias):.2f}).'
+                f'el valor total empleado (${float(pagable):.2f}).'
             ),
             'ganancias_totales': float(ganancias),
             'valor_liquidar': float(total_pagado),
@@ -2995,6 +3066,7 @@ def liquidar_dia_v2(request):
     deuda_total_puesto = deuda_anterior_puesto + descuento
     abono_aplicado_total_puesto = min(abono_puesto, deuda_total_puesto)
     saldo_puesto = max(deuda_total_puesto - abono_aplicado_total_puesto, Decimal(0))
+    pendiente_liquidacion = max(pagable - total_pagado, Decimal(0))
     
     # ============ [4] GUARDAR ============
     tabla_diaria_no_disponible = False
@@ -3018,21 +3090,22 @@ def liquidar_dia_v2(request):
         estado_diaria.pago_daviplata = pago_daviplata
         estado_diaria.pago_otros = pago_otros
         estado_diaria.abono_puesto = abono_puesto
+        estado_diaria.medio_abono_puesto = medio_abono_puesto
         estado_diaria.saldo_puesto_pendiente = saldo_puesto
         estado_diaria.pendiente_puesto = saldo_puesto  # compatibilidad legacy
         estado_diaria.notas = notas
         estado_diaria.usuario_liquida = request.user
         
-        # Establecer estado segun el saldo del puesto
-        # Si no hay deuda del puesto: cancelado
-        # Si hay deuda del puesto: debe
-        # Si no hay liquidacion: pendiente
-        if saldo_puesto == 0:
-            estado_diaria.estado = 'cancelado'
+        # Estado del día:
+        # - pendiente: aún falta liquidar al empleado
+        # - debe: el empleado ya fue liquidado pero sigue debiendo puesto
+        # - cancelado: empleado liquidado y sin deuda de puesto
+        if pendiente_liquidacion > 0:
+            estado_diaria.estado = 'pendiente'
         elif saldo_puesto > 0:
             estado_diaria.estado = 'debe'
         else:
-            estado_diaria.estado = 'pendiente'
+            estado_diaria.estado = 'cancelado'
         
         estado_diaria.save()
         estado_resultante = estado_diaria.estado
@@ -3041,12 +3114,12 @@ def liquidar_dia_v2(request):
         # Compatibilidad: intentar persistencia SQL en esquema legacy para no perder datos.
         tabla_diaria_no_disponible = True
         # Establecer estado segun el saldo del puesto
-        if saldo_puesto == 0:
-            estado_resultante = 'cancelado'
+        if pendiente_liquidacion > 0:
+            estado_resultante = 'pendiente'
         elif saldo_puesto > 0:
             estado_resultante = 'debe'
         else:
-            estado_resultante = 'pendiente'
+            estado_resultante = 'cancelado'
         try:
             with connection.cursor() as cursor:
                 # 1) Intentar update de fila existente (set completo).
@@ -3060,6 +3133,7 @@ def liquidar_dia_v2(request):
                             pago_daviplata=%s,
                             pago_otros=%s,
                             abono_puesto=%s,
+                            medio_abono_puesto=%s,
                             pendiente_puesto=%s,
                             notas=%s,
                             actualizado_en=%s
@@ -3072,6 +3146,7 @@ def liquidar_dia_v2(request):
                             pago_daviplata,
                             pago_otros,
                             abono_puesto,
+                            medio_abono_puesto,
                             saldo_puesto,
                             notas,
                             timezone.now(),
@@ -3089,6 +3164,7 @@ def liquidar_dia_v2(request):
                             pago_daviplata=%s,
                             pago_otros=%s,
                             abono_puesto=%s,
+                            medio_abono_puesto=%s,
                             saldo_puesto_pendiente=%s,
                             pendiente_puesto=%s,
                             notas=%s,
@@ -3102,6 +3178,7 @@ def liquidar_dia_v2(request):
                             pago_daviplata,
                             pago_otros,
                             abono_puesto,
+                            medio_abono_puesto,
                             saldo_puesto,
                             saldo_puesto,
                             notas,
@@ -3118,8 +3195,8 @@ def liquidar_dia_v2(request):
                             """
                             INSERT INTO estado_pago_estilista_dia
                             (estilista_id, fecha, estado, pago_efectivo, pago_nequi, pago_daviplata, pago_otros,
-                             abono_puesto, pendiente_puesto, notas, actualizado_en)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                             abono_puesto, medio_abono_puesto, pendiente_puesto, notas, actualizado_en)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             """,
                             [
                                 estilista.id,
@@ -3130,6 +3207,7 @@ def liquidar_dia_v2(request):
                                 pago_daviplata,
                                 pago_otros,
                                 abono_puesto,
+                                medio_abono_puesto,
                                 saldo_puesto,
                                 notas,
                                 timezone.now(),
@@ -3177,6 +3255,7 @@ def liquidar_dia_v2(request):
                 usuario=request.user,
                 monto_liquidado=total_pagado,
                 abono_puesto=abono_puesto,
+                medio_abono_puesto=medio_abono_puesto,
                 pendiente_puesto=saldo_puesto,
             )
     except (OperationalError, ProgrammingError):
@@ -3206,6 +3285,7 @@ def liquidar_dia_v2(request):
             'ganancias_totales': float(ganancias),
             'descuento_puesto': float(descuento),
             'total_pagable': float(pagable),
+            'pendiente_liquidacion': float(pendiente_liquidacion),
         },
         'pagos': {
             'efectivo': float(pago_efectivo),
@@ -3217,6 +3297,7 @@ def liquidar_dia_v2(request):
         'puesto': {
             'descuento': float(descuento),
             'abono': float(abono_puesto),
+            'medio_abono': medio_abono_puesto,
             'deuda_anterior': float(deuda_anterior_puesto),
             'deuda_total': float(deuda_total_puesto),
             'abono_aplicado': float(abono_aplicado_total_puesto),
@@ -3936,6 +4017,7 @@ def reporte_cierre_caja(request):
                     'fecha': ep.fecha.strftime('%Y-%m-%d'),
                     'estilista_id': ep.estilista_id,
                     'estilista_nombre': ep.estilista.nombre if ep.estilista_id else '',
+                    'medio_pago': getattr(ep, 'medio_abono_puesto', 'efectivo') or 'efectivo',
                     'valor_pagado': float(valor_recibido),
                 }
             )
@@ -3969,6 +4051,7 @@ def reporte_cierre_caja(request):
                         'fecha': h.fecha.strftime('%Y-%m-%d') if h.fecha else None,
                         'estilista_id': h.estilista_id,
                         'estilista_nombre': h.estilista.nombre if h.estilista_id else '',
+                        'medio_pago': getattr(h, 'medio_abono_puesto', 'efectivo') or 'efectivo',
                         'valor_pagado': float(valor_recibido),
                     }
                 )

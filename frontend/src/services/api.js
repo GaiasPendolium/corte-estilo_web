@@ -435,7 +435,7 @@ export const reportesService = {
     return response.data;
   },
 
-  liquidarDiaV2: async ({ estilista_id, fecha, pago_efectivo, pago_nequi, pago_daviplata, pago_otros, abono_puesto, notas }) => {
+  liquidarDiaV2: async ({ estilista_id, fecha, pago_efectivo, pago_nequi, pago_daviplata, pago_otros, abono_puesto, medio_abono_puesto, notas }) => {
     const payload = {
       estilista_id,
       fecha,
@@ -444,6 +444,7 @@ export const reportesService = {
       pago_daviplata,
       pago_otros,
       abono_puesto,
+      medio_abono_puesto,
       notas,
     };
 

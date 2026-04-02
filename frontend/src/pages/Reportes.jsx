@@ -154,13 +154,23 @@ const Reportes = () => {
           });
           setPagosPorEstilista(mapPagos);
           setEstadoDiaPorEstilista(mapEstado);
+          setAbonoPuestoPorEstilista(
+            Object.fromEntries((estadoDia?.items || []).map((x) => [x.estilista_id, String(Number(x.abono_puesto || 0) || '')]))
+          );
+          setMedioAbonoPuestoPorEstilista(
+            Object.fromEntries((estadoDia?.items || []).map((x) => [x.estilista_id, x.medio_abono_puesto || 'efectivo']))
+          );
         } catch (err) {
           setPagosPorEstilista({});
           setEstadoDiaPorEstilista({});
+          setAbonoPuestoPorEstilista({});
+          setMedioAbonoPuestoPorEstilista({});
         }
       } else {
         setPagosPorEstilista({});
         setEstadoDiaPorEstilista({});
+        setAbonoPuestoPorEstilista({});
+        setMedioAbonoPuestoPorEstilista({});
       }
     } catch (error) {
       toast.error('No se pudieron cargar los reportes');
@@ -331,6 +341,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
   const pago_daviplata = Number(pagosPorEstilista[estilistaId]?.daviplata || 0);
   const pago_otros = Number(pagosPorEstilista[estilistaId]?.otros || 0);
   const abono_puesto = Number(abonoPuestoPorEstilista[estilistaId] || 0);
+  const medio_abono_puesto = medioAbonoPuestoPorEstilista[estilistaId] || 'efectivo';
   
   setSavingEstadoByEstilista((prev) => ({ ...prev, [estilistaId]: true }));
   
@@ -343,6 +354,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
       pago_daviplata,
       pago_otros,
       abono_puesto,
+      medio_abono_puesto,
       notas: `Liquidación ${fechaInicio}`,
     });
     const g = resultado.liquidacion.ganancias_totales;
@@ -595,7 +607,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
       <div className="card">
         <h2 className="card-header">Liquidacion Empleado</h2>
         <p className="text-sm text-slate-600">
-          Valor total, comisiones, descuento por puesto, liquidacion por medio, estado y deshacer.
+          Valor total del empleado = servicios + comisiones. El puesto se maneja como deuda aparte y puede abonarse o pagarse totalmente.
         </p>
         <p className="text-xs text-slate-500 mt-1">
           Para registrar pagos por medio o abono de puesto, usa un unico dia (fecha inicio = fecha fin).
@@ -608,7 +620,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
                 <th className="px-4 py-3 text-left">Empleado</th>
                 <th className="px-4 py-3 text-left">Valor total empleado</th>
                 <th className="px-4 py-3 text-left">Comisiones</th>
-                <th className="px-4 py-3 text-left">Descuento puesto</th>
+                <th className="px-4 py-3 text-left">Puesto</th>
                 <th className="px-4 py-3 text-left">Valor a liquidar</th>
                 <th className="px-4 py-3 text-left">Pago efectivo</th>
                 <th className="px-4 py-3 text-left">Pago Nequi</th>
@@ -631,12 +643,14 @@ const aplicarEstadoLiquidacion = async (fila) => {
                 const comisionesEmpleado = Number(item.comision_ventas_producto || 0);
                 const tipoCobro = item.tipo_cobro_espacio || 'sin_cobro';
                 const valorCobroCfg = Number(item.valor_cobro_espacio || 0);
-                const descuentoBackend = Math.max(Number(item.descuento_espacio ?? item.total_deducciones ?? 0), 0);
+                const descuentoBackend = Math.max(Number(item.debe_puesto_periodo ?? item.descuento_espacio ?? item.total_deducciones ?? 0), 0);
                 const descuentoVisible = descuentoBackend;
                 const gananciasTotales = valorTotalEmpleado + comisionesEmpleado;
-                const netoBackend = Number(item.pago_neto_pendiente ?? item.pago_neto_estilista ?? (gananciasTotales - descuentoVisible));
+                const netoBackend = Number(item.pago_neto_pendiente ?? item.pago_neto_estilista ?? gananciasTotales);
                 const netoGanado = netoBackend;
                 const abonoPuestoDigitado = Number(abonoPuestoPorEstilista[item.estilista_id] || 0);
+                const deudaAcumulada = Number(item.deuda_total_acumulada || 0);
+                const pagadoEmpleadoPeriodo = Number(item.pagado_empleado_periodo || 0);
                 const descripcionCobroPuesto = tipoCobro === 'costo_fijo_neto'
                   ? `Cobro fijo: ${formatMoney(descuentoVisible || valorCobroCfg)}`
                   : tipoCobro === 'porcentaje_neto'
@@ -648,8 +662,8 @@ const aplicarEstadoLiquidacion = async (fila) => {
                   ? (estadoDiaPorEstilista[item.estilista_id] || 'pendiente')
                   : (item.estado_pago_rango || item.estado_pago_dia || 'pendiente');
                 const valorALiquidarVisible = estadoActual === 'cancelado' ? 0 : netoGanado;
-                const descuentoPuestoValidado = estadoActual === 'cancelado' ? 0 : descuentoVisible;
-                const descuentoPuestoTotalVisible = deudaPuestoHistorica + descuentoPuestoValidado;
+                const descuentoPuestoValidado = descuentoVisible;
+                const descuentoPuestoTotalVisible = deudaAcumulada;
                 const inputsHabilitados = estadoActual !== 'cancelado';
                 return (
                   <tr key={item.estilista_id}>
@@ -657,10 +671,13 @@ const aplicarEstadoLiquidacion = async (fila) => {
                     <td className="table-cell">{formatMoney(valorTotalEmpleado)}</td>
                     <td className="table-cell">{formatMoney(comisionesEmpleado)}</td>
                     <td className="table-cell">
-                      <div>{formatMoney(descuentoPuestoTotalVisible)}</div>
+                      <div>Debe hoy: {formatMoney(descuentoPuestoValidado)}</div>
                       <div className="text-[11px] leading-tight text-slate-500">{descripcionCobroPuesto}</div>
                       <div className="text-[11px] leading-tight text-amber-600">
-                        Saldo pendiente: {formatMoney(deudaPuestoHistorica)}
+                        Deuda acumulada: {formatMoney(descuentoPuestoTotalVisible)}
+                      </div>
+                      <div className="text-[11px] leading-tight text-slate-500">
+                        Pagado al empleado: {formatMoney(pagadoEmpleadoPeriodo)}
                       </div>
                     </td>
                     <td className={`table-cell font-semibold ${valorALiquidarVisible >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>

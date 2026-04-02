@@ -551,7 +551,7 @@ class EstadoPagoEstilistaDia(models.Model):
     ESTRUCTURA CLARA:
     1. ganancias_totales = servicios base + comisiones caja + comisiones adicionales
     2. descuento_puesto = ganancias_totales × % (o costo fijo)
-    3. total_pagable = ganancias_totales - descuento_puesto
+    3. total_pagable = ganancias_totales del empleado
     4. total_pagado = pago_efectivo + pago_nequi + pago_daviplata + pago_otros
     5. saldo_pendiente_puesto = max(descuento_puesto - abono_puesto, 0)
     
@@ -586,10 +586,11 @@ class EstadoPagoEstilistaDia(models.Model):
         verbose_name='Descuento por alquiler puesto/espacio'
     )
     
-    # [3] TOTAL PAGABLE AL EMPLEADO (después de descuentos)
+    # [3] TOTAL PAGABLE AL EMPLEADO
+    # El descuento del puesto genera deuda aparte y no reduce el pago al empleado.
     total_pagable = models.DecimalField(
         max_digits=12, decimal_places=2, default=0,
-        verbose_name='Total pagable (ganancias - descuento puesto)'
+        verbose_name='Total pagable al empleado'
     )
     
     # [4] PAGOS DESGLOSADOS (cómo se pagó)
@@ -608,6 +609,18 @@ class EstadoPagoEstilistaDia(models.Model):
     abono_puesto = models.DecimalField(
         max_digits=12, decimal_places=2, default=0,
         verbose_name='Abono realizado al puesto'
+    )
+
+    medio_abono_puesto = models.CharField(
+        max_length=20,
+        choices=[
+            ('efectivo', 'Efectivo'),
+            ('nequi', 'Nequi'),
+            ('daviplata', 'Daviplata'),
+            ('otros', 'Otros'),
+        ],
+        default='efectivo',
+        verbose_name='Medio de pago abono puesto'
     )
     
     saldo_puesto_pendiente = models.DecimalField(
@@ -671,6 +684,17 @@ class EstadoPagoEstilistaHistorial(models.Model):
     )
     monto_liquidado = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Monto liquidado')
     abono_puesto = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Abono puesto')
+    medio_abono_puesto = models.CharField(
+        max_length=20,
+        choices=[
+            ('efectivo', 'Efectivo'),
+            ('nequi', 'Nequi'),
+            ('daviplata', 'Daviplata'),
+            ('otros', 'Otros'),
+        ],
+        default='efectivo',
+        verbose_name='Medio abono puesto'
+    )
     pendiente_puesto = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Pendiente puesto')
     fecha_cambio = models.DateTimeField(default=timezone.now, verbose_name='Fecha Cambio')
 
