@@ -227,6 +227,19 @@ const Reportes = () => {
   const ingresoServiciosTarjeta = Number(
     serviciosEst?.total_ganancia ?? resumen?.ingresos_servicios_establecimiento ?? 0
   );
+  const ingresoProductosTarjeta = Number(productos?.ingresos_venta ?? 0);
+  const ingresoEspaciosTarjeta = Number(resumen?.ingresos_espacios ?? espacios?.total_recibido ?? 0);
+  const gananciaTotalTarjeta = ingresoServiciosTarjeta + ingresoProductosTarjeta + ingresoEspaciosTarjeta;
+
+  const liquidacionTotal = (biData?.estilistas || []).reduce((sum, item) => {
+    const valorTotalEmpleado = Number((item.valor_total_empleado ?? item.facturacion_servicios ?? item.ganancias_servicios) || 0);
+    const comisionesEmpleado = Number(item.comision_ventas_producto || 0);
+    return sum + valorTotalEmpleado + comisionesEmpleado;
+  }, 0);
+  const liquidacionPagado = (biData?.estilistas || []).reduce((sum, item) => {
+    return sum + Number(item.pagado_empleado_periodo || 0);
+  }, 0);
+  const liquidacionPendiente = Math.max(liquidacionTotal - liquidacionPagado, 0);
 
   const actualizarPagoMedio = (estilistaId, medio, valor) => {
     const limpio = String(valor || '').replace(/[^\d.]/g, '');
@@ -410,8 +423,13 @@ const aplicarEstadoLiquidacion = async (fila) => {
     <div className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         <KpiCard title="Ingresos Totales" value={formatMoney(resumen.total_ingresos)} hint="Total ingresos recibidos del periodo" tone="slate" />
-        <KpiCard title="Liquidacion Empleado" value={formatMoney(resumen.liquidacion_empleados)} hint="Total liquidado a empleados" tone="sky" />
-        <KpiCard title="Ganancia Total" value={formatMoney(resumen.ganancia_total)} hint="Ingresos totales - liquidacion empleado" tone="emerald" />
+        <div className="rounded-2xl bg-gradient-to-br from-sky-600 to-blue-600 text-white p-5 shadow-lg">
+          <p className="text-sm opacity-85">Liquidacion Empleado</p>
+          <p className="mt-2 text-lg font-black">Total: {formatMoney(liquidacionTotal)}</p>
+          <p className="mt-1 text-sm opacity-90">Pagado: {formatMoney(liquidacionPagado)}</p>
+          <p className="mt-1 text-sm opacity-90">Pendiente: {formatMoney(liquidacionPendiente)}</p>
+        </div>
+        <KpiCard title="Ganancia Total" value={formatMoney(gananciaTotalTarjeta)} hint="Ingreso por Servicios + Ingreso por Productos + Ingreso por Espacios" tone="emerald" />
         <KpiCard title="Ingreso por Servicios" value={formatMoney(ingresoServiciosTarjeta)} hint="Ganancia del establecimiento en servicios y adicionales" tone="slate" />
         <KpiCard title="Ingreso por Productos" value={formatMoney(productos.ingresos_venta)} hint="Valor total de venta de productos" tone="amber" />
         <KpiCard title="Ingreso por Espacios" value={formatMoney(resumen.ingresos_espacios)} hint="Pagos recibidos por espacio" tone="sky" />
