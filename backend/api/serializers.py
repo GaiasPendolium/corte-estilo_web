@@ -123,18 +123,29 @@ class ProductoSerializer(serializers.ModelSerializer):
 
         # Reintento corto para evitar choques por concurrencia en codigo autogenerado.
         last_error = None
-        for _ in range(5):
+        for _ in range(20):
             try:
                 payload = dict(validated_data)
                 payload['codigo_barras'] = self._generate_next_codigo_barras()
                 with transaction.atomic():
                     return super().create(payload)
             except IntegrityError as exc:
+                msg = str(exc).lower()
+                # Si la falla no es por unicidad de codigo_barras, devolvemos la causa real.
+                if 'codigo_barras' not in msg:
+                    raise serializers.ValidationError({
+                        'detail': f'No se pudo guardar producto: {exc}'
+                    }) from exc
                 last_error = exc
 
-        raise serializers.ValidationError({
-            'codigo_barras': 'No se pudo generar un código automático único. Intenta nuevamente.'
-        }) from last_error
+        # Fallback final para evitar bloqueo de guardado en escenarios de alta concurrencia.
+        fallback = str(int(timezone.now().timestamp() * 1000000))
+        while Producto.objects.filter(codigo_barras=fallback).exists():
+            fallback = str(int(fallback) + 1)
+        payload = dict(validated_data)
+        payload['codigo_barras'] = fallback
+        with transaction.atomic():
+            return super().create(payload)
 
     def update(self, instance, validated_data):
         incoming = self._normalize_codigo_barras(validated_data.get('codigo_barras', instance.codigo_barras))
