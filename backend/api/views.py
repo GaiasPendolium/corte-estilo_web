@@ -4134,11 +4134,24 @@ def reporte_cierre_caja(request):
     for srv in servicios_qs.order_by('-fecha_hora'):
         sid = int(srv.id)
         ad_info = adicionales_por_servicio.get(sid, {'bruto': Decimal(0), 'establecimiento': Decimal(0), 'cantidad': 0})
-        ad_nombres = adicionales_nombres_por_servicio.get(sid, [])
+        ad_nombres = list(adicionales_nombres_por_servicio.get(sid, []))
 
         valor_producto_adicional = Decimal(0)
         if srv.adicional_otro_producto_id:
             valor_producto_adicional = Decimal(srv.adicional_otro_producto.precio_venta or 0) * Decimal(srv.adicional_otro_cantidad or 1)
+
+        valor_adicionales_total = Decimal(srv.valor_adicionales or 0)
+        valor_adicionales_desglosados = Decimal(ad_info.get('bruto', 0) or 0)
+        remanente_adicional_no_producto = valor_adicionales_total - valor_adicionales_desglosados - valor_producto_adicional
+        if remanente_adicional_no_producto < 0:
+            remanente_adicional_no_producto = Decimal(0)
+
+        # Fallback para registros legacy: shampoo/guantes pueden venir solo en flags
+        # y no en la tabla de adicionales asignados.
+        if remanente_adicional_no_producto > 0 and getattr(srv, 'adicional_shampoo', False):
+            ad_nombres.append('Shampoo')
+        if remanente_adicional_no_producto > 0 and getattr(srv, 'adicional_guantes', False):
+            ad_nombres.append('Guantes')
 
         adicionales_servicio_no_producto = Decimal(srv.valor_adicionales or 0) - valor_producto_adicional
         if adicionales_servicio_no_producto < 0:
@@ -4146,7 +4159,11 @@ def reporte_cierre_caja(request):
 
         valor_servicio = Decimal(srv.precio_cobrado or 0) + adicionales_servicio_no_producto
         # En este detalle solo se reporta ganancia de servicios (sin productos).
-        ganancia_est = _monto_establecimiento_resuelto(srv) + Decimal(ad_info['establecimiento'] or 0)
+        ganancia_est = (
+            _monto_establecimiento_resuelto(srv)
+            + Decimal(ad_info['establecimiento'] or 0)
+            + remanente_adicional_no_producto
+        )
 
         if ganancia_est <= 0:
             continue

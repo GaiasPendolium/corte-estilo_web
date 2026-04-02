@@ -228,8 +228,7 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
 
     def get_adicionales_asignados(self, obj):
         detalles = obj.adicionales_asignados.select_related('servicio', 'estilista').all()
-
-        return [
+        items = [
             {
                 'id': d.id,
                 'servicio_id': d.servicio_id,
@@ -242,6 +241,70 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
             }
             for d in detalles
         ]
+
+        # Fallback para registros legacy: si hay valor_adicionales no desglosado,
+        # exponer shampoo/guantes por bandera para que aparezcan en factura/UI.
+        valor_producto_adicional = 0.0
+        if obj.adicional_otro_producto_id:
+            qty = int(obj.adicional_otro_cantidad or 1)
+            valor_producto_adicional = float(obj.adicional_otro_producto.precio_venta or 0) * qty
+
+        valor_desglosado = sum(float(i.get('valor') or 0) for i in items)
+        remanente = float(obj.valor_adicionales or 0) - valor_desglosado - valor_producto_adicional
+        if remanente <= 0:
+            return items
+
+        if bool(obj.adicional_shampoo):
+            valor_shampoo = float(self._valor_adicional_rapido('Adicional Shampoo', 4000) or 0)
+            valor_asignar = min(remanente, max(valor_shampoo, 0))
+            if valor_asignar > 0:
+                items.append(
+                    {
+                        'id': None,
+                        'servicio_id': None,
+                        'servicio_nombre': 'Shampoo',
+                        'estilista_id': obj.estilista_id,
+                        'estilista_nombre': obj.estilista.nombre if obj.estilista_id else '-',
+                        'valor': float(valor_asignar),
+                        'aplica_porcentaje_establecimiento': True,
+                        'porcentaje_establecimiento': 100.0,
+                    }
+                )
+                remanente -= valor_asignar
+
+        if remanente > 0 and bool(obj.adicional_guantes):
+            valor_guantes = float(self._valor_adicional_rapido('Adicional Guantes', 1500) or 0)
+            valor_asignar = min(remanente, max(valor_guantes, 0))
+            if valor_asignar > 0:
+                items.append(
+                    {
+                        'id': None,
+                        'servicio_id': None,
+                        'servicio_nombre': 'Guantes',
+                        'estilista_id': obj.estilista_id,
+                        'estilista_nombre': obj.estilista.nombre if obj.estilista_id else '-',
+                        'valor': float(valor_asignar),
+                        'aplica_porcentaje_establecimiento': True,
+                        'porcentaje_establecimiento': 100.0,
+                    }
+                )
+                remanente -= valor_asignar
+
+        if remanente > 0:
+            items.append(
+                {
+                    'id': None,
+                    'servicio_id': None,
+                    'servicio_nombre': 'Adicional no desglosado',
+                    'estilista_id': obj.estilista_id,
+                    'estilista_nombre': obj.estilista.nombre if obj.estilista_id else '-',
+                    'valor': float(remanente),
+                    'aplica_porcentaje_establecimiento': True,
+                    'porcentaje_establecimiento': 100.0,
+                }
+            )
+
+        return items
 
     def validate(self, attrs):
         estado = attrs.get('estado') or getattr(self.instance, 'estado', 'en_proceso')
