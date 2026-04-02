@@ -4206,7 +4206,9 @@ def reporte_cierre_caja(request):
     # Mantener coherencia semántica: esta tarjeta debe ser la misma ganancia
     # que se muestra en el detalle de servicios del establecimiento.
     ingresos_servicios_tarjeta = ingresos_servicios_establecimiento
-    ingresos_productos_tarjeta = ventas_productos_total
+    ingresos_productos_tarjeta = ventas_productos_total - comision_productos_total
+    if ingresos_productos_tarjeta < 0:
+        ingresos_productos_tarjeta = Decimal(0)
     ingresos_espacios_tarjeta = ingresos_espacios
 
     suma_componentes = ingresos_servicios_tarjeta + ingresos_productos_tarjeta + ingresos_espacios_tarjeta
@@ -4233,6 +4235,7 @@ def reporte_cierre_caja(request):
             },
             'productos': {
                 'ingresos_venta': float(ventas_productos_total),
+                'ingresos_venta_neto_comision': float(max(ventas_productos_total - comision_productos_total, Decimal(0))),
                 'valor_compra': float(costo_productos_total),
                 'comision_empleado_total': float(comision_productos_total),
                 'ganancia_neta': float(ventas_productos_total - costo_productos_total - comision_productos_total),

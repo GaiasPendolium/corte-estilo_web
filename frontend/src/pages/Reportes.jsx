@@ -227,7 +227,7 @@ const Reportes = () => {
   const ingresoServiciosTarjeta = Number(
     serviciosEst?.total_ganancia ?? resumen?.ingresos_servicios_establecimiento ?? 0
   );
-  const ingresoProductosTarjeta = Number(productos?.ingresos_venta ?? 0);
+  const ingresoProductosTarjeta = Number(productos?.ingresos_venta_neto_comision ?? productos?.ingresos_venta ?? 0);
   const ingresoEspaciosTarjeta = Number(resumen?.ingresos_espacios ?? espacios?.total_recibido ?? 0);
   const gananciaTotalTarjeta = ingresoServiciosTarjeta + ingresoProductosTarjeta + ingresoEspaciosTarjeta;
   const liquidacionPagadoCaja = Number(resumen?.liquidacion_empleados ?? 0);
@@ -429,7 +429,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
         </div>
         <KpiCard title="Ganancia Total" value={formatMoney(gananciaTotalTarjeta)} hint="Ingreso por Servicios + Ingreso por Productos + Ingreso por Espacios" tone="emerald" />
         <KpiCard title="Ingreso por Servicios" value={formatMoney(ingresoServiciosTarjeta)} hint="Ganancia del establecimiento en servicios y adicionales" tone="slate" />
-        <KpiCard title="Ingreso por Productos" value={formatMoney(productos.ingresos_venta)} hint="Valor total de venta de productos" tone="amber" />
+        <KpiCard title="Ingreso por Productos" value={formatMoney(ingresoProductosTarjeta)} hint="Valor de productos menos comision de empleado" tone="amber" />
         <KpiCard title="Ingreso por Espacios" value={formatMoney(resumen.ingresos_espacios)} hint="Pagos recibidos por espacio" tone="sky" />
       </div>
 
