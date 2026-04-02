@@ -25,6 +25,8 @@ const renderSeparator = (heavy = false) => `<div class="sep ${heavy ? 'heavy' : 
 const buildServiceItems = (data) => {
   const items = [];
   const principalValor = Number(data?.neto_servicio ?? data?.precio_cobrado ?? 0);
+  const principalEmpleado = Number(data?.monto_estilista || 0);
+  const principalEstablecimiento = Number(data?.monto_establecimiento || 0);
 
   items.push({
     servicio: data?.servicio_nombre || 'Servicio',
@@ -33,9 +35,19 @@ const buildServiceItems = (data) => {
   });
 
   const adicionales = Array.isArray(data?.adicionales_asignados) ? data.adicionales_asignados : [];
+  let adicionalesEmpleado = 0;
+  let adicionalesEstablecimiento = 0;
   adicionales.forEach((ad) => {
     const valor = Number(ad?.valor || 0);
     if (valor <= 0) return;
+
+     const aplicaPct = Boolean(ad?.aplica_porcentaje_establecimiento);
+     const pct = Math.max(0, Math.min(100, Number(ad?.porcentaje_establecimiento || 0)));
+     const valorEst = aplicaPct ? (valor * pct) / 100 : 0;
+     const valorEmp = valor - valorEst;
+     adicionalesEmpleado += valorEmp;
+     adicionalesEstablecimiento += valorEst;
+
     items.push({
       servicio: ad?.servicio_nombre || 'Servicio adicional',
       estilista: ad?.estilista_nombre || '-',
@@ -43,13 +55,51 @@ const buildServiceItems = (data) => {
     });
   });
 
-  const totalServicio = Number(data?.precio_cobrado || 0) + Number(data?.valor_adicionales || 0);
+  let productoAdicionalTotal = 0;
+  let productoAdicionalEmpleado = 0;
+  let productoAdicionalEstablecimiento = 0;
+  if (data?.adicional_otro_producto) {
+    const qty = Number(data?.adicional_otro_cantidad || 1);
+    const total = Number(data?.adicional_otro_total || 0);
+    const comision = Number(data?.adicional_otro_comision_estilista || 0);
+    const qtySeguro = Number.isFinite(qty) && qty > 0 ? qty : 1;
+    const totalSeguro = Number.isFinite(total) ? total : 0;
+    const comisionSegura = Number.isFinite(comision) ? comision : 0;
+
+    productoAdicionalTotal = totalSeguro;
+    productoAdicionalEmpleado = comisionSegura;
+    productoAdicionalEstablecimiento = totalSeguro - comisionSegura;
+
+    items.push({
+      servicio: `${data?.adicional_otro_producto_nombre || 'Producto adicional'} x${qtySeguro}`,
+      estilista: data?.adicional_otro_estilista_nombre || data?.estilista_nombre || '-',
+      valor: totalSeguro,
+    });
+  }
+
+  const totalServicio = principalValor + adicionales.reduce((acc, ad) => acc + Number(ad?.valor || 0), 0) + productoAdicionalTotal;
+  const totalEmpleado = principalEmpleado + adicionalesEmpleado + productoAdicionalEmpleado;
+  const totalEstablecimiento = principalEstablecimiento + adicionalesEstablecimiento + productoAdicionalEstablecimiento;
 
   return {
     items,
     totalServicio,
-    empleado: Number(data?.monto_estilista || 0),
-    establecimiento: Number(data?.monto_establecimiento || 0),
+    empleado: totalEmpleado,
+    establecimiento: totalEstablecimiento,
+    desglose: {
+      principal: {
+        empleado: principalEmpleado,
+        establecimiento: principalEstablecimiento,
+      },
+      adicionales: {
+        empleado: adicionalesEmpleado,
+        establecimiento: adicionalesEstablecimiento,
+      },
+      producto: {
+        empleado: productoAdicionalEmpleado,
+        establecimiento: productoAdicionalEstablecimiento,
+      },
+    },
   };
 };
 
@@ -93,6 +143,11 @@ const buildTicketDocumentHtml = ({ type, data }) => {
       <div class="row"><span>Total servicio:</span><span>${formatMoney(info.totalServicio)}</span></div>
       <div class="row"><span>Empleado:</span><span>${formatMoney(info.empleado)}</span></div>
       <div class="row"><span>Establecimiento:</span><span>${formatMoney(info.establecimiento)}</span></div>
+      <div class="sep"></div>
+      <div class="label">Desglose de ganancia</div>
+      <div class="row"><span>Principal (Emp / Est):</span><span>${formatMoney(info.desglose.principal.empleado)} / ${formatMoney(info.desglose.principal.establecimiento)}</span></div>
+      <div class="row"><span>Adicionales serv. (Emp / Est):</span><span>${formatMoney(info.desglose.adicionales.empleado)} / ${formatMoney(info.desglose.adicionales.establecimiento)}</span></div>
+      <div class="row"><span>Producto adicional (Emp / Est):</span><span>${formatMoney(info.desglose.producto.empleado)} / ${formatMoney(info.desglose.producto.establecimiento)}</span></div>
     `
     : `
       <div class="row"><span>Total productos:</span><span>${formatMoney(info.totalServicio)}</span></div>

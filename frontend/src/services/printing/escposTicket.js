@@ -173,7 +173,10 @@ export const buildServiceSaleTicketPayload = (service) => {
       cantidad: 1,
       precio_unitario: valor,
       total: valor,
-      infoLines: [`Comision estilista: ${money(comisionEmpleado)}`],
+      infoLines: [
+        `Ganancia empleado: ${money(comisionEmpleado)}`,
+        `Ganancia establecimiento: ${money(valor - comisionEmpleado)}`,
+      ],
     });
   });
 
@@ -198,7 +201,10 @@ export const buildServiceSaleTicketPayload = (service) => {
       cantidad: qtyProductoAd,
       precio_unitario: unitProductoAd,
       total: totalProductoAd,
-      infoLines: [`Comision venta: ${money(comisionProductoAd)}`],
+      infoLines: [
+        `Ganancia empleado: ${money(comisionProductoAd)}`,
+        `Ganancia establecimiento: ${money(totalProductoAd - comisionProductoAd)}`,
+      ],
     });
   }
 
