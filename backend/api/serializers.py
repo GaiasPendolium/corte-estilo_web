@@ -865,6 +865,8 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
         adicional_otro_precio_unitario = validated_data.pop('adicional_otro_precio_unitario', None)
         if 'precio_cobrado' not in validated_data:
             validated_data['precio_cobrado'] = validated_data['servicio'].precio
+        if validated_data.get('estado') == 'finalizado' and not validated_data.get('fecha_fin'):
+            validated_data['fecha_fin'] = timezone.now()
 
         with transaction.atomic():
             servicio_realizado = ServicioRealizado.objects.create(**validated_data)
