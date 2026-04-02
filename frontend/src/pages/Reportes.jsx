@@ -620,8 +620,8 @@ const aplicarEstadoLiquidacion = async (fila) => {
                 <th className="px-4 py-3 text-left">Empleado</th>
                 <th className="px-4 py-3 text-left">Valor total empleado</th>
                 <th className="px-4 py-3 text-left">Comisiones</th>
-                <th className="px-4 py-3 text-left">Puesto</th>
                 <th className="px-4 py-3 text-left">Valor a liquidar</th>
+                <th className="px-4 py-3 text-left">Puesto</th>
                 <th className="px-4 py-3 text-left">Pago efectivo</th>
                 <th className="px-4 py-3 text-left">Pago Nequi</th>
                 <th className="px-4 py-3 text-left">Pago Daviplata</th>
@@ -646,8 +646,6 @@ const aplicarEstadoLiquidacion = async (fila) => {
                 const descuentoBackend = Math.max(Number(item.debe_puesto_periodo ?? item.descuento_espacio ?? item.total_deducciones ?? 0), 0);
                 const descuentoVisible = descuentoBackend;
                 const gananciasTotales = valorTotalEmpleado + comisionesEmpleado;
-                const netoBackend = Number(item.pago_neto_pendiente ?? item.pago_neto_estilista ?? gananciasTotales);
-                const netoGanado = netoBackend;
                 const abonoPuestoDigitado = Number(abonoPuestoPorEstilista[item.estilista_id] || 0);
                 const deudaAcumulada = Number(item.deuda_total_acumulada || 0);
                 const pagadoEmpleadoPeriodo = Number(item.pagado_empleado_periodo || 0);
@@ -661,7 +659,8 @@ const aplicarEstadoLiquidacion = async (fila) => {
                 const estadoActual = (fechaInicio === fechaFin)
                   ? (estadoDiaPorEstilista[item.estilista_id] || 'pendiente')
                   : (item.estado_pago_rango || item.estado_pago_dia || 'pendiente');
-                const valorALiquidarVisible = estadoActual === 'cancelado' ? 0 : netoGanado;
+                const valorALiquidarBase = Math.max(gananciasTotales - pagadoEmpleadoPeriodo, 0);
+                const valorALiquidarVisible = estadoActual === 'cancelado' ? 0 : valorALiquidarBase;
                 const descuentoPuestoValidado = descuentoVisible;
                 const descuentoPuestoTotalVisible = deudaAcumulada;
                 const inputsHabilitados = estadoActual !== 'cancelado';
@@ -670,6 +669,9 @@ const aplicarEstadoLiquidacion = async (fila) => {
                     <td className="table-cell font-medium">{item.estilista_nombre}</td>
                     <td className="table-cell">{formatMoney(valorTotalEmpleado)}</td>
                     <td className="table-cell">{formatMoney(comisionesEmpleado)}</td>
+                    <td className={`table-cell font-semibold ${valorALiquidarVisible >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                      {formatMoney(valorALiquidarVisible)}
+                    </td>
                     <td className="table-cell">
                       <div>Debe hoy: {formatMoney(descuentoPuestoValidado)}</div>
                       <div className="text-[11px] leading-tight text-slate-500">{descripcionCobroPuesto}</div>
@@ -679,9 +681,6 @@ const aplicarEstadoLiquidacion = async (fila) => {
                       <div className="text-[11px] leading-tight text-slate-500">
                         Pagado al empleado: {formatMoney(pagadoEmpleadoPeriodo)}
                       </div>
-                    </td>
-                    <td className={`table-cell font-semibold ${valorALiquidarVisible >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                      {formatMoney(valorALiquidarVisible)}
                     </td>
                     <td className="table-cell">
                       <input
