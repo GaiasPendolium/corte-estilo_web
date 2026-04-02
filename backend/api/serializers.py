@@ -441,6 +441,27 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
             srv_ad = servicios_mapa.get(int(sid)) if sid is not None else None
             if self._es_servicio_shampoo(srv_ad):
                 # Shampoo siempre se contabiliza para establecimiento y no se asigna al empleado.
+                # Se guarda como detalle con 100% establecimiento para trazabilidad
+                # en factura y reportes (evita que aparezca como "adicional no desglosado").
+                if sid is None or valor is None:
+                    continue
+                try:
+                    valor_num = float(valor or 0)
+                except Exception:
+                    valor_num = 0
+                if valor_num <= 0:
+                    continue
+
+                detalles.append(
+                    ServicioRealizadoAdicional(
+                        servicio_realizado=servicio,
+                        servicio_id=int(sid),
+                        estilista_id=int(servicio.estilista_id),
+                        valor_cobrado=valor_num,
+                        aplica_porcentaje_establecimiento=True,
+                        porcentaje_establecimiento=100,
+                    )
+                )
                 continue
 
             if sid is None or eid is None or valor is None:
