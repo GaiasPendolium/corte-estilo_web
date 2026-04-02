@@ -4143,18 +4143,21 @@ def reporte_cierre_caja(request):
             }
         )
 
-    # Tarjetas de cierre de caja alineadas con "Cuadre por medio de pago".
-    # Se toma el mismo total de ingresos/salidas del cuadre por medios.
+    # Tarjetas de cierre de caja según reglas de negocio solicitadas:
+    # 1) Ingresos Totales - Liquidacion Empleado + Ingreso por Espacios = Ganancia Total
+    # 2) Ingreso por Servicios + Ingreso por Productos + Ingreso por Espacios = Ganancia Total
     medios_totales = data_bi.get('cierre_medios', {}).get('totales', {})
-    total_ingresos = Decimal(str(medios_totales.get('ingresos', 0) or 0))
     liquidacion_empleados = Decimal(str(medios_totales.get('salidas', 0) or 0))
-    ganancia_total = total_ingresos - liquidacion_empleados
+
+    # Mantener coherencia semántica: esta tarjeta debe ser la misma ganancia
+    # que se muestra en el detalle de servicios del establecimiento.
+    ingresos_servicios_tarjeta = ingresos_servicios_establecimiento
     ingresos_productos_tarjeta = ventas_productos_total
     ingresos_espacios_tarjeta = ingresos_espacios
-    ingresos_servicios_tarjeta = total_ingresos - ingresos_productos_tarjeta - ingresos_espacios_tarjeta
-    if ingresos_servicios_tarjeta < 0:
-        ingresos_servicios_tarjeta = Decimal(0)
+
     suma_componentes = ingresos_servicios_tarjeta + ingresos_productos_tarjeta + ingresos_espacios_tarjeta
+    ganancia_total = suma_componentes
+    total_ingresos = ganancia_total + liquidacion_empleados - ingresos_espacios_tarjeta
 
     return Response(
         {
