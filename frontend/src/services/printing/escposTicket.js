@@ -29,7 +29,7 @@ const truncate = (value, maxLength) => {
 
 const money = (amount) => {
   const n = Number(amount || 0);
-  return `$${n.toFixed(2)}`;
+  return `$${Math.round(n).toLocaleString('es-CO')}`;
 };
 
 const formatDate = (value) => {
@@ -105,6 +105,13 @@ export const buildEscPosTicket = (payload, options = {}) => {
     }
   });
 
+  if (Array.isArray(payload.summaryRows) && payload.summaryRows.length) {
+    output += divider(width);
+    payload.summaryRows.forEach((row) => {
+      output += line(row?.label || '', row?.value || '', width);
+    });
+  }
+
   output += divider(width);
   output += CMD.BOLD_ON;
   output += line('TOTAL', money(payload.total), width);
@@ -124,38 +131,62 @@ export const buildEscPosTicket = (payload, options = {}) => {
   return output;
 };
 
-export const buildProductSaleTicketPayload = (sale) => ({
-  ticketTitle: 'VENTA PRODUCTO',
-  numero_factura: sale?.numero_factura || sale?.id || '-',
-  fecha_hora: sale?.fecha_hora,
-  cliente_nombre: sale?.cliente_nombre,
-  empleado_nombre: sale?.estilista_nombre,
-  usuario_nombre: sale?.usuario_nombre,
-  medio_pago: sale?.medio_pago,
-  total: Number(sale?.total || 0),
-  items: [
-    {
-      nombre: sale?.producto_nombre || 'Producto',
-      cantidad: Number(sale?.cantidad || 1),
-      precio_unitario: Number(sale?.precio_unitario || sale?.total || 0),
-      total: Number(sale?.total || 0),
-    },
-  ],
-});
+export const buildProductSaleTicketPayload = (sale) => {
+  const rows = Array.isArray(sale?.items) && sale.items.length > 0
+    ? sale.items
+    : [sale];
+
+  const items = rows.map((item) => {
+    const qty = Number(item?.cantidad || 1);
+    const unit = Number(item?.precio_unitario || 0);
+    const total = Number(item?.total || (qty * unit));
+    return {
+      nombre: item?.producto_nombre || item?.nombre || sale?.producto_nombre || 'Producto',
+      cantidad: qty,
+      precio_unitario: unit,
+      total,
+    };
+  });
+
+  const total = items.reduce((acc, item) => acc + Number(item.total || 0), 0);
+
+  return {
+    ticketTitle: 'VENTA PRODUCTO',
+    numero_factura: sale?.numero_factura || sale?.id || '-',
+    fecha_hora: sale?.fecha_hora,
+    cliente_nombre: sale?.cliente_nombre,
+    empleado_nombre: sale?.estilista_nombre,
+    usuario_nombre: sale?.usuario_nombre,
+    medio_pago: sale?.medio_pago,
+    total: Number(sale?.total || total),
+    items,
+  };
+};
 
 export const buildServiceSaleTicketPayload = (service) => {
+  const principalValor = Number(service?.neto_servicio ?? service?.precio_cobrado ?? 0);
+  const principalEmpleado = Number(service?.monto_estilista || 0);
+  const principalEstablecimiento = Number(service?.monto_establecimiento || 0);
+
   const items = [
     {
       nombre: `${service?.servicio_nombre || 'Servicio'} - ${service?.estilista_nombre || '-'}`,
       cantidad: 1,
-      precio_unitario: Number(service?.precio_cobrado || 0),
-      total: Number(service?.precio_cobrado || 0),
+      precio_unitario: principalValor,
+      total: principalValor,
+      infoLines: [
+        `Ganancia empleado: ${money(principalEmpleado)}`,
+        `Ganancia establecimiento: ${money(principalEstablecimiento)}`,
+      ],
     },
   ];
 
   const adicionales = Array.isArray(service?.adicionales_asignados)
     ? service.adicionales_asignados
     : [];
+
+  let adicionalesEmpleado = 0;
+  let adicionalesEstablecimiento = 0;
 
   adicionales.forEach((item) => {
     const valor = Number(item?.valor || 0);
@@ -167,6 +198,9 @@ export const buildServiceSaleTicketPayload = (service) => {
     const comisionEmpleado = aplicaPct
       ? valor * (1 - (pctNormalizado / 100))
       : valor;
+    const valorEstablecimiento = valor - comisionEmpleado;
+    adicionalesEmpleado += comisionEmpleado;
+    adicionalesEstablecimiento += valorEstablecimiento;
 
     items.push({
       nombre: `${item?.servicio_nombre || 'Servicio adicional'} - ${item?.estilista_nombre || '-'}`,
@@ -175,19 +209,14 @@ export const buildServiceSaleTicketPayload = (service) => {
       total: valor,
       infoLines: [
         `Ganancia empleado: ${money(comisionEmpleado)}`,
-        `Ganancia establecimiento: ${money(valor - comisionEmpleado)}`,
+        `Ganancia establecimiento: ${money(valorEstablecimiento)}`,
       ],
     });
   });
 
-  if (items.length === 1 && Number(service?.valor_adicionales || 0) > 0) {
-    items.push({
-      nombre: `Adicionales - ${service?.estilista_nombre || '-'}`,
-      cantidad: 1,
-      precio_unitario: Number(service?.valor_adicionales || 0),
-      total: Number(service?.valor_adicionales || 0),
-    });
-  }
+  let productoAdicionalTotal = 0;
+  let productoAdicionalEmpleado = 0;
+  let productoAdicionalEstablecimiento = 0;
 
   if (service?.adicional_otro_producto) {
     const qtyProductoAd = Number(service?.adicional_otro_cantidad || 1);
@@ -195,6 +224,9 @@ export const buildServiceSaleTicketPayload = (service) => {
     const unitProductoAd = qtyProductoAd > 0 ? totalProductoAd / qtyProductoAd : totalProductoAd;
     const comisionProductoAd = Number(service?.adicional_otro_comision_estilista || 0);
     const estilistaComisionProducto = service?.adicional_otro_estilista_nombre || service?.estilista_nombre || '-';
+    productoAdicionalTotal = totalProductoAd;
+    productoAdicionalEmpleado = comisionProductoAd;
+    productoAdicionalEstablecimiento = totalProductoAd - comisionProductoAd;
 
     items.push({
       nombre: `${service?.adicional_otro_producto_nombre || 'Producto adicional'} - ${estilistaComisionProducto}`,
@@ -203,12 +235,31 @@ export const buildServiceSaleTicketPayload = (service) => {
       total: totalProductoAd,
       infoLines: [
         `Ganancia empleado: ${money(comisionProductoAd)}`,
-        `Ganancia establecimiento: ${money(totalProductoAd - comisionProductoAd)}`,
+        `Ganancia establecimiento: ${money(productoAdicionalEstablecimiento)}`,
       ],
     });
   }
 
-  const total = items.reduce((acc, item) => acc + Number(item.total || 0), 0);
+  const valorAdicionalesTotal = Number(service?.valor_adicionales || 0);
+  const valorAdicionalesAsignados = adicionales.reduce((acc, ad) => acc + Number(ad?.valor || 0), 0);
+  const adicionalNoDesglosado = Math.max(0, valorAdicionalesTotal - valorAdicionalesAsignados - productoAdicionalTotal);
+  if (adicionalNoDesglosado > 0) {
+    adicionalesEstablecimiento += adicionalNoDesglosado;
+    items.push({
+      nombre: `Adicional no desglosado - ${service?.estilista_nombre || '-'}`,
+      cantidad: 1,
+      precio_unitario: adicionalNoDesglosado,
+      total: adicionalNoDesglosado,
+      infoLines: [
+        `Ganancia empleado: ${money(0)}`,
+        `Ganancia establecimiento: ${money(adicionalNoDesglosado)}`,
+      ],
+    });
+  }
+
+  const totalServicio = principalValor + valorAdicionalesTotal;
+  const totalEmpleado = principalEmpleado + adicionalesEmpleado + productoAdicionalEmpleado;
+  const totalEstablecimiento = principalEstablecimiento + adicionalesEstablecimiento + productoAdicionalEstablecimiento;
 
   return {
     ticketTitle: 'SOPORTE SERVICIO',
@@ -218,8 +269,13 @@ export const buildServiceSaleTicketPayload = (service) => {
     empleado_nombre: service?.estilista_nombre,
     usuario_nombre: service?.usuario_nombre,
     medio_pago: service?.medio_pago,
-    total,
+    total: totalServicio,
     items,
+    summaryRows: [
+      { label: 'Total servicio', value: money(totalServicio) },
+      { label: 'Empleado', value: money(totalEmpleado) },
+      { label: 'Establecimiento', value: money(totalEstablecimiento) },
+    ],
     footerLines: ['Uso interno empleado', ...(service?.notas ? [`Notas: ${service.notas}`] : [])],
   };
 };
