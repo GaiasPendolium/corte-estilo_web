@@ -4147,6 +4147,7 @@ def reporte_cierre_caja(request):
     # 1) Ingresos Totales - Liquidacion Empleado + Ingreso por Espacios = Ganancia Total
     # 2) Ingreso por Servicios + Ingreso por Productos + Ingreso por Espacios = Ganancia Total
     medios_totales = data_bi.get('cierre_medios', {}).get('totales', {})
+    total_ingresos = Decimal(str(medios_totales.get('ingresos', 0) or 0))
     liquidacion_empleados = Decimal(str(medios_totales.get('salidas', 0) or 0))
 
     # Mantener coherencia semántica: esta tarjeta debe ser la misma ganancia
@@ -4157,7 +4158,6 @@ def reporte_cierre_caja(request):
 
     suma_componentes = ingresos_servicios_tarjeta + ingresos_productos_tarjeta + ingresos_espacios_tarjeta
     ganancia_total = suma_componentes
-    total_ingresos = ganancia_total + liquidacion_empleados - ingresos_espacios_tarjeta
 
     return Response(
         {
