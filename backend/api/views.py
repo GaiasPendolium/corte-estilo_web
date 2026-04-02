@@ -3902,6 +3902,8 @@ def reporte_cierre_caja(request):
     detalle_productos = []
     ventas_productos_total = Decimal(0)
     costo_productos_total = Decimal(0)
+    ventas_productos_directos_total = Decimal(0)
+    consumo_empleado_abonado_total = Decimal(0)
 
     for venta in ventas_pagadas_qs.order_by('-fecha_hora'):
         valor_venta = Decimal(venta.total or 0)
@@ -3911,6 +3913,7 @@ def reporte_cierre_caja(request):
 
         ventas_productos_total += valor_venta
         costo_productos_total += valor_compra
+        ventas_productos_directos_total += valor_venta
 
         detalle_productos.append(
             {
@@ -3949,6 +3952,7 @@ def reporte_cierre_caja(request):
         # Debe cuadrar con la tabla de detalle (que si incluye consumo abonado).
         ventas_productos_total += valor_venta
         costo_productos_total += valor_compra
+        consumo_empleado_abonado_total += valor_venta
 
         detalle_productos.append(
             {
@@ -4144,10 +4148,18 @@ def reporte_cierre_caja(request):
         )
 
     # Tarjetas de cierre de caja según reglas de negocio solicitadas:
-    # 1) Ingresos Totales - Liquidacion Empleado + Ingreso por Espacios = Ganancia Total
-    # 2) Ingreso por Servicios + Ingreso por Productos + Ingreso por Espacios = Ganancia Total
+    # Ingresos Totales = servicios base + servicios adicionales + productos + consumo empleado.
+    servicios_base_total = Decimal(servicios_qs.aggregate(total=Sum('precio_cobrado'))['total'] or 0)
+    servicios_adicionales_total = Decimal(servicios_qs.aggregate(total=Sum('valor_adicionales'))['total'] or 0)
+    total_ingresos = (
+        servicios_base_total
+        + servicios_adicionales_total
+        + ventas_productos_directos_total
+        + consumo_empleado_abonado_total
+    )
+
+    # Ganancia Total = servicios establecimiento + productos + espacios.
     medios_totales = data_bi.get('cierre_medios', {}).get('totales', {})
-    total_ingresos = Decimal(str(medios_totales.get('ingresos', 0) or 0))
     liquidacion_empleados = Decimal(str(medios_totales.get('salidas', 0) or 0))
 
     # Mantener coherencia semántica: esta tarjeta debe ser la misma ganancia
