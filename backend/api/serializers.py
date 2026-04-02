@@ -1038,6 +1038,10 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
                 f"- {servicio.adicional_otro_producto.nombre} ({servicio.adicional_otro_estilista.nombre}): empleado ${comision_prod:.2f} | establecimiento ${valor_est_prod:.2f}"
             )
 
+        linea_costo_insumo = ''
+        if usa_insumo_pestanas and valor_producto_adicional > 0:
+            linea_costo_insumo = f"- Costo insumo (pestañas): ${valor_producto_adicional:.2f}\n"
+
         return (
             f"CORTE Y ESTILO\n"
             f"Factura: {numero_factura}\n"
@@ -1051,7 +1055,7 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
             f"- Total servicio: ${valor_principal_total:.2f}\n"
             f"- Para empleado: ${float(montos_principal['monto_estilista']):.2f}\n"
             f"- Para establecimiento: ${float(montos_principal['monto_establecimiento']):.2f}\n"
-            f"{(f'- Costo insumo (pestañas): ${valor_producto_adicional:.2f}\\n' if usa_insumo_pestanas and valor_producto_adicional > 0 else '')}"
+            f"{linea_costo_insumo}"
             f"{bloque_comision}\n"
             f"{bloque_comision_producto}\n"
             f"Total: ${total_cobrado:.2f}\n"
