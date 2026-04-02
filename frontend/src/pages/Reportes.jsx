@@ -224,6 +224,9 @@ const Reportes = () => {
   const productos = cierreCaja?.productos || { detalle: [] };
   const espacios = cierreCaja?.espacios || { detalle: [] };
   const serviciosEst = cierreCaja?.servicios_establecimiento || { detalle: [] };
+  const ingresoServiciosTarjeta = Number(
+    serviciosEst?.total_ganancia ?? resumen?.ingresos_servicios_establecimiento ?? 0
+  );
 
   const actualizarPagoMedio = (estilistaId, medio, valor) => {
     const limpio = String(valor || '').replace(/[^\d.]/g, '');
@@ -409,7 +412,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
         <KpiCard title="Ingresos Totales" value={formatMoney(resumen.total_ingresos)} hint="Total ingresos recibidos del periodo" tone="slate" />
         <KpiCard title="Liquidacion Empleado" value={formatMoney(resumen.liquidacion_empleados)} hint="Total liquidado a empleados" tone="sky" />
         <KpiCard title="Ganancia Total" value={formatMoney(resumen.ganancia_total)} hint="Ingresos totales - liquidacion empleado" tone="emerald" />
-        <KpiCard title="Ingreso por Servicios" value={formatMoney(resumen.ingresos_servicios_establecimiento)} hint="Ganancia del establecimiento en servicios y adicionales" tone="slate" />
+        <KpiCard title="Ingreso por Servicios" value={formatMoney(ingresoServiciosTarjeta)} hint="Ganancia del establecimiento en servicios y adicionales" tone="slate" />
         <KpiCard title="Ingreso por Productos" value={formatMoney(productos.ingresos_venta)} hint="Valor total de venta de productos" tone="amber" />
         <KpiCard title="Ingreso por Espacios" value={formatMoney(resumen.ingresos_espacios)} hint="Pagos recibidos por espacio" tone="sky" />
       </div>
