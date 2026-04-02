@@ -3902,6 +3902,7 @@ def reporte_cierre_caja(request):
     detalle_productos = []
     ventas_productos_total = Decimal(0)
     costo_productos_total = Decimal(0)
+    comision_productos_total = Decimal(0)
     ventas_productos_directos_total = Decimal(0)
     consumo_empleado_abonado_total = Decimal(0)
 
@@ -3909,10 +3910,20 @@ def reporte_cierre_caja(request):
         valor_venta = Decimal(venta.total or 0)
         costo_unitario = Decimal(venta.producto.precio_compra or 0)
         valor_compra = costo_unitario * Decimal(venta.cantidad or 0)
-        ganancia = valor_venta - valor_compra
+        comision_empleado = Decimal(0)
+        if venta.estilista_id:
+            pct = Decimal(venta.producto.comision_estilista or 0)
+            if pct < 0:
+                pct = Decimal(0)
+            if pct > 100:
+                pct = Decimal(100)
+            comision_empleado = (valor_venta * pct) / Decimal(100)
+
+        ganancia = valor_venta - valor_compra - comision_empleado
 
         ventas_productos_total += valor_venta
         costo_productos_total += valor_compra
+        comision_productos_total += comision_empleado
         ventas_productos_directos_total += valor_venta
 
         detalle_productos.append(
@@ -3927,6 +3938,8 @@ def reporte_cierre_caja(request):
                 'cantidad': int(venta.cantidad or 0),
                 'valor_venta': float(valor_venta),
                 'valor_compra': float(valor_compra),
+                'con_comision_empleado': bool(comision_empleado > 0),
+                'comision_empleado': float(comision_empleado),
                 'ganancia_neta': float(ganancia),
             }
         )
@@ -3966,6 +3979,8 @@ def reporte_cierre_caja(request):
                 'cantidad': int(venta.cantidad or 0),
                 'valor_venta': float(valor_venta),
                 'valor_compra': float(valor_compra),
+                'con_comision_empleado': False,
+                'comision_empleado': 0.0,
                 'ganancia_neta': float(ganancia),
             }
         )
@@ -3979,10 +3994,20 @@ def reporte_cierre_caja(request):
         precio_compra = Decimal(srv.adicional_otro_producto.precio_compra or 0)
         valor_venta = precio_venta * qty
         valor_compra = precio_compra * qty
-        ganancia = valor_venta - valor_compra
+        comision_empleado = Decimal(0)
+        if srv.adicional_otro_estilista_id:
+            pct = Decimal(srv.adicional_otro_producto.comision_estilista or 0)
+            if pct < 0:
+                pct = Decimal(0)
+            if pct > 100:
+                pct = Decimal(100)
+            comision_empleado = (valor_venta * pct) / Decimal(100)
+
+        ganancia = valor_venta - valor_compra - comision_empleado
 
         ventas_productos_total += valor_venta
         costo_productos_total += valor_compra
+        comision_productos_total += comision_empleado
 
         detalle_productos.append(
             {
@@ -3996,6 +4021,8 @@ def reporte_cierre_caja(request):
                 'cantidad': int(qty),
                 'valor_venta': float(valor_venta),
                 'valor_compra': float(valor_compra),
+                'con_comision_empleado': bool(comision_empleado > 0),
+                'comision_empleado': float(comision_empleado),
                 'ganancia_neta': float(ganancia),
             }
         )
@@ -4109,20 +4136,17 @@ def reporte_cierre_caja(request):
         ad_info = adicionales_por_servicio.get(sid, {'bruto': Decimal(0), 'establecimiento': Decimal(0), 'cantidad': 0})
         ad_nombres = adicionales_nombres_por_servicio.get(sid, [])
 
-        prod_est = Decimal(0)
+        valor_producto_adicional = Decimal(0)
         if srv.adicional_otro_producto_id:
-            qty = Decimal(srv.adicional_otro_cantidad or 1)
-            precio_venta = Decimal(srv.adicional_otro_producto.precio_venta or 0)
-            bruto_prod = precio_venta * qty
-            pct_prod = Decimal(srv.adicional_otro_producto.comision_estilista or 0)
-            if pct_prod < 0:
-                pct_prod = Decimal(0)
-            if pct_prod > 100:
-                pct_prod = Decimal(100)
-            prod_est = bruto_prod - ((bruto_prod * pct_prod) / Decimal(100))
+            valor_producto_adicional = Decimal(srv.adicional_otro_producto.precio_venta or 0) * Decimal(srv.adicional_otro_cantidad or 1)
 
-        valor_servicio = Decimal(srv.precio_cobrado or 0) + Decimal(srv.valor_adicionales or 0)
-        ganancia_est = _monto_establecimiento_resuelto(srv) + Decimal(ad_info['establecimiento'] or 0) + prod_est
+        adicionales_servicio_no_producto = Decimal(srv.valor_adicionales or 0) - valor_producto_adicional
+        if adicionales_servicio_no_producto < 0:
+            adicionales_servicio_no_producto = Decimal(0)
+
+        valor_servicio = Decimal(srv.precio_cobrado or 0) + adicionales_servicio_no_producto
+        # En este detalle solo se reporta ganancia de servicios (sin productos).
+        ganancia_est = _monto_establecimiento_resuelto(srv) + Decimal(ad_info['establecimiento'] or 0)
 
         if ganancia_est <= 0:
             continue
@@ -4193,7 +4217,8 @@ def reporte_cierre_caja(request):
             'productos': {
                 'ingresos_venta': float(ventas_productos_total),
                 'valor_compra': float(costo_productos_total),
-                'ganancia_neta': float(ventas_productos_total - costo_productos_total),
+                'comision_empleado_total': float(comision_productos_total),
+                'ganancia_neta': float(ventas_productos_total - costo_productos_total - comision_productos_total),
                 'detalle': detalle_productos,
             },
             'espacios': {

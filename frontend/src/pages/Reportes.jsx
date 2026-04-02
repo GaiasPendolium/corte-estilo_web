@@ -502,13 +502,14 @@ const aplicarEstadoLiquidacion = async (fila) => {
                 <th className="px-4 py-3 text-left">Cantidad</th>
                 <th className="px-4 py-3 text-left">Valor venta</th>
                 <th className="px-4 py-3 text-left">Valor compra</th>
+                <th className="px-4 py-3 text-left">Comision empleado</th>
                 <th className="px-4 py-3 text-left">Ganancia neta</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {(productos.detalle || []).length === 0 && (
                 <tr>
-                  <td className="table-cell text-slate-500" colSpan={7}>No hay detalle de productos en el rango seleccionado.</td>
+                  <td className="table-cell text-slate-500" colSpan={8}>No hay detalle de productos en el rango seleccionado.</td>
                 </tr>
               )}
               {(productos.detalle || []).map((item, idx) => (
@@ -525,6 +526,11 @@ const aplicarEstadoLiquidacion = async (fila) => {
                   <td className="table-cell">{item.cantidad || 0}</td>
                   <td className="table-cell">{formatMoney(item.valor_venta)}</td>
                   <td className="table-cell">{formatMoney(item.valor_compra)}</td>
+                  <td className="table-cell">
+                    {Number(item.comision_empleado || 0) > 0
+                      ? `Si (${formatMoney(item.comision_empleado)})`
+                      : 'No ($0)'}
+                  </td>
                   <td className={`table-cell font-semibold ${Number(item.ganancia_neta || 0) >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
                     {formatMoney(item.ganancia_neta)}
                   </td>
@@ -536,6 +542,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
                   <td className="table-cell">{(productos.detalle || []).reduce((sum, item) => sum + Number(item.cantidad || 0), 0)}</td>
                   <td className="table-cell">{formatMoney((productos.detalle || []).reduce((sum, item) => sum + Number(item.valor_venta || 0), 0))}</td>
                   <td className="table-cell">{formatMoney((productos.detalle || []).reduce((sum, item) => sum + Number(item.valor_compra || 0), 0))}</td>
+                  <td className="table-cell">{formatMoney((productos.detalle || []).reduce((sum, item) => sum + Number(item.comision_empleado || 0), 0))}</td>
                   <td className="table-cell">{formatMoney((productos.detalle || []).reduce((sum, item) => sum + Number(item.ganancia_neta || 0), 0))}</td>
                 </tr>
               )}
