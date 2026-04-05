@@ -939,6 +939,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
                     <div className="rounded-xl border border-white bg-white p-3">
                       <p className="text-xs text-slate-500">Pendiente por pagar</p>
                       <p className="text-xl font-black text-emerald-700 mt-1">{formatMoney(pendientePagoEmpleado)}</p>
+                      <p className="text-[11px] text-slate-500 mt-1">Valor base antes de deducciones de consumo y abono a puesto.</p>
                     </div>
                     <div className="rounded-xl border border-white bg-white p-3">
                       <p className="text-xs text-slate-500">Consumo pendiente</p>
@@ -949,6 +950,27 @@ const aplicarEstadoLiquidacion = async (fila) => {
                       <p className="text-xl font-black text-amber-700 mt-1">{formatMoney(deudaPuestoAcumulada)}</p>
                       <p className="text-[11px] text-slate-500 mt-1">Debe puesto = cobros de puesto no cubiertos por abonos registrados.</p>
                     </div>
+                  </div>
+                </div>
+
+                <div className="card border border-slate-200 bg-white">
+                  <h4 className="card-header mb-2">Días incluidos en el pendiente por pagar</h4>
+                  <div className="space-y-2 max-h-[260px] overflow-y-auto pr-1">
+                    {loadingDesgloseLiquidacion && <p className="text-sm text-slate-500">Cargando días pendientes...</p>}
+                    {!loadingDesgloseLiquidacion && diasPendientes.length === 0 && (
+                      <p className="text-sm text-slate-500">No hay días pendientes en el rango seleccionado.</p>
+                    )}
+                    {!loadingDesgloseLiquidacion && diasPendientes.map((d) => (
+                      <div key={`dia-${d.fecha}`} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        <div className="flex justify-between gap-2">
+                          <p className="text-sm font-semibold text-slate-900">{d.fecha}</p>
+                          <p className="text-sm font-bold text-emerald-700">{formatMoney(d.neto_dia)}</p>
+                        </div>
+                        <p className="text-xs text-slate-600 mt-1">Base servicio: {formatMoney(d.base_servicio)} | Comisión: {formatMoney(d.comision_productos)}</p>
+                        <p className="text-xs text-slate-600">Descuento puesto: {formatMoney(d.descuento_espacio)}</p>
+                        <p className="text-xs text-slate-500">Estado día: {d.estado || 'pendiente'}</p>
+                      </div>
+                    ))}
                   </div>
                 </div>
 
@@ -1051,6 +1073,18 @@ const aplicarEstadoLiquidacion = async (fila) => {
                         <p className="text-xs text-amber-700">Saldo pendiente: {formatMoney(saldoPorPagar)}</p>
                       </div>
 
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                        <p className="text-sm font-semibold text-slate-800">Detalle del pendiente por pagar</p>
+                        <div className="mt-2 space-y-1 text-xs text-slate-700">
+                          <p>Total base pendiente (rango): <b>{formatMoney(pendientePagoEmpleado)}</b></p>
+                          <p>(-) Cobro consumo aplicado hoy: <b>{formatMoney(cobroConsumoAplicado)}</b></p>
+                          <p>(-) Abono puesto aplicado hoy: <b>{formatMoney(abonoPuestoDigitado)}</b></p>
+                          <p className="pt-1 text-indigo-800">(=) Neto estimado a pagar hoy: <b>{formatMoney(netoEstimado)}</b></p>
+                          <p>(-) Pagado digitado por medios: <b>{formatMoney(pagoDigitado)}</b></p>
+                          <p className="pt-1 text-amber-800">(=) Saldo pendiente por pagar: <b>{formatMoney(saldoPorPagar)}</b></p>
+                        </div>
+                      </div>
+
                       <button
                         className="btn-primary !w-full !py-3"
                         onClick={() => aplicarEstadoLiquidacion(empleado)}
@@ -1132,26 +1166,6 @@ const aplicarEstadoLiquidacion = async (fila) => {
                   </div>
                 </div>
 
-                <div className="card border border-slate-200 bg-white">
-                  <h4 className="card-header mb-2">Días incluidos en el pendiente por pagar</h4>
-                  <div className="space-y-2 max-h-[260px] overflow-y-auto pr-1">
-                    {loadingDesgloseLiquidacion && <p className="text-sm text-slate-500">Cargando días pendientes...</p>}
-                    {!loadingDesgloseLiquidacion && diasPendientes.length === 0 && (
-                      <p className="text-sm text-slate-500">No hay días pendientes en el rango seleccionado.</p>
-                    )}
-                    {!loadingDesgloseLiquidacion && diasPendientes.map((d) => (
-                      <div key={`dia-${d.fecha}`} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                        <div className="flex justify-between gap-2">
-                          <p className="text-sm font-semibold text-slate-900">{d.fecha}</p>
-                          <p className="text-sm font-bold text-emerald-700">{formatMoney(d.neto_dia)}</p>
-                        </div>
-                        <p className="text-xs text-slate-600 mt-1">Base servicio: {formatMoney(d.base_servicio)} | Comisión: {formatMoney(d.comision_productos)}</p>
-                        <p className="text-xs text-slate-600">Descuento puesto: {formatMoney(d.descuento_espacio)}</p>
-                        <p className="text-xs text-slate-500">Estado día: {d.estado || 'pendiente'}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
               </>
             );
           })()}

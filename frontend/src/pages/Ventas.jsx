@@ -83,6 +83,20 @@ const formatDateTimeLocalInput = (value) => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
 
+const parseNumberFlexible = (value) => {
+  if (value === null || value === undefined) return NaN;
+  let s = String(value).trim();
+  if (!s) return NaN;
+
+  // Soporta formatos como 176000,00 y 176.000,00 además de 176000.00
+  if (s.includes(',')) {
+    s = s.replace(/\./g, '').replace(',', '.');
+  }
+  s = s.replace(/[^0-9.-]/g, '');
+  const n = Number(s);
+  return Number.isFinite(n) ? n : NaN;
+};
+
 const esServicioShampooNombre = (nombre) => String(nombre || '').toLowerCase().includes('shampoo');
 
 const Ventas = () => {
@@ -611,6 +625,12 @@ const Ventas = () => {
     }
     if (!servicioEditando) return;
 
+    const precioCobradoNum = parseNumberFlexible(servicioForm.precio_cobrado);
+    if (!Number.isFinite(precioCobradoNum) || precioCobradoNum <= 0) {
+      toast.warning('El total cobrado debe ser un número mayor a 0.');
+      return;
+    }
+
     const esShampooServicio = (servicioId) => {
       const srv = serviciosCatalogo.find((s) => Number(s.id) === Number(servicioId));
       return esServicioShampooNombre(srv?.nombre);
@@ -618,21 +638,22 @@ const Ventas = () => {
 
     const adicionalesNormalizados = (servicioForm.adicionales_servicio_items || [])
       .filter((it) => {
-        if (!it.id || Number(it.valor || 0) <= 0) return false;
+        const valorNum = parseNumberFlexible(it.valor);
+        if (!it.id || !Number.isFinite(valorNum) || valorNum <= 0) return false;
         if (esShampooServicio(it.id)) return true;
         return Boolean(it.estilista_id);
       })
       .map((it) => ({
         id: Number(it.id),
         estilista_id: esShampooServicio(it.id) ? null : Number(it.estilista_id),
-        valor: Number(it.valor),
+        valor: parseNumberFlexible(it.valor),
         aplica_porcentaje_establecimiento: esShampooServicio(it.id)
           ? false
           : Boolean(it.aplica_porcentaje_establecimiento),
         porcentaje_establecimiento: esShampooServicio(it.id)
           ? 0
           : Boolean(it.aplica_porcentaje_establecimiento)
-          ? Number(it.porcentaje_establecimiento || 0)
+          ? parseNumberFlexible(it.porcentaje_establecimiento || 0)
           : 0,
       }));
 
@@ -646,7 +667,7 @@ const Ventas = () => {
     const porcentajeInvalido = (servicioForm.adicionales_servicio_items || []).find((it) => {
       if (esShampooServicio(it.id)) return false;
       if (!it.aplica_porcentaje_establecimiento) return false;
-      const pct = Number(it.porcentaje_establecimiento || 0);
+      const pct = parseNumberFlexible(it.porcentaje_establecimiento || 0);
       return !Number.isFinite(pct) || pct <= 0 || pct > 100;
     });
     if (porcentajeInvalido) {
@@ -655,7 +676,7 @@ const Ventas = () => {
     }
 
     if (servicioForm.adicional_otro_producto) {
-      const qtyProd = Number(servicioForm.adicional_otro_cantidad || 0);
+      const qtyProd = Number(String(servicioForm.adicional_otro_cantidad || '0').replace(/[^0-9]/g, ''));
       if (!Number.isFinite(qtyProd) || qtyProd <= 0) {
         toast.warning('La cantidad del producto adicional debe ser mayor a 0');
         return;
@@ -668,16 +689,17 @@ const Ventas = () => {
 
     try {
       setSaving(true);
+      const valorRepartoNum = parseNumberFlexible(servicioForm.valor_reparto_establecimiento || 0);
       await serviciosRealizadosService.update(servicioEditando.id, {
         estado: 'finalizado',
         servicio: servicioForm.servicio ? Number(servicioForm.servicio) : servicioEditando.servicio,
         estilista: servicioForm.estilista ? Number(servicioForm.estilista) : servicioEditando.estilista,
         fecha_hora: servicioForm.fecha_hora || null,
-        precio_cobrado: Number(servicioForm.precio_cobrado || 0),
+        precio_cobrado: precioCobradoNum,
         medio_pago: servicioForm.medio_pago,
         tipo_reparto_establecimiento: servicioForm.tipo_reparto_establecimiento || null,
         valor_reparto_establecimiento: servicioForm.tipo_reparto_establecimiento
-          ? Number(servicioForm.valor_reparto_establecimiento || 0)
+          ? (Number.isFinite(valorRepartoNum) ? valorRepartoNum : 0)
           : null,
         tiene_adicionales: tieneAdicionalesFinal,
         adicionales_servicio_ids: tieneAdicionalesFinal ? idsAdicionales : [],
@@ -694,7 +716,11 @@ const Ventas = () => {
       setServicioEditando(null);
       await cargarDatos();
     } catch (error) {
-      toast.error('No se pudo actualizar la factura de servicio');
+      const msg = error?.response?.data?.error
+        || error?.response?.data?.detail
+        || Object.values(error?.response?.data || {}).flat?.()[0]
+        || 'No se pudo actualizar la factura de servicio';
+      toast.error(String(msg));
     } finally {
       setSaving(false);
     }
