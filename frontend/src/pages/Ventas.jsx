@@ -136,6 +136,7 @@ const Ventas = () => {
 
   const [busquedaProducto, setBusquedaProducto] = useState('');
   const [sugerenciasProducto, setSugerenciasProducto] = useState([]);
+  const [mostrarSugerenciasProducto, setMostrarSugerenciasProducto] = useState(false);
   const [productoSeleccionado, setProductoSeleccionado] = useState(null);
   const [servicioEditando, setServicioEditando] = useState(null);
   const [searchKeyboard, setSearchKeyboard] = useState({ visible: false, field: '' });
@@ -209,6 +210,10 @@ const Ventas = () => {
   }, [fechaInicio, fechaFin]);
 
   useEffect(() => {
+    if (!mostrarSugerenciasProducto) {
+      setSugerenciasProducto([]);
+      return;
+    }
     const q = busquedaProducto.trim().toLowerCase();
     if (!q) {
       setSugerenciasProducto([]);
@@ -219,7 +224,7 @@ const Ventas = () => {
         .filter((p) => productMatchesSearch(p, q))
         .slice(0, 8)
     );
-  }, [busquedaProducto, productos]);
+  }, [busquedaProducto, productos, mostrarSugerenciasProducto]);
 
   const buscarProducto = async () => {
     if (!busquedaProducto.trim()) {
@@ -235,13 +240,20 @@ const Ventas = () => {
       setProductoSeleccionado(producto);
       if (!producto) {
         toast.info('No se encontró producto');
+        setMostrarSugerenciasProducto(false);
       } else if (Number(producto.stock || 0) <= 0) {
         toast.warning('Este producto está agotado y no se puede facturar');
         setProductoSeleccionado(null);
+        setMostrarSugerenciasProducto(false);
         return;
       } else if (!editandoId) {
         setForm((prev) => ({ ...prev, precio_unitario: String(producto.precio_venta || '') }));
       }
+      if (producto) {
+        setBusquedaProducto(formatProductSearchLabel(producto));
+      }
+      setSugerenciasProducto([]);
+      setMostrarSugerenciasProducto(false);
     } catch (error) {
       toast.error('Error en búsqueda de producto');
     }
@@ -255,6 +267,7 @@ const Ventas = () => {
     setProductoSeleccionado(producto);
     setBusquedaProducto(formatProductSearchLabel(producto));
     setSugerenciasProducto([]);
+    setMostrarSugerenciasProducto(false);
     if (!editandoId) {
       setForm((prev) => ({ ...prev, precio_unitario: String(producto.precio_venta || '') }));
     }
@@ -265,6 +278,7 @@ const Ventas = () => {
     setShowForm(false);
     setProductoSeleccionado(null);
     setBusquedaProducto('');
+    setMostrarSugerenciasProducto(false);
     setForm({ cliente_nombre: '', estilista: '', medio_pago: 'efectivo', cantidad: '1', precio_unitario: '' });
   };
 
@@ -522,6 +536,7 @@ const Ventas = () => {
     }
     if (searchKeyboard.field === 'busqueda_producto') {
       setBusquedaProducto(value);
+      setMostrarSugerenciasProducto(true);
     }
   };
 
@@ -886,6 +901,7 @@ const Ventas = () => {
               setShowForm(true);
               setProductoSeleccionado(null);
               setBusquedaProducto('');
+              setMostrarSugerenciasProducto(false);
               setForm({ cliente_nombre: '', estilista: '', medio_pago: 'efectivo', cantidad: '1', precio_unitario: '' });
             }}
             disabled={!puedeEditarFacturas || modoVista !== 'ventas'}
@@ -1324,7 +1340,12 @@ const Ventas = () => {
             inputMode="search"
             enterKeyHint="search"
             value={busquedaProducto}
-            onChange={(e) => setBusquedaProducto(e.target.value)}
+            onFocus={() => setMostrarSugerenciasProducto(true)}
+            onBlur={() => setTimeout(() => setMostrarSugerenciasProducto(false), 120)}
+            onChange={(e) => {
+              setBusquedaProducto(e.target.value);
+              setMostrarSugerenciasProducto(true);
+            }}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault();
@@ -1345,7 +1366,7 @@ const Ventas = () => {
           <FiSearch /> Buscar
         </button>
 
-        {sugerenciasProducto.length > 0 && (
+        {mostrarSugerenciasProducto && sugerenciasProducto.length > 0 && (
           <div className="md:col-span-4 rounded-lg border border-gray-200 bg-white shadow-lg max-h-56 overflow-auto">
             {sugerenciasProducto.map((p) => (
               <button
