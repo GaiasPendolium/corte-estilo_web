@@ -920,7 +920,36 @@ const aplicarEstadoLiquidacion = async (fila) => {
             const pagoDigitado = totalPagoMedios(estId);
             const saldoPorPagar = Math.max(netoEstimado - pagoDigitado, 0);
             const historialPagosEmpleado = (historialEstados || []).filter((h) => Number(h.estilista_id) === estId);
-            const historialPuestoEmpleado = historialPagosEmpleado.filter((h) => Number(h.abono_puesto || 0) > 0 || Number(h.pendiente_puesto || 0) > 0);
+            const historialDiarioLiquidacion = Object.values(
+              historialPagosEmpleado.reduce((acc, h) => {
+                const fecha = h.fecha || '-';
+                const previo = acc[fecha] || {
+                  fecha,
+                  pago_empleado_dia: 0,
+                  abono_puesto_dia: 0,
+                  saldo_puesto_cierre: Number(h.pendiente_puesto || 0),
+                  fecha_cambio: h.fecha_cambio || '',
+                  usuario_nombre: h.usuario_nombre || 'Sistema',
+                };
+
+                const pagoDia = Number(previo.pago_empleado_dia || 0) + Number(h.monto_liquidado || 0);
+                const abonoDia = Number(previo.abono_puesto_dia || 0) + Number(h.abono_puesto || 0);
+                const cambioPrevio = String(previo.fecha_cambio || '');
+                const cambioActual = String(h.fecha_cambio || '');
+                const usarActualComoCierre = cambioActual >= cambioPrevio;
+
+                acc[fecha] = {
+                  ...previo,
+                  pago_empleado_dia: pagoDia,
+                  abono_puesto_dia: abonoDia,
+                  saldo_puesto_cierre: usarActualComoCierre ? Number(h.pendiente_puesto || 0) : Number(previo.saldo_puesto_cierre || 0),
+                  fecha_cambio: usarActualComoCierre ? (h.fecha_cambio || previo.fecha_cambio) : previo.fecha_cambio,
+                  usuario_nombre: usarActualComoCierre ? (h.usuario_nombre || previo.usuario_nombre) : previo.usuario_nombre,
+                };
+
+                return acc;
+              }, {})
+            ).sort((a, b) => String(b.fecha || '').localeCompare(String(a.fecha || '')));
             const historialAbonosConsumo = (carteraData?.abonos_historial || []).filter((h) => Number(h.estilista_id) === estId);
             const deudasEmpleado = (carteraData?.deudas || []).filter((d) => Number(d.estilista_id) === estId && Number(d.saldo_pendiente || 0) > 0);
             const diasPendientes = desgloseLiquidacion?.desglose_por_dia?.filter((d) => String(d.incluido_en || d.estado || '').toLowerCase() !== 'cancelado') || [];
@@ -1134,18 +1163,19 @@ const aplicarEstadoLiquidacion = async (fila) => {
                   </div>
 
                   <div className="card border border-sky-200 bg-sky-50">
-                    <h4 className="card-header mb-2">Historial de pagos al empleado</h4>
+                    <h4 className="card-header mb-2">Historial diario de liquidación (por fecha)</h4>
                     <div className="space-y-2 max-h-[280px] overflow-y-auto pr-1">
-                      {historialPagosEmpleado.length === 0 && <p className="text-sm text-slate-500">Sin pagos registrados.</p>}
-                      {historialPagosEmpleado.map((h) => (
-                        <div key={h.id} className="rounded-xl border border-sky-200 bg-white p-3">
+                      {historialDiarioLiquidacion.length === 0 && <p className="text-sm text-slate-500">Sin movimientos registrados.</p>}
+                      {historialDiarioLiquidacion.map((h) => (
+                        <div key={`hist-dia-${h.fecha}`} className="rounded-xl border border-sky-200 bg-white p-3">
                           <div className="flex justify-between gap-2">
                             <p className="text-sm font-semibold text-slate-900">{h.fecha || '-'}</p>
-                            <p className="text-sm font-bold text-emerald-700">{formatMoney(h.monto_liquidado)}</p>
+                            <p className="text-sm font-bold text-emerald-700">Pago empleado: {formatMoney(h.pago_empleado_dia)}</p>
                           </div>
                           <p className="text-xs text-slate-500">{h.fecha_cambio || '-'}</p>
-                          <p className="text-xs text-slate-600 mt-1">Abono puesto: {formatMoney(h.abono_puesto)}</p>
-                          <p className="text-xs text-slate-600">Pendiente puesto: {formatMoney(h.pendiente_puesto)}</p>
+                          <p className="text-xs text-sky-700 mt-1">Abono puesto del día: {formatMoney(h.abono_puesto_dia)}</p>
+                          <p className="text-xs text-amber-700">Saldo puesto al cierre del día: {formatMoney(h.saldo_puesto_cierre)}</p>
+                          <p className="text-xs text-slate-500">Usuario: {h.usuario_nombre || 'Sistema'}</p>
                         </div>
                       ))}
                     </div>
@@ -1165,24 +1195,6 @@ const aplicarEstadoLiquidacion = async (fila) => {
                         <p className="text-xs text-slate-500">{a.fecha_hora || '-'}</p>
                         <p className="text-xs text-slate-600 mt-1">Medio: {a.medio_pago || '-'}</p>
                         <p className="text-xs text-slate-600">{a.notas || 'Sin notas'}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="card border border-amber-300 bg-amber-50">
-                  <h4 className="card-header mb-2">Historial deuda de puesto (abonos y saldo)</h4>
-                  <div className="space-y-2 max-h-[260px] overflow-y-auto pr-1">
-                    {historialPuestoEmpleado.length === 0 && <p className="text-sm text-slate-500">Sin movimientos de puesto para este empleado.</p>}
-                    {historialPuestoEmpleado.map((h) => (
-                      <div key={`puesto-${h.id}`} className="rounded-xl border border-amber-200 bg-white p-3">
-                        <div className="flex justify-between gap-2">
-                          <p className="text-sm font-semibold text-slate-900">{h.fecha || '-'}</p>
-                          <p className="text-xs text-slate-500">{h.fecha_cambio || '-'}</p>
-                        </div>
-                        <p className="text-xs text-sky-700 mt-1">Abono puesto: {formatMoney(h.abono_puesto)}</p>
-                        <p className="text-xs text-amber-700">Saldo puesto al cierre: {formatMoney(h.pendiente_puesto)}</p>
-                        <p className="text-xs text-slate-500">Usuario: {h.usuario_nombre || 'Sistema'}</p>
                       </div>
                     ))}
                   </div>
