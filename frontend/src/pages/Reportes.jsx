@@ -49,6 +49,49 @@ const KpiCard = ({ title, value, hint, tone = 'slate' }) => {
   );
 };
 
+const NumericPad = ({ visible, value, onChange, onClose }) => {
+  if (!visible) return null;
+
+  const append = (token) => {
+    const current = String(value || '');
+    if (token === 'DEL') {
+      onChange(current.slice(0, -1));
+      return;
+    }
+    if (token === 'C') {
+      onChange('');
+      return;
+    }
+    if (token === '00') {
+      onChange(`${current}00`);
+      return;
+    }
+    onChange(`${current}${token}`);
+  };
+
+  return (
+    <div className="fixed bottom-4 right-4 z-[80] w-[280px] rounded-2xl border border-slate-300 bg-white shadow-2xl">
+      <div className="flex items-center justify-between border-b border-slate-200 bg-slate-100 px-4 py-2 rounded-t-2xl">
+        <span className="text-sm font-semibold text-slate-700">Teclado numérico</span>
+        <button type="button" className="btn-secondary !px-3 !py-1" onClick={onClose}>Cerrar</button>
+      </div>
+      <div className="p-3">
+        <div className="mb-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-right text-lg font-bold text-slate-900 min-h-[44px]">
+          {value || '0'}
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          {['7', '8', '9', '4', '5', '6', '1', '2', '3', '0', '00', 'DEL'].map((k) => (
+            <button key={k} type="button" className="btn-secondary !py-3" onClick={() => append(k)}>
+              {k}
+            </button>
+          ))}
+        </div>
+        <button type="button" className="btn-danger !w-full !py-3 mt-2" onClick={() => append('C')}>Limpiar</button>
+      </div>
+    </div>
+  );
+};
+
 const Reportes = () => {
   const { user } = useAuthStore();
   const esAdministrador = String(user?.rol || '').toLowerCase() === 'administrador';
@@ -75,7 +118,10 @@ const Reportes = () => {
   const [estadoDiaPorEstilista, setEstadoDiaPorEstilista] = useState({});
   const [abonoPuestoPorEstilista, setAbonoPuestoPorEstilista] = useState({});
   const [medioAbonoPuestoPorEstilista, setMedioAbonoPuestoPorEstilista] = useState({});
+  const [cobroConsumoPorEstilista, setCobroConsumoPorEstilista] = useState({});
+  const [medioCobroConsumoPorEstilista, setMedioCobroConsumoPorEstilista] = useState({});
   const [savingEstadoByEstilista, setSavingEstadoByEstilista] = useState({});
+  const [numericPadTarget, setNumericPadTarget] = useState(null);
   const [historialEstados, setHistorialEstados] = useState([]);
   const [loadingHistorial, setLoadingHistorial] = useState(false);
 
@@ -160,17 +206,23 @@ const Reportes = () => {
           setMedioAbonoPuestoPorEstilista(
             Object.fromEntries((estadoDia?.items || []).map((x) => [x.estilista_id, x.medio_abono_puesto || 'efectivo']))
           );
+          setCobroConsumoPorEstilista({});
+          setMedioCobroConsumoPorEstilista({});
         } catch (err) {
           setPagosPorEstilista({});
           setEstadoDiaPorEstilista({});
           setAbonoPuestoPorEstilista({});
           setMedioAbonoPuestoPorEstilista({});
+          setCobroConsumoPorEstilista({});
+          setMedioCobroConsumoPorEstilista({});
         }
       } else {
         setPagosPorEstilista({});
         setEstadoDiaPorEstilista({});
         setAbonoPuestoPorEstilista({});
         setMedioAbonoPuestoPorEstilista({});
+        setCobroConsumoPorEstilista({});
+        setMedioCobroConsumoPorEstilista({});
       }
     } catch (error) {
       toast.error('No se pudieron cargar los reportes');
@@ -258,6 +310,75 @@ const Reportes = () => {
     return ['efectivo', 'nequi', 'daviplata', 'otros']
       .map((k) => Number(pagos[k] || 0))
       .reduce((acc, val) => acc + (Number.isFinite(val) ? val : 0), 0);
+  };
+
+  const getNumericPadValue = () => {
+    if (!numericPadTarget?.estilistaId || !numericPadTarget?.field) return '';
+    const estId = numericPadTarget.estilistaId;
+    const field = numericPadTarget.field;
+    if (['efectivo', 'nequi', 'daviplata', 'otros'].includes(field)) {
+      return pagosPorEstilista[estId]?.[field] || '';
+    }
+    if (field === 'abono_puesto') return abonoPuestoPorEstilista[estId] || '';
+    if (field === 'cobro_consumo') return cobroConsumoPorEstilista[estId] || '';
+    return '';
+  };
+
+  const setNumericPadValue = (nextValue) => {
+    if (!numericPadTarget?.estilistaId || !numericPadTarget?.field) return;
+    const estId = numericPadTarget.estilistaId;
+    const field = numericPadTarget.field;
+    const limpio = String(nextValue || '').replace(/[^\d.]/g, '');
+
+    if (['efectivo', 'nequi', 'daviplata', 'otros'].includes(field)) {
+      setPagosPorEstilista((prev) => ({
+        ...prev,
+        [estId]: {
+          efectivo: prev[estId]?.efectivo || '',
+          nequi: prev[estId]?.nequi || '',
+          daviplata: prev[estId]?.daviplata || '',
+          otros: prev[estId]?.otros || '',
+          [field]: limpio,
+        },
+      }));
+      return;
+    }
+
+    if (field === 'abono_puesto') {
+      setAbonoPuestoPorEstilista((prev) => ({ ...prev, [estId]: limpio }));
+      return;
+    }
+
+    if (field === 'cobro_consumo') {
+      setCobroConsumoPorEstilista((prev) => ({ ...prev, [estId]: limpio }));
+    }
+  };
+
+  const cobrarConsumoEnDeudas = async ({ estilistaId, monto, medioPago, fecha }) => {
+    const deudas = (carteraData?.deudas || [])
+      .filter((d) => Number(d.estilista_id) === Number(estilistaId) && Number(d.saldo_pendiente || 0) > 0)
+      .sort((a, b) => String(a.fecha_hora || '').localeCompare(String(b.fecha_hora || '')));
+
+    let restante = Number(monto || 0);
+    let cobrado = 0;
+
+    for (const deuda of deudas) {
+      if (restante <= 0) break;
+      const saldo = Number(deuda.saldo_pendiente || 0);
+      if (saldo <= 0) continue;
+      const abono = Math.min(restante, saldo);
+      await reportesService.abonarConsumoEmpleado({
+        estilista_id: estilistaId,
+        deuda_id: deuda.deuda_id,
+        monto: abono,
+        medio_pago: medioPago,
+        notas: `Cobro consumo integrado en liquidacion ${fecha}`,
+      });
+      cobrado += abono;
+      restante -= abono;
+    }
+
+    return { cobrado, restante };
   };
 
   const resumenPorEstilista = useMemo(() => {
@@ -356,10 +477,24 @@ const aplicarEstadoLiquidacion = async (fila) => {
   const pago_otros = Number(pagosPorEstilista[estilistaId]?.otros || 0);
   const abono_puesto = Number(abonoPuestoPorEstilista[estilistaId] || 0);
   const medio_abono_puesto = medioAbonoPuestoPorEstilista[estilistaId] || 'efectivo';
+  const saldoConsumoEmpleado = Number(resumenPorEstilista[estilistaId]?.saldo_pendiente || 0);
+  const cobroConsumoDigitado = Number(cobroConsumoPorEstilista[estilistaId] || 0);
+  const cobroConsumoAplicado = Math.min(Math.max(cobroConsumoDigitado, 0), Math.max(saldoConsumoEmpleado, 0));
+  const medioCobroConsumo = medioCobroConsumoPorEstilista[estilistaId] || 'efectivo';
   
   setSavingEstadoByEstilista((prev) => ({ ...prev, [estilistaId]: true }));
   
   try {
+    let resumenCobro = null;
+    if (cobroConsumoAplicado > 0) {
+      resumenCobro = await cobrarConsumoEnDeudas({
+        estilistaId,
+        monto: cobroConsumoAplicado,
+        medioPago: medioCobroConsumo,
+        fecha: fechaInicio,
+      });
+    }
+
     const resultado = await reportesService.liquidarDiaV2({
       estilista_id: estilistaId,
       fecha: fechaInicio,
@@ -379,7 +514,10 @@ const aplicarEstadoLiquidacion = async (fila) => {
     const s = resultado.puesto.saldo_pendiente;
     
     const msgDeuda = d_ant > 0 ? ` (${formatMoney(d_ant)} anterior + ${formatMoney(d)} hoy)` : '';
-    toast.success(`✓ ${resultado.estilista.nombre}: Gan ${formatMoney(g)} - Puesto ${formatMoney(d_tot)}${msgDeuda} - Pagado ${formatMoney(p)} - Saldo ${formatMoney(s)}`);
+    const msgConsumo = resumenCobro && resumenCobro.cobrado > 0
+      ? ` - Consumo cobrado ${formatMoney(resumenCobro.cobrado)}`
+      : '';
+    toast.success(`✓ ${resultado.estilista.nombre}: Gan ${formatMoney(g)} - Puesto ${formatMoney(d_tot)}${msgDeuda}${msgConsumo} - Pagado ${formatMoney(p)} - Saldo ${formatMoney(s)}`);
     
     // Actualizar estado localmente de inmediato para UI responsiva
     setEstadoDiaPorEstilista((prev) => ({
@@ -633,7 +771,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
       <div className="card">
         <h2 className="card-header">Liquidacion Empleado</h2>
         <p className="text-sm text-slate-600">
-          Valor total del empleado = servicios + comisiones. El puesto se maneja como deuda aparte y puede abonarse o pagarse totalmente.
+          Liquidacion integrada: puedes cobrar consumo y liquidar al empleado en una sola accion.
         </p>
         <p className="text-xs text-slate-500 mt-1">
           Para registrar pagos por medio o abono de puesto, usa un unico dia (fecha inicio = fecha fin).
@@ -647,6 +785,9 @@ const aplicarEstadoLiquidacion = async (fila) => {
                 <th className="px-4 py-3 text-left">Valor total empleado</th>
                 <th className="px-4 py-3 text-left">Comisiones</th>
                 <th className="px-4 py-3 text-left">Valor a liquidar</th>
+                <th className="px-4 py-3 text-left">Consumo pendiente</th>
+                <th className="px-4 py-3 text-left">Cobro consumo</th>
+                <th className="px-4 py-3 text-left">Medio cobro consumo</th>
                 <th className="px-4 py-3 text-left">Puesto</th>
                 <th className="px-4 py-3 text-left">Pago efectivo</th>
                 <th className="px-4 py-3 text-left">Pago Nequi</th>
@@ -654,13 +795,14 @@ const aplicarEstadoLiquidacion = async (fila) => {
                 <th className="px-4 py-3 text-left">Pago otros</th>
                 <th className="px-4 py-3 text-left">Abono puesto</th>
                 <th className="px-4 py-3 text-left">Medio abono puesto</th>
+                <th className="px-4 py-3 text-left">Neto estimado</th>
                 <th className="px-4 py-3 text-left">Acciones</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {(biData?.estilistas || []).length === 0 && (
                 <tr>
-                  <td className="table-cell text-slate-500" colSpan={13}>No hay liquidacion para el rango seleccionado.</td>
+                  <td className="table-cell text-slate-500" colSpan={17}>No hay liquidacion para el rango seleccionado.</td>
                 </tr>
               )}
               {(biData?.estilistas || []).map((item) => {
@@ -687,6 +829,11 @@ const aplicarEstadoLiquidacion = async (fila) => {
                   : (item.estado_pago_rango || item.estado_pago_dia || 'pendiente');
                 const valorALiquidarBase = Math.max(gananciasTotales - pagadoEmpleadoPeriodo, 0);
                 const valorALiquidarVisible = estadoActual === 'cancelado' ? 0 : valorALiquidarBase;
+                const consumoPendiente = Number(resumenPorEstilista[item.estilista_id]?.saldo_pendiente || 0);
+                const cobroConsumoDigitado = Number(cobroConsumoPorEstilista[item.estilista_id] || 0);
+                const cobroConsumoAplicado = Math.min(Math.max(cobroConsumoDigitado, 0), Math.max(consumoPendiente, 0));
+                const netoEstimado = Math.max(gananciasTotales - cobroConsumoAplicado, 0);
+                const saldoNeto = Math.max(netoEstimado - totalPagoMedios(item.estilista_id), 0);
                 const descuentoPuestoValidado = descuentoVisible;
                 const descuentoPuestoTotalVisible = deudaAcumulada;
                 const inputsHabilitados = estadoActual !== 'cancelado';
@@ -697,6 +844,40 @@ const aplicarEstadoLiquidacion = async (fila) => {
                     <td className="table-cell">{formatMoney(comisionesEmpleado)}</td>
                     <td className={`table-cell font-semibold ${valorALiquidarVisible >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
                       {formatMoney(valorALiquidarVisible)}
+                    </td>
+                    <td className="table-cell text-rose-700 font-semibold">{formatMoney(consumoPendiente)}</td>
+                    <td className="table-cell">
+                      <input
+                        className="input-field !py-2 !min-h-0 min-w-[120px]"
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={inputsHabilitados ? (cobroConsumoPorEstilista[item.estilista_id] || '') : ''}
+                        onFocus={() => setNumericPadTarget({ estilistaId: item.estilista_id, field: 'cobro_consumo' })}
+                        onChange={(e) =>
+                          setCobroConsumoPorEstilista((prev) => ({
+                            ...prev,
+                            [item.estilista_id]: String(e.target.value || '').replace(/[^\d.]/g, ''),
+                          }))
+                        }
+                      />
+                      <div className="text-xs text-slate-500 mt-1">Aplicado: {formatMoney(cobroConsumoAplicado)}</div>
+                    </td>
+                    <td className="table-cell">
+                      <select
+                        className="input-field !py-2 !min-h-0 min-w-[130px]"
+                        value={medioCobroConsumoPorEstilista[item.estilista_id] || 'efectivo'}
+                        onChange={(e) =>
+                          setMedioCobroConsumoPorEstilista((prev) => ({
+                            ...prev,
+                            [item.estilista_id]: e.target.value,
+                          }))
+                        }
+                      >
+                        {MEDIOS_PAGO_OPERACION.map((m) => (
+                          <option key={m.value} value={m.value}>{m.label}</option>
+                        ))}
+                      </select>
                     </td>
                     <td className="table-cell">
                       <div>Debe hoy: {formatMoney(descuentoPuestoValidado)}</div>
@@ -715,6 +896,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
                         min="0"
                         step="1"
                         value={inputsHabilitados ? (pagosPorEstilista[item.estilista_id]?.efectivo || '') : ''}
+                        onFocus={() => setNumericPadTarget({ estilistaId: item.estilista_id, field: 'efectivo' })}
                         onChange={(e) => actualizarPagoMedio(item.estilista_id, 'efectivo', e.target.value)}
                       />
                     </td>
@@ -725,6 +907,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
                         min="0"
                         step="1"
                         value={inputsHabilitados ? (pagosPorEstilista[item.estilista_id]?.nequi || '') : ''}
+                        onFocus={() => setNumericPadTarget({ estilistaId: item.estilista_id, field: 'nequi' })}
                         onChange={(e) => actualizarPagoMedio(item.estilista_id, 'nequi', e.target.value)}
                       />
                     </td>
@@ -735,6 +918,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
                         min="0"
                         step="1"
                         value={inputsHabilitados ? (pagosPorEstilista[item.estilista_id]?.daviplata || '') : ''}
+                        onFocus={() => setNumericPadTarget({ estilistaId: item.estilista_id, field: 'daviplata' })}
                         onChange={(e) => actualizarPagoMedio(item.estilista_id, 'daviplata', e.target.value)}
                       />
                     </td>
@@ -745,6 +929,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
                         min="0"
                         step="1"
                         value={inputsHabilitados ? (pagosPorEstilista[item.estilista_id]?.otros || '') : ''}
+                        onFocus={() => setNumericPadTarget({ estilistaId: item.estilista_id, field: 'otros' })}
                         onChange={(e) => actualizarPagoMedio(item.estilista_id, 'otros', e.target.value)}
                       />
                       <div className="text-xs text-slate-500 mt-1">Total: {formatMoney(inputsHabilitados ? totalPagoMedios(item.estilista_id) : 0)}</div>
@@ -756,6 +941,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
                         min="0"
                         step="1"
                         value={inputsHabilitados ? (abonoPuestoPorEstilista[item.estilista_id] || '') : ''}
+                        onFocus={() => setNumericPadTarget({ estilistaId: item.estilista_id, field: 'abono_puesto' })}
                         onChange={(e) =>
                           setAbonoPuestoPorEstilista((prev) => ({
                             ...prev,
@@ -781,6 +967,11 @@ const aplicarEstadoLiquidacion = async (fila) => {
                       </select>
                     </td>
                     <td className="table-cell">
+                      <div className="font-semibold text-emerald-700">{formatMoney(netoEstimado)}</div>
+                      <div className="text-xs text-slate-500">Pago: {formatMoney(totalPagoMedios(item.estilista_id))}</div>
+                      <div className="text-xs text-amber-600">Pendiente: {formatMoney(saldoNeto)}</div>
+                    </td>
+                    <td className="table-cell">
                       <div className="flex flex-wrap gap-2">
                         <button
                           className="btn-primary !px-3 !py-2"
@@ -798,6 +989,13 @@ const aplicarEstadoLiquidacion = async (fila) => {
           </table>
         </div>
       </div>
+
+      <NumericPad
+        visible={!!numericPadTarget}
+        value={getNumericPadValue()}
+        onChange={setNumericPadValue}
+        onClose={() => setNumericPadTarget(null)}
+      />
 
       <div className="card">
         <div className="flex items-center justify-between gap-3">
