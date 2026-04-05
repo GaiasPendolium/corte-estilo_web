@@ -631,10 +631,9 @@ const Ventas = () => {
     const idsAdicionales = adicionalesNormalizados.map((it) => it.id);
 
     const tieneProductoAdicional = Boolean(servicioForm.adicional_otro_producto);
-    if (servicioForm.tiene_adicionales && adicionalesNormalizados.length === 0 && !tieneProductoAdicional) {
-      toast.warning('Selecciona al menos un adicional: servicio, producto o ambos');
-      return;
-    }
+    const tieneAdicionalesFinal = Boolean(servicioForm.tiene_adicionales) && (
+      adicionalesNormalizados.length > 0 || tieneProductoAdicional
+    );
 
     const porcentajeInvalido = (servicioForm.adicionales_servicio_items || []).find((it) => {
       if (esShampooServicio(it.id)) return false;
@@ -672,9 +671,9 @@ const Ventas = () => {
         valor_reparto_establecimiento: servicioForm.tipo_reparto_establecimiento
           ? Number(servicioForm.valor_reparto_establecimiento || 0)
           : null,
-        tiene_adicionales: Boolean(servicioForm.tiene_adicionales),
-        adicionales_servicio_ids: servicioForm.tiene_adicionales ? idsAdicionales : [],
-        adicionales_servicio_items: servicioForm.tiene_adicionales ? adicionalesNormalizados : [],
+        tiene_adicionales: tieneAdicionalesFinal,
+        adicionales_servicio_ids: tieneAdicionalesFinal ? idsAdicionales : [],
+        adicionales_servicio_items: tieneAdicionalesFinal ? adicionalesNormalizados : [],
         adicional_otro_producto: servicioForm.adicional_otro_producto ? Number(servicioForm.adicional_otro_producto) : null,
         adicional_otro_estilista: servicioForm.adicional_otro_estilista ? Number(servicioForm.adicional_otro_estilista) : null,
         adicional_otro_cantidad: servicioForm.adicional_otro_producto ? Number(servicioForm.adicional_otro_cantidad || 1) : 1,
