@@ -126,6 +126,7 @@ const Reportes = () => {
   const [medioAbonoPuestoPorEstilista, setMedioAbonoPuestoPorEstilista] = useState({});
   const [cobroConsumoPorEstilista, setCobroConsumoPorEstilista] = useState({});
   const [medioCobroConsumoPorEstilista, setMedioCobroConsumoPorEstilista] = useState({});
+  const [deudaConsumoSeleccionadaPorEstilista, setDeudaConsumoSeleccionadaPorEstilista] = useState({});
   const [savingEstadoByEstilista, setSavingEstadoByEstilista] = useState({});
   const [numericPadTarget, setNumericPadTarget] = useState(null);
   const [historialEstados, setHistorialEstados] = useState([]);
@@ -176,36 +177,38 @@ const Reportes = () => {
         abonos_historial: carteraResp?.abonos_historial || [],
       });
 
-      // Carga global para liquidación integral (independiente del filtro visual).
-      try {
-        const globalParams = {
-          periodo: 'personalizado',
-          fecha_inicio: LIQ_GLOBAL_START,
-          fecha_fin: format(new Date(), 'yyyy-MM-dd'),
-        };
+      if (moduloActivo === 'liquidacion') {
+        // Carga global para liquidación integral (independiente del filtro visual).
+        try {
+          const globalParams = {
+            periodo: 'personalizado',
+            fecha_inicio: LIQ_GLOBAL_START,
+            fecha_fin: format(new Date(), 'yyyy-MM-dd'),
+          };
 
-        const [biGlobalResp, histGlobalResp, carteraGlobalResp] = await Promise.all([
-          reportesService.getBIResumen(globalParams),
-          reportesService.getEstadoPagoHistorial({
-            ...globalParams,
-            limit: 300,
-          }),
-          esRecepcion
-            ? Promise.resolve({ resumen: [], deudas: [], abonos_historial: [] })
-            : reportesService.getConsumoEmpleadoDeudas(globalParams),
-        ]);
+          const [biGlobalResp, histGlobalResp, carteraGlobalResp] = await Promise.all([
+            reportesService.getBIResumen(globalParams),
+            reportesService.getEstadoPagoHistorial({
+              ...globalParams,
+              limit: 300,
+            }),
+            esRecepcion
+              ? Promise.resolve({ resumen: [], deudas: [], abonos_historial: [] })
+              : reportesService.getConsumoEmpleadoDeudas(globalParams),
+          ]);
 
-        setBiDataLiquidacion(biGlobalResp || null);
-        setHistorialLiquidacionGlobal(histGlobalResp?.items || []);
-        setCarteraDataGlobal({
-          resumen: carteraGlobalResp?.resumen || [],
-          deudas: carteraGlobalResp?.deudas || [],
-          abonos_historial: carteraGlobalResp?.abonos_historial || [],
-        });
-      } catch (err) {
-        setBiDataLiquidacion(null);
-        setHistorialLiquidacionGlobal([]);
-        setCarteraDataGlobal({ resumen: [], deudas: [], abonos_historial: [] });
+          setBiDataLiquidacion(biGlobalResp || null);
+          setHistorialLiquidacionGlobal(histGlobalResp?.items || []);
+          setCarteraDataGlobal({
+            resumen: carteraGlobalResp?.resumen || [],
+            deudas: carteraGlobalResp?.deudas || [],
+            abonos_historial: carteraGlobalResp?.abonos_historial || [],
+          });
+        } catch (err) {
+          setBiDataLiquidacion(null);
+          setHistorialLiquidacionGlobal([]);
+          setCarteraDataGlobal({ resumen: [], deudas: [], abonos_historial: [] });
+        }
       }
 
       try {
@@ -222,39 +225,7 @@ const Reportes = () => {
         setLoadingHistorial(false);
       }
 
-      if (fechaOperacion) {
-        try {
-          const estadoDia = await reportesService.getEstadoPagoEstilistaDia(fechaOperacion);
-          const mapPagos = {};
-          const mapEstado = {};
-          (estadoDia?.items || []).forEach((x) => {
-            mapPagos[x.estilista_id] = {
-              efectivo: String(Number(x.pago_efectivo || 0) || ''),
-              nequi: String(Number(x.pago_nequi || 0) || ''),
-              daviplata: String(Number(x.pago_daviplata || 0) || ''),
-              otros: String(Number(x.pago_otros || 0) || ''),
-            };
-            mapEstado[x.estilista_id] = x.estado || 'pendiente';
-          });
-          setPagosPorEstilista(mapPagos);
-          setEstadoDiaPorEstilista(mapEstado);
-          setAbonoPuestoPorEstilista(
-            Object.fromEntries((estadoDia?.items || []).map((x) => [x.estilista_id, String(Number(x.abono_puesto || 0) || '')]))
-          );
-          setMedioAbonoPuestoPorEstilista(
-            Object.fromEntries((estadoDia?.items || []).map((x) => [x.estilista_id, x.medio_abono_puesto || 'efectivo']))
-          );
-          setCobroConsumoPorEstilista({});
-          setMedioCobroConsumoPorEstilista({});
-        } catch (err) {
-          setPagosPorEstilista({});
-          setEstadoDiaPorEstilista({});
-          setAbonoPuestoPorEstilista({});
-          setMedioAbonoPuestoPorEstilista({});
-          setCobroConsumoPorEstilista({});
-          setMedioCobroConsumoPorEstilista({});
-        }
-      } else {
+      if (moduloActivo !== 'liquidacion') {
         setPagosPorEstilista({});
         setEstadoDiaPorEstilista({});
         setAbonoPuestoPorEstilista({});
@@ -273,7 +244,7 @@ const Reportes = () => {
     } finally {
       setLoading(false);
     }
-  }, [paramsBase, periodo, fechaInicio, fechaFin, esRecepcion, fechaOperacion]);
+  }, [paramsBase, periodo, fechaInicio, fechaFin, esRecepcion, moduloActivo]);
 
   useEffect(() => {
     cargarTodo();
@@ -290,6 +261,51 @@ const Reportes = () => {
     }
     setEstilistaActivoLiquidacion(Number(lista[0].estilista_id));
   }, [biDataLiquidacion, estilistaActivoLiquidacion]);
+
+  useEffect(() => {
+    if (moduloActivo !== 'liquidacion') return;
+    if (!fechaOperacion) return;
+
+    let cancelado = false;
+    const cargarEstadoDia = async () => {
+      try {
+        const estadoDia = await reportesService.getEstadoPagoEstilistaDia(fechaOperacion);
+        if (cancelado) return;
+
+        const mapPagos = {};
+        const mapEstado = {};
+        (estadoDia?.items || []).forEach((x) => {
+          mapPagos[x.estilista_id] = {
+            efectivo: String(Number(x.pago_efectivo || 0) || ''),
+            nequi: String(Number(x.pago_nequi || 0) || ''),
+            daviplata: String(Number(x.pago_daviplata || 0) || ''),
+            otros: String(Number(x.pago_otros || 0) || ''),
+          };
+          mapEstado[x.estilista_id] = x.estado || 'pendiente';
+        });
+
+        setPagosPorEstilista(mapPagos);
+        setEstadoDiaPorEstilista(mapEstado);
+        setAbonoPuestoPorEstilista(
+          Object.fromEntries((estadoDia?.items || []).map((x) => [x.estilista_id, String(Number(x.abono_puesto || 0) || '')]))
+        );
+        setMedioAbonoPuestoPorEstilista(
+          Object.fromEntries((estadoDia?.items || []).map((x) => [x.estilista_id, x.medio_abono_puesto || 'efectivo']))
+        );
+      } catch (err) {
+        if (cancelado) return;
+        setPagosPorEstilista({});
+        setEstadoDiaPorEstilista({});
+        setAbonoPuestoPorEstilista({});
+        setMedioAbonoPuestoPorEstilista({});
+      }
+    };
+
+    cargarEstadoDia();
+    return () => {
+      cancelado = true;
+    };
+  }, [moduloActivo, fechaOperacion]);
 
   const aplicarRangoRapido = (tipo) => {
     const base = new Date();
@@ -407,10 +423,31 @@ const Reportes = () => {
     }
   };
 
-  const cobrarConsumoEnDeudas = async ({ estilistaId, monto, medioPago, fecha }) => {
+  const cobrarConsumoEnDeudas = async ({ estilistaId, deudaId, monto, medioPago, fecha }) => {
     const deudas = (carteraDataGlobal?.deudas || [])
       .filter((d) => Number(d.estilista_id) === Number(estilistaId) && Number(d.saldo_pendiente || 0) > 0)
       .sort((a, b) => String(a.fecha_hora || '').localeCompare(String(b.fecha_hora || '')));
+
+    if (deudaId) {
+      const deudaObjetivo = deudas.find((d) => Number(d.deuda_id) === Number(deudaId));
+      if (!deudaObjetivo) {
+        return { cobrado: 0, restante: Number(monto || 0) };
+      }
+
+      const saldo = Number(deudaObjetivo.saldo_pendiente || 0);
+      const abono = Math.min(Number(monto || 0), Math.max(saldo, 0));
+      if (abono <= 0) return { cobrado: 0, restante: Number(monto || 0) };
+
+      await reportesService.abonarConsumoEmpleado({
+        estilista_id: estilistaId,
+        deuda_id: deudaObjetivo.deuda_id,
+        monto: abono,
+        medio_pago: medioPago,
+        notas: `Cobro consumo integrado en liquidacion ${fecha}`,
+      });
+
+      return { cobrado: abono, restante: Math.max(Number(monto || 0) - abono, 0) };
+    }
 
     let restante = Number(monto || 0);
     let cobrado = 0;
@@ -536,6 +573,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
   const saldoConsumoEmpleado = Number(resumenPorEstilistaGlobal[estilistaId]?.saldo_pendiente || 0);
   const cobroConsumoDigitado = Number(cobroConsumoPorEstilista[estilistaId] || 0);
   const cobroConsumoAplicado = Math.min(Math.max(cobroConsumoDigitado, 0), Math.max(saldoConsumoEmpleado, 0));
+  const deudaConsumoSeleccionada = Number(deudaConsumoSeleccionadaPorEstilista[estilistaId] || 0);
   const medioCobroConsumo = medioCobroConsumoPorEstilista[estilistaId] || 'efectivo';
   
   setSavingEstadoByEstilista((prev) => ({ ...prev, [estilistaId]: true }));
@@ -545,6 +583,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
     if (cobroConsumoAplicado > 0) {
       resumenCobro = await cobrarConsumoEnDeudas({
         estilistaId,
+        deudaId: deudaConsumoSeleccionada > 0 ? deudaConsumoSeleccionada : null,
         monto: cobroConsumoAplicado,
         medioPago: medioCobroConsumo,
         fecha: fechaLiquidacion,
@@ -895,6 +934,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
                     <div>
                       <h3 className="text-2xl font-black text-slate-900">{empleado.estilista_nombre}</h3>
                       <p className="text-sm text-slate-600 mt-1">Resumen acumulado no dependiente del filtro de fechas del reporte.</p>
+                      <p className="text-xs text-slate-500 mt-1">Fecha de operación activa: <b>{fechaOperacion || '-'}</b>. Esta fecha carga los pagos ya registrados de ese día para editar o completar.</p>
                     </div>
                     <div className="w-full md:w-[220px]">
                       <label className="block text-xs text-slate-600 mb-1">Fecha de operación</label>
@@ -918,6 +958,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
                     <div className="rounded-xl border border-white bg-white p-3">
                       <p className="text-xs text-slate-500">Deuda puesto acumulada</p>
                       <p className="text-xl font-black text-amber-700 mt-1">{formatMoney(deudaPuestoAcumulada)}</p>
+                      <p className="text-[11px] text-slate-500 mt-1">Debe puesto = cobros de puesto no cubiertos por abonos registrados.</p>
                     </div>
                   </div>
                 </div>
@@ -926,6 +967,22 @@ const aplicarEstadoLiquidacion = async (fila) => {
                   <h4 className="card-header mb-3">Liquidación integrada</h4>
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                     <div className="space-y-3">
+                      <div>
+                        <label className="block text-xs text-slate-600 mb-1">Factura de consumo a abonar</label>
+                        <select
+                          className="input-field"
+                          value={deudaConsumoSeleccionadaPorEstilista[estId] || ''}
+                          onChange={(e) => setDeudaConsumoSeleccionadaPorEstilista((prev) => ({ ...prev, [estId]: e.target.value }))}
+                        >
+                          <option value="">Distribuir automático (más antigua primero)</option>
+                          {deudasEmpleado.map((d) => (
+                            <option key={d.deuda_id} value={d.deuda_id}>
+                              {(d.numero_factura || `Deuda ${d.deuda_id}`)} - Saldo {formatMoney(d.saldo_pendiente)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
                       <div>
                         <label className="block text-xs text-slate-600 mb-1">Cobro consumo a aplicar</label>
                         <input
