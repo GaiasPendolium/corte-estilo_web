@@ -6,7 +6,6 @@ import useAuthStore from '../store/authStore';
 
 const today = new Date();
 const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
-const LIQ_GLOBAL_START = '2020-01-01';
 
 const MODULOS = [
   { key: 'cierre', label: '1. Cierre de Caja' },
@@ -115,12 +114,6 @@ const Reportes = () => {
   const [editNotasByAbono, setEditNotasByAbono] = useState({});
   const [savingEditByAbono, setSavingEditByAbono] = useState({});
   const [deudaActivaHistorial, setDeudaActivaHistorial] = useState(null);
-  const [fechaOperacion, setFechaOperacion] = useState(format(today, 'yyyy-MM-dd'));
-  const [fechaInicioLiquidacion, setFechaInicioLiquidacion] = useState(format(firstDay, 'yyyy-MM-dd'));
-  const [fechaFinLiquidacion, setFechaFinLiquidacion] = useState(format(today, 'yyyy-MM-dd'));
-  const [biDataLiquidacion, setBiDataLiquidacion] = useState(null);
-  const [carteraDataGlobal, setCarteraDataGlobal] = useState({ resumen: [], deudas: [], abonos_historial: [] });
-  const [historialLiquidacionGlobal, setHistorialLiquidacionGlobal] = useState([]);
   const [estilistaActivoLiquidacion, setEstilistaActivoLiquidacion] = useState(null);
   const [pagosPorEstilista, setPagosPorEstilista] = useState({});
   const [estadoDiaPorEstilista, setEstadoDiaPorEstilista] = useState({});
@@ -181,40 +174,6 @@ const Reportes = () => {
         abonos_historial: carteraResp?.abonos_historial || [],
       });
 
-      if (moduloActivo === 'liquidacion') {
-        // Carga global para liquidación integral (independiente del filtro visual).
-        try {
-          const globalParams = {
-            periodo: 'personalizado',
-            fecha_inicio: LIQ_GLOBAL_START,
-            fecha_fin: format(new Date(), 'yyyy-MM-dd'),
-          };
-
-          const [biGlobalResp, histGlobalResp, carteraGlobalResp] = await Promise.all([
-            reportesService.getBIResumen(globalParams),
-            reportesService.getEstadoPagoHistorial({
-              ...globalParams,
-              limit: 300,
-            }),
-            esRecepcion
-              ? Promise.resolve({ resumen: [], deudas: [], abonos_historial: [] })
-              : reportesService.getConsumoEmpleadoDeudas(globalParams),
-          ]);
-
-          setBiDataLiquidacion(biGlobalResp || null);
-          setHistorialLiquidacionGlobal(histGlobalResp?.items || []);
-          setCarteraDataGlobal({
-            resumen: carteraGlobalResp?.resumen || [],
-            deudas: carteraGlobalResp?.deudas || [],
-            abonos_historial: carteraGlobalResp?.abonos_historial || [],
-          });
-        } catch (err) {
-          setBiDataLiquidacion(null);
-          setHistorialLiquidacionGlobal([]);
-          setCarteraDataGlobal({ resumen: [], deudas: [], abonos_historial: [] });
-        }
-      }
-
       try {
         setLoadingHistorial(true);
         const hist = await reportesService.getEstadoPagoHistorial({
@@ -242,9 +201,6 @@ const Reportes = () => {
       setCierreCaja(null);
       setBiData(null);
       setCarteraData({ resumen: [], deudas: [], abonos_historial: [] });
-      setBiDataLiquidacion(null);
-      setHistorialLiquidacionGlobal([]);
-      setCarteraDataGlobal({ resumen: [], deudas: [], abonos_historial: [] });
     } finally {
       setLoading(false);
     }
@@ -255,7 +211,7 @@ const Reportes = () => {
   }, [cargarTodo]);
 
   useEffect(() => {
-    const lista = biDataLiquidacion?.estilistas || [];
+    const lista = biData?.estilistas || [];
     if (!lista.length) {
       setEstilistaActivoLiquidacion(null);
       return;
@@ -264,16 +220,16 @@ const Reportes = () => {
       return;
     }
     setEstilistaActivoLiquidacion(Number(lista[0].estilista_id));
-  }, [biDataLiquidacion, estilistaActivoLiquidacion]);
+  }, [biData, estilistaActivoLiquidacion]);
 
   useEffect(() => {
     if (moduloActivo !== 'liquidacion') return;
-    if (!fechaOperacion) return;
 
     let cancelado = false;
     const cargarEstadoDia = async () => {
       try {
-        const estadoDia = await reportesService.getEstadoPagoEstilistaDia(fechaOperacion);
+        const fechaDia = format(new Date(), 'yyyy-MM-dd');
+        const estadoDia = await reportesService.getEstadoPagoEstilistaDia(fechaDia);
         if (cancelado) return;
 
         const mapPagos = {};
@@ -309,7 +265,7 @@ const Reportes = () => {
     return () => {
       cancelado = true;
     };
-  }, [moduloActivo, fechaOperacion]);
+  }, [moduloActivo]);
 
   useEffect(() => {
     if (moduloActivo !== 'liquidacion') return;
@@ -317,7 +273,7 @@ const Reportes = () => {
       setDesgloseLiquidacion(null);
       return;
     }
-    if (!fechaInicioLiquidacion || !fechaFinLiquidacion) return;
+    if (!fechaInicio || !fechaFin) return;
 
     let cancelado = false;
     const cargarDesglose = async () => {
@@ -325,8 +281,8 @@ const Reportes = () => {
         setLoadingDesgloseLiquidacion(true);
         const resp = await reportesService.getBIDesgloseEstilista({
           estilista_id: estilistaActivoLiquidacion,
-          fecha_inicio: fechaInicioLiquidacion,
-          fecha_fin: fechaFinLiquidacion,
+          fecha_inicio: fechaInicio,
+          fecha_fin: fechaFin,
         });
         if (cancelado) return;
         setDesgloseLiquidacion(resp || null);
@@ -342,7 +298,7 @@ const Reportes = () => {
     return () => {
       cancelado = true;
     };
-  }, [moduloActivo, estilistaActivoLiquidacion, fechaInicioLiquidacion, fechaFinLiquidacion]);
+  }, [moduloActivo, estilistaActivoLiquidacion, fechaInicio, fechaFin]);
 
   const aplicarRangoRapido = (tipo) => {
     const base = new Date();
@@ -461,7 +417,7 @@ const Reportes = () => {
   };
 
   const cobrarConsumoEnDeudas = async ({ estilistaId, deudaId, monto, medioPago, fecha }) => {
-    const deudas = (carteraDataGlobal?.deudas || [])
+    const deudas = (carteraData?.deudas || [])
       .filter((d) => Number(d.estilista_id) === Number(estilistaId) && Number(d.saldo_pendiente || 0) > 0)
       .sort((a, b) => String(a.fecha_hora || '').localeCompare(String(b.fecha_hora || '')));
 
@@ -515,14 +471,6 @@ const Reportes = () => {
     });
     return mapa;
   }, [carteraData]);
-
-  const resumenPorEstilistaGlobal = useMemo(() => {
-    const mapa = {};
-    (carteraDataGlobal?.resumen || []).forEach((item) => {
-      mapa[item.estilista_id] = item;
-    });
-    return mapa;
-  }, [carteraDataGlobal]);
 
   const deudaSeleccionada = useMemo(
     () => (carteraData?.deudas || []).find((d) => Number(d.deuda_id) === Number(deudaActivaHistorial)) || null,
@@ -599,7 +547,7 @@ const Reportes = () => {
 
 const aplicarEstadoLiquidacion = async (fila) => {
   const estilistaId = fila.estilista_id;
-  const fechaLiquidacion = fechaOperacion || format(new Date(), 'yyyy-MM-dd');
+  const fechaLiquidacion = format(new Date(), 'yyyy-MM-dd');
   
   const pago_efectivo = Number(pagosPorEstilista[estilistaId]?.efectivo || 0);
   const pago_nequi = Number(pagosPorEstilista[estilistaId]?.nequi || 0);
@@ -607,7 +555,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
   const pago_otros = Number(pagosPorEstilista[estilistaId]?.otros || 0);
   const abono_puesto = Number(abonoPuestoPorEstilista[estilistaId] || 0);
   const medio_abono_puesto = medioAbonoPuestoPorEstilista[estilistaId] || 'efectivo';
-  const saldoConsumoEmpleado = Number(resumenPorEstilistaGlobal[estilistaId]?.saldo_pendiente || 0);
+  const saldoConsumoEmpleado = Number(resumenPorEstilista[estilistaId]?.saldo_pendiente || 0);
   const cobroConsumoDigitado = Number(cobroConsumoPorEstilista[estilistaId] || 0);
   const cobroConsumoAplicado = Math.min(Math.max(cobroConsumoDigitado, 0), Math.max(saldoConsumoEmpleado, 0));
   const deudaConsumoSeleccionada = Number(deudaConsumoSeleccionadaPorEstilista[estilistaId] || 0);
@@ -912,14 +860,14 @@ const aplicarEstadoLiquidacion = async (fila) => {
             <button className="btn-secondary !py-1.5" onClick={cargarTodo} disabled={loading}>Actualizar</button>
           </div>
           <div className="space-y-2 max-h-[68vh] overflow-y-auto pr-1">
-            {(biDataLiquidacion?.estilistas || []).length === 0 && (
+            {(biData?.estilistas || []).length === 0 && (
               <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-500">No hay empleados para liquidar.</div>
             )}
-            {(biDataLiquidacion?.estilistas || []).map((item) => {
+            {(biData?.estilistas || []).map((item) => {
               const estId = Number(item.estilista_id);
               const activo = estId === Number(estilistaActivoLiquidacion);
               const totalPendiente = Math.max(Number(item.pago_neto_pendiente || 0), 0);
-              const consumoPendiente = Number(resumenPorEstilistaGlobal[estId]?.saldo_pendiente || 0);
+              const consumoPendiente = Number(resumenPorEstilista[estId]?.saldo_pendiente || 0);
               const deudaPuesto = Number(item.deuda_total_acumulada || 0);
               return (
                 <button
@@ -944,7 +892,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
           )}
 
           {(() => {
-            const empleado = (biDataLiquidacion?.estilistas || []).find((x) => Number(x.estilista_id) === Number(estilistaActivoLiquidacion));
+            const empleado = (biData?.estilistas || []).find((x) => Number(x.estilista_id) === Number(estilistaActivoLiquidacion));
             if (!empleado) return null;
 
             const estId = Number(empleado.estilista_id);
@@ -952,7 +900,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
             const comisionesEmpleado = Number(empleado.comision_ventas_producto || 0);
             const generadoEmpleado = valorTotalEmpleado + comisionesEmpleado;
             const pendientePagoEmpleado = Math.max(Number(desgloseLiquidacion?.resumen?.pago_neto_pendiente ?? empleado.pago_neto_pendiente ?? generadoEmpleado), 0);
-            const consumoPendiente = Number(resumenPorEstilistaGlobal[estId]?.saldo_pendiente || 0);
+            const consumoPendiente = Number(resumenPorEstilista[estId]?.saldo_pendiente || 0);
             const cobroConsumoDigitado = Number(cobroConsumoPorEstilista[estId] || 0);
             const cobroConsumoAplicado = Math.min(Math.max(cobroConsumoDigitado, 0), Math.max(consumoPendiente, 0));
             const abonoPuestoDigitado = Math.max(Number(abonoPuestoPorEstilista[estId] || 0), 0);
@@ -960,10 +908,10 @@ const aplicarEstadoLiquidacion = async (fila) => {
             const netoEstimado = Math.max(pendientePagoEmpleado - cobroConsumoAplicado - abonoPuestoDigitado, 0);
             const pagoDigitado = totalPagoMedios(estId);
             const saldoPorPagar = Math.max(netoEstimado - pagoDigitado, 0);
-            const historialPagosEmpleado = (historialLiquidacionGlobal || []).filter((h) => Number(h.estilista_id) === estId);
+            const historialPagosEmpleado = (historialEstados || []).filter((h) => Number(h.estilista_id) === estId);
             const historialPuestoEmpleado = historialPagosEmpleado.filter((h) => Number(h.abono_puesto || 0) > 0 || Number(h.pendiente_puesto || 0) > 0);
-            const historialAbonosConsumo = (carteraDataGlobal?.abonos_historial || []).filter((h) => Number(h.estilista_id) === estId);
-            const deudasEmpleado = (carteraDataGlobal?.deudas || []).filter((d) => Number(d.estilista_id) === estId && Number(d.saldo_pendiente || 0) > 0);
+            const historialAbonosConsumo = (carteraData?.abonos_historial || []).filter((h) => Number(h.estilista_id) === estId);
+            const deudasEmpleado = (carteraData?.deudas || []).filter((d) => Number(d.estilista_id) === estId && Number(d.saldo_pendiente || 0) > 0);
             const diasPendientes = desgloseLiquidacion?.desglose_por_dia?.filter((d) => String(d.incluido_en || d.estado || '').toLowerCase() !== 'cancelado') || [];
 
             return (
@@ -972,29 +920,15 @@ const aplicarEstadoLiquidacion = async (fila) => {
                   <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3">
                     <div>
                       <h3 className="text-2xl font-black text-slate-900">{empleado.estilista_nombre}</h3>
-                      <p className="text-sm text-slate-600 mt-1">Resumen acumulado no dependiente del filtro de fechas del reporte.</p>
-                      <p className="text-xs text-slate-500 mt-1">Fecha de operación activa: <b>{fechaOperacion || '-'}</b>. Esta fecha carga los pagos ya registrados de ese día para editar o completar.</p>
-                      <p className="text-xs text-slate-500 mt-1">Pendiente por pagar calculado en rango: <b>{fechaInicioLiquidacion}</b> a <b>{fechaFinLiquidacion}</b>.</p>
-                    </div>
-                    <div className="w-full md:w-[220px]">
-                      <label className="block text-xs text-slate-600 mb-1">Fecha de operación</label>
-                      <input type="date" className="input-field" value={fechaOperacion} onChange={(e) => setFechaOperacion(e.target.value)} />
+                      <p className="text-sm text-slate-600 mt-1">Resumen calculado con los filtros superiores actualmente aplicados.</p>
+                      <p className="text-xs text-slate-500 mt-1">La liquidación se registra con la fecha actual del sistema.</p>
+                      <p className="text-xs text-slate-500 mt-1">Pendiente por pagar calculado en rango: <b>{fechaInicio}</b> a <b>{fechaFin}</b>.</p>
                     </div>
                   </div>
 
-                  <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2">
-                    <div>
-                      <label className="block text-xs text-slate-600 mb-1">Desde (rango pendiente)</label>
-                      <input type="date" className="input-field" value={fechaInicioLiquidacion} onChange={(e) => setFechaInicioLiquidacion(e.target.value)} />
-                    </div>
-                    <div>
-                      <label className="block text-xs text-slate-600 mb-1">Hasta (rango pendiente)</label>
-                      <input type="date" className="input-field" value={fechaFinLiquidacion} onChange={(e) => setFechaFinLiquidacion(e.target.value)} />
-                    </div>
-                    <div className="rounded-xl border border-slate-200 bg-white p-3">
-                      <p className="text-xs text-slate-500">Días pendientes en rango</p>
-                      <p className="text-xl font-black text-slate-900 mt-1">{loadingDesgloseLiquidacion ? '...' : diasPendientes.length}</p>
-                    </div>
+                  <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
+                    <p className="text-xs text-slate-500">Días pendientes en rango</p>
+                    <p className="text-xl font-black text-slate-900 mt-1">{loadingDesgloseLiquidacion ? '...' : diasPendientes.length}</p>
                   </div>
 
                   <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
