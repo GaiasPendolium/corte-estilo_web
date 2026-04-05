@@ -116,6 +116,8 @@ const Reportes = () => {
   const [savingEditByAbono, setSavingEditByAbono] = useState({});
   const [deudaActivaHistorial, setDeudaActivaHistorial] = useState(null);
   const [fechaOperacion, setFechaOperacion] = useState(format(today, 'yyyy-MM-dd'));
+  const [fechaInicioLiquidacion, setFechaInicioLiquidacion] = useState(format(firstDay, 'yyyy-MM-dd'));
+  const [fechaFinLiquidacion, setFechaFinLiquidacion] = useState(format(today, 'yyyy-MM-dd'));
   const [biDataLiquidacion, setBiDataLiquidacion] = useState(null);
   const [carteraDataGlobal, setCarteraDataGlobal] = useState({ resumen: [], deudas: [], abonos_historial: [] });
   const [historialLiquidacionGlobal, setHistorialLiquidacionGlobal] = useState([]);
@@ -129,6 +131,8 @@ const Reportes = () => {
   const [deudaConsumoSeleccionadaPorEstilista, setDeudaConsumoSeleccionadaPorEstilista] = useState({});
   const [savingEstadoByEstilista, setSavingEstadoByEstilista] = useState({});
   const [numericPadTarget, setNumericPadTarget] = useState(null);
+  const [desgloseLiquidacion, setDesgloseLiquidacion] = useState(null);
+  const [loadingDesgloseLiquidacion, setLoadingDesgloseLiquidacion] = useState(false);
   const [historialEstados, setHistorialEstados] = useState([]);
   const [loadingHistorial, setLoadingHistorial] = useState(false);
 
@@ -306,6 +310,39 @@ const Reportes = () => {
       cancelado = true;
     };
   }, [moduloActivo, fechaOperacion]);
+
+  useEffect(() => {
+    if (moduloActivo !== 'liquidacion') return;
+    if (!estilistaActivoLiquidacion) {
+      setDesgloseLiquidacion(null);
+      return;
+    }
+    if (!fechaInicioLiquidacion || !fechaFinLiquidacion) return;
+
+    let cancelado = false;
+    const cargarDesglose = async () => {
+      try {
+        setLoadingDesgloseLiquidacion(true);
+        const resp = await reportesService.getBIDesgloseEstilista({
+          estilista_id: estilistaActivoLiquidacion,
+          fecha_inicio: fechaInicioLiquidacion,
+          fecha_fin: fechaFinLiquidacion,
+        });
+        if (cancelado) return;
+        setDesgloseLiquidacion(resp || null);
+      } catch (err) {
+        if (cancelado) return;
+        setDesgloseLiquidacion(null);
+      } finally {
+        if (!cancelado) setLoadingDesgloseLiquidacion(false);
+      }
+    };
+
+    cargarDesglose();
+    return () => {
+      cancelado = true;
+    };
+  }, [moduloActivo, estilistaActivoLiquidacion, fechaInicioLiquidacion, fechaFinLiquidacion]);
 
   const aplicarRangoRapido = (tipo) => {
     const base = new Date();
@@ -914,7 +951,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
             const valorTotalEmpleado = Number((empleado.valor_total_empleado ?? empleado.facturacion_servicios ?? empleado.ganancias_servicios) || 0);
             const comisionesEmpleado = Number(empleado.comision_ventas_producto || 0);
             const generadoEmpleado = valorTotalEmpleado + comisionesEmpleado;
-            const pendientePagoEmpleado = Math.max(Number(empleado.pago_neto_pendiente ?? generadoEmpleado), 0);
+            const pendientePagoEmpleado = Math.max(Number(desgloseLiquidacion?.resumen?.pago_neto_pendiente ?? empleado.pago_neto_pendiente ?? generadoEmpleado), 0);
             const consumoPendiente = Number(resumenPorEstilistaGlobal[estId]?.saldo_pendiente || 0);
             const cobroConsumoDigitado = Number(cobroConsumoPorEstilista[estId] || 0);
             const cobroConsumoAplicado = Math.min(Math.max(cobroConsumoDigitado, 0), Math.max(consumoPendiente, 0));
@@ -924,8 +961,10 @@ const aplicarEstadoLiquidacion = async (fila) => {
             const pagoDigitado = totalPagoMedios(estId);
             const saldoPorPagar = Math.max(netoEstimado - pagoDigitado, 0);
             const historialPagosEmpleado = (historialLiquidacionGlobal || []).filter((h) => Number(h.estilista_id) === estId);
+            const historialPuestoEmpleado = historialPagosEmpleado.filter((h) => Number(h.abono_puesto || 0) > 0 || Number(h.pendiente_puesto || 0) > 0);
             const historialAbonosConsumo = (carteraDataGlobal?.abonos_historial || []).filter((h) => Number(h.estilista_id) === estId);
             const deudasEmpleado = (carteraDataGlobal?.deudas || []).filter((d) => Number(d.estilista_id) === estId && Number(d.saldo_pendiente || 0) > 0);
+            const diasPendientes = desgloseLiquidacion?.desglose_por_dia?.filter((d) => String(d.incluido_en || d.estado || '').toLowerCase() !== 'cancelado') || [];
 
             return (
               <>
@@ -935,10 +974,26 @@ const aplicarEstadoLiquidacion = async (fila) => {
                       <h3 className="text-2xl font-black text-slate-900">{empleado.estilista_nombre}</h3>
                       <p className="text-sm text-slate-600 mt-1">Resumen acumulado no dependiente del filtro de fechas del reporte.</p>
                       <p className="text-xs text-slate-500 mt-1">Fecha de operación activa: <b>{fechaOperacion || '-'}</b>. Esta fecha carga los pagos ya registrados de ese día para editar o completar.</p>
+                      <p className="text-xs text-slate-500 mt-1">Pendiente por pagar calculado en rango: <b>{fechaInicioLiquidacion}</b> a <b>{fechaFinLiquidacion}</b>.</p>
                     </div>
                     <div className="w-full md:w-[220px]">
                       <label className="block text-xs text-slate-600 mb-1">Fecha de operación</label>
                       <input type="date" className="input-field" value={fechaOperacion} onChange={(e) => setFechaOperacion(e.target.value)} />
+                    </div>
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2">
+                    <div>
+                      <label className="block text-xs text-slate-600 mb-1">Desde (rango pendiente)</label>
+                      <input type="date" className="input-field" value={fechaInicioLiquidacion} onChange={(e) => setFechaInicioLiquidacion(e.target.value)} />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-slate-600 mb-1">Hasta (rango pendiente)</label>
+                      <input type="date" className="input-field" value={fechaFinLiquidacion} onChange={(e) => setFechaFinLiquidacion(e.target.value)} />
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-white p-3">
+                      <p className="text-xs text-slate-500">Días pendientes en rango</p>
+                      <p className="text-xl font-black text-slate-900 mt-1">{loadingDesgloseLiquidacion ? '...' : diasPendientes.length}</p>
                     </div>
                   </div>
 
@@ -1120,6 +1175,45 @@ const aplicarEstadoLiquidacion = async (fila) => {
                         <p className="text-xs text-slate-500">{a.fecha_hora || '-'}</p>
                         <p className="text-xs text-slate-600 mt-1">Medio: {a.medio_pago || '-'}</p>
                         <p className="text-xs text-slate-600">{a.notas || 'Sin notas'}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="card border border-amber-300 bg-amber-50">
+                  <h4 className="card-header mb-2">Historial deuda de puesto (abonos y saldo)</h4>
+                  <div className="space-y-2 max-h-[260px] overflow-y-auto pr-1">
+                    {historialPuestoEmpleado.length === 0 && <p className="text-sm text-slate-500">Sin movimientos de puesto para este empleado.</p>}
+                    {historialPuestoEmpleado.map((h) => (
+                      <div key={`puesto-${h.id}`} className="rounded-xl border border-amber-200 bg-white p-3">
+                        <div className="flex justify-between gap-2">
+                          <p className="text-sm font-semibold text-slate-900">{h.fecha || '-'}</p>
+                          <p className="text-xs text-slate-500">{h.fecha_cambio || '-'}</p>
+                        </div>
+                        <p className="text-xs text-sky-700 mt-1">Abono puesto: {formatMoney(h.abono_puesto)}</p>
+                        <p className="text-xs text-amber-700">Saldo puesto al cierre: {formatMoney(h.pendiente_puesto)}</p>
+                        <p className="text-xs text-slate-500">Usuario: {h.usuario_nombre || 'Sistema'}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="card border border-slate-200 bg-white">
+                  <h4 className="card-header mb-2">Días incluidos en el pendiente por pagar</h4>
+                  <div className="space-y-2 max-h-[260px] overflow-y-auto pr-1">
+                    {loadingDesgloseLiquidacion && <p className="text-sm text-slate-500">Cargando días pendientes...</p>}
+                    {!loadingDesgloseLiquidacion && diasPendientes.length === 0 && (
+                      <p className="text-sm text-slate-500">No hay días pendientes en el rango seleccionado.</p>
+                    )}
+                    {!loadingDesgloseLiquidacion && diasPendientes.map((d) => (
+                      <div key={`dia-${d.fecha}`} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        <div className="flex justify-between gap-2">
+                          <p className="text-sm font-semibold text-slate-900">{d.fecha}</p>
+                          <p className="text-sm font-bold text-emerald-700">{formatMoney(d.neto_dia)}</p>
+                        </div>
+                        <p className="text-xs text-slate-600 mt-1">Base servicio: {formatMoney(d.base_servicio)} | Comisión: {formatMoney(d.comision_productos)}</p>
+                        <p className="text-xs text-slate-600">Descuento puesto: {formatMoney(d.descuento_espacio)}</p>
+                        <p className="text-xs text-slate-500">Estado día: {d.estado || 'pendiente'}</p>
                       </div>
                     ))}
                   </div>

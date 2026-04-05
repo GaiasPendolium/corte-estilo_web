@@ -342,6 +342,11 @@ export const reportesService = {
     return response.data;
   },
 
+  getBIDesgloseEstilista: async (params) => {
+    const response = await api.get('/reportes/bi/desglose/', { params });
+    return response.data;
+  },
+
   getCierreCaja: async (params) => {
     try {
       const response = await api.get('/reportes/cierre-caja/', { params });
