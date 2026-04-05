@@ -158,6 +158,12 @@ const Ventas = () => {
     items: [],
   });
 
+  const productoPorId = useMemo(() => {
+    const mapa = new Map();
+    (productos || []).forEach((p) => mapa.set(Number(p.id), p));
+    return mapa;
+  }, [productos]);
+
   const cargarDatos = async () => {
     try {
       setLoading(true);
@@ -330,6 +336,7 @@ const Ventas = () => {
       medio_pago: venta.medio_pago || ventaBase.medio_pago || 'efectivo',
       items: (venta.items || [ventaBase]).map((x) => ({
         producto: x.producto,
+        producto_nombre: x.producto_nombre || '',
         cantidad: String(x.cantidad || 1),
         precio_unitario: String(x.precio_unitario || ''),
       })),
@@ -547,6 +554,7 @@ const Ventas = () => {
           porcentaje_establecimiento: String(item.porcentaje_establecimiento ?? '30'),
         })),
         adicional_otro_producto: servicio?.adicional_otro_producto ? String(servicio.adicional_otro_producto) : '',
+        adicional_otro_producto_nombre: servicio?.adicional_otro_producto_nombre || '',
         adicional_otro_cantidad: String(servicio?.adicional_otro_cantidad || 1),
         adicional_otro_estilista: servicio?.adicional_otro_estilista ? String(servicio.adicional_otro_estilista) : '',
         notas: servicio?.notas || '',
@@ -1215,6 +1223,26 @@ const Ventas = () => {
                   value={it.producto}
                   onChange={(e) => actualizarItemFactura(idx, 'producto', e.target.value)}
                 >
+                  {(() => {
+                    const productoActualId = Number(it.producto || 0);
+                    const existeEnCatalogo = productoActualId > 0 && productoPorId.has(productoActualId);
+                    if (!existeEnCatalogo || !productoActualId) return null;
+                    return (
+                      <option value={productoActualId}>
+                        {formatProductSearchLabel(productoPorId.get(productoActualId))} (stock {productoPorId.get(productoActualId)?.stock ?? '-'})
+                      </option>
+                    );
+                  })()}
+                  {(() => {
+                    const productoActualId = Number(it.producto || 0);
+                    const existeEnCatalogo = productoActualId > 0 && productoPorId.has(productoActualId);
+                    if (existeEnCatalogo || !productoActualId) return null;
+                    return (
+                      <option value={productoActualId}>
+                        {it.producto_nombre || `Producto ${productoActualId}`} (actual en factura)
+                      </option>
+                    );
+                  })()}
                   <option value="">Producto</option>
                   {productos.map((p) => (
                     <option key={p.id} value={p.id}>{formatProductSearchLabel(p)} (stock {p.stock})</option>
@@ -1502,6 +1530,26 @@ const Ventas = () => {
                     value={servicioForm.adicional_otro_producto || ''}
                     onChange={(e) => setServicioForm((p) => ({ ...p, adicional_otro_producto: e.target.value }))}
                   >
+                    {(() => {
+                      const productoActualId = Number(servicioForm.adicional_otro_producto || 0);
+                      const existeEnCatalogo = productoActualId > 0 && productoPorId.has(productoActualId);
+                      if (!existeEnCatalogo || !productoActualId) return null;
+                      return (
+                        <option value={productoActualId}>
+                          {formatProductSearchLabel(productoPorId.get(productoActualId))} - {formatCOP(productoPorId.get(productoActualId)?.precio_venta || 0)}
+                        </option>
+                      );
+                    })()}
+                    {(() => {
+                      const productoActualId = Number(servicioForm.adicional_otro_producto || 0);
+                      const existeEnCatalogo = productoActualId > 0 && productoPorId.has(productoActualId);
+                      if (existeEnCatalogo || !productoActualId) return null;
+                      return (
+                        <option value={productoActualId}>
+                          {servicioForm.adicional_otro_producto_nombre || `Producto ${productoActualId}`} (actual en factura)
+                        </option>
+                      );
+                    })()}
                     <option value="">Sin producto adicional</option>
                     {productos.map((p) => (
                       <option key={p.id} value={p.id}>{formatProductSearchLabel(p)} - {formatCOP(p.precio_venta || 0)}</option>
