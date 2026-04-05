@@ -508,14 +508,12 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
                     servicio_item = servicios_mapa.get(sid)
                     es_shampoo = self._es_servicio_shampoo(servicio_item)
                     if es_shampoo:
-                        if estilista_id not in (None, ''):
-                            raise serializers.ValidationError(
-                                {'adicionales_servicio_items': 'Shampoo no asigna ganancia al empleado; no debe llevar empleado asignado.'}
-                            )
-                        if aplica_pct:
-                            raise serializers.ValidationError(
-                                {'adicionales_servicio_items': 'Shampoo no requiere porcentaje; su ganancia es 100% para establecimiento.'}
-                            )
+                        # Normaliza payload legacy/mixto: shampoo siempre 100% establecimiento.
+                        item['estilista_id'] = None
+                        item['aplica_porcentaje_establecimiento'] = False
+                        item['porcentaje_establecimiento'] = 0
+                        estilista_id = None
+                        aplica_pct = False
                     if estilista_id in (None, ''):
                         if not es_shampoo:
                             raise serializers.ValidationError(

@@ -632,26 +632,26 @@ const Ventas = () => {
       return;
     }
 
-    const esShampooServicio = (servicioId) => {
+    const esShampooServicio = (servicioId, servicioNombre = '') => {
       const srv = serviciosCatalogo.find((s) => Number(s.id) === Number(servicioId));
-      return esServicioShampooNombre(srv?.nombre);
+      return esServicioShampooNombre(srv?.nombre || servicioNombre);
     };
 
     const adicionalesNormalizados = (servicioForm.adicionales_servicio_items || [])
       .filter((it) => {
         const valorNum = parseNumberFlexible(it.valor);
         if (!it.id || !Number.isFinite(valorNum) || valorNum <= 0) return false;
-        if (esShampooServicio(it.id)) return true;
+        if (esShampooServicio(it.id, it.servicio_nombre)) return true;
         return Boolean(it.estilista_id);
       })
       .map((it) => ({
         id: Number(it.id),
-        estilista_id: esShampooServicio(it.id) ? null : Number(it.estilista_id),
+        estilista_id: esShampooServicio(it.id, it.servicio_nombre) ? null : Number(it.estilista_id),
         valor: parseNumberFlexible(it.valor),
-        aplica_porcentaje_establecimiento: esShampooServicio(it.id)
+        aplica_porcentaje_establecimiento: esShampooServicio(it.id, it.servicio_nombre)
           ? false
           : Boolean(it.aplica_porcentaje_establecimiento),
-        porcentaje_establecimiento: esShampooServicio(it.id)
+        porcentaje_establecimiento: esShampooServicio(it.id, it.servicio_nombre)
           ? 0
           : Boolean(it.aplica_porcentaje_establecimiento)
           ? parseNumberFlexible(it.porcentaje_establecimiento || 0)
@@ -666,7 +666,7 @@ const Ventas = () => {
     );
 
     const porcentajeInvalido = (servicioForm.adicionales_servicio_items || []).find((it) => {
-      if (esShampooServicio(it.id)) return false;
+      if (esShampooServicio(it.id, it.servicio_nombre)) return false;
       if (!it.aplica_porcentaje_establecimiento) return false;
       const pct = parseNumberFlexible(it.porcentaje_establecimiento || 0);
       return !Number.isFinite(pct) || pct <= 0 || pct > 100;
@@ -1564,7 +1564,15 @@ const Ventas = () => {
                   <select
                     className="input-field"
                     value={servicioForm.adicional_otro_producto || ''}
-                    onChange={(e) => setServicioForm((p) => ({ ...p, adicional_otro_producto: e.target.value }))}
+                    onChange={(e) => {
+                      const nextProducto = e.target.value;
+                      setServicioForm((p) => ({
+                        ...p,
+                        adicional_otro_producto: nextProducto,
+                        adicional_otro_estilista: nextProducto ? p.adicional_otro_estilista : '',
+                        adicional_otro_cantidad: nextProducto ? p.adicional_otro_cantidad : '1',
+                      }));
+                    }}
                   >
                     {(() => {
                       const productoActualId = Number(servicioForm.adicional_otro_producto || 0);
@@ -1637,11 +1645,11 @@ const Ventas = () => {
                     <select
                       className="input-field"
                       value={it.estilista_id}
-                      disabled={esServicioShampooNombre(serviciosCatalogo.find((s) => Number(s.id) === Number(it.id))?.nombre)}
+                      disabled={esShampooServicio(it.id, it.servicio_nombre)}
                       onChange={(e) => actualizarAdicionalServicio(idx, 'estilista_id', e.target.value)}
                     >
                       <option value="">
-                        {esServicioShampooNombre(serviciosCatalogo.find((s) => Number(s.id) === Number(it.id))?.nombre)
+                        {esShampooServicio(it.id, it.servicio_nombre)
                           ? 'No aplica (ganancia establecimiento)'
                           : 'Empleado'}
                       </option>
