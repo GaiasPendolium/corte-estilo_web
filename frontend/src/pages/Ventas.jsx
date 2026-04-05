@@ -610,6 +610,11 @@ const Ventas = () => {
     });
   };
 
+  const esShampooServicio = (servicioId, servicioNombre = '') => {
+    const srv = serviciosCatalogo.find((s) => Number(s.id) === Number(servicioId));
+    return esServicioShampooNombre(srv?.nombre || servicioNombre);
+  };
+
   const guardarServicioEditado = async (e) => {
     e.preventDefault();
     if (!puedeEditarFacturas) {
@@ -623,11 +628,6 @@ const Ventas = () => {
       toast.warning('El total cobrado debe ser un número mayor a 0.');
       return;
     }
-
-    const esShampooServicio = (servicioId, servicioNombre = '') => {
-      const srv = serviciosCatalogo.find((s) => Number(s.id) === Number(servicioId));
-      return esServicioShampooNombre(srv?.nombre || servicioNombre);
-    };
 
     const adicionalesNormalizados = (servicioForm.adicionales_servicio_items || [])
       .filter((it) => {
