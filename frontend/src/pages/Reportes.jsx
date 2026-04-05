@@ -933,7 +933,6 @@ const aplicarEstadoLiquidacion = async (fila) => {
                 };
 
                 const pagoDia = Number(previo.pago_empleado_dia || 0) + Number(h.monto_liquidado || 0);
-                const abonoDia = Number(previo.abono_puesto_dia || 0) + Number(h.abono_puesto || 0);
                 const cambioPrevio = String(previo.fecha_cambio || '');
                 const cambioActual = String(h.fecha_cambio || '');
                 const usarActualComoCierre = cambioActual >= cambioPrevio;
@@ -941,7 +940,9 @@ const aplicarEstadoLiquidacion = async (fila) => {
                 acc[fecha] = {
                   ...previo,
                   pago_empleado_dia: pagoDia,
-                  abono_puesto_dia: abonoDia,
+                  // Muestra el abono de la última operación del día para evitar
+                  // mezclar históricos antiguos guardados como acumulados.
+                  abono_puesto_dia: usarActualComoCierre ? Number(h.abono_puesto || 0) : Number(previo.abono_puesto_dia || 0),
                   saldo_puesto_cierre: usarActualComoCierre ? Number(h.pendiente_puesto || 0) : Number(previo.saldo_puesto_cierre || 0),
                   fecha_cambio: usarActualComoCierre ? (h.fecha_cambio || previo.fecha_cambio) : previo.fecha_cambio,
                   usuario_nombre: usarActualComoCierre ? (h.usuario_nombre || previo.usuario_nombre) : previo.usuario_nombre,
@@ -1173,7 +1174,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
                             <p className="text-sm font-bold text-emerald-700">Pago empleado: {formatMoney(h.pago_empleado_dia)}</p>
                           </div>
                           <p className="text-xs text-slate-500">{h.fecha_cambio || '-'}</p>
-                          <p className="text-xs text-sky-700 mt-1">Abono puesto del día: {formatMoney(h.abono_puesto_dia)}</p>
+                          <p className="text-xs text-sky-700 mt-1">Abono puesto (última operación del día): {formatMoney(h.abono_puesto_dia)}</p>
                           <p className="text-xs text-amber-700">Saldo puesto al cierre del día: {formatMoney(h.saldo_puesto_cierre)}</p>
                           <p className="text-xs text-slate-500">Usuario: {h.usuario_nombre || 'Sistema'}</p>
                         </div>
