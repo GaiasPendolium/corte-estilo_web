@@ -913,7 +913,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
             const cobroConsumoAplicado = Math.min(Math.max(cobroConsumoDigitado, 0), Math.max(consumoPendiente, 0));
             const abonoPuestoDigitado = Math.max(Number(abonoPuestoPorEstilista[estId] || 0), 0);
             const deudaPuestoAcumulada = Number(empleado.deuda_total_acumulada || 0);
-            const netoEstimado = Math.max(pendientePagoEmpleado - cobroConsumoAplicado - abonoPuestoDigitado, 0);
+            const netoEstimado = Math.max(pendientePagoEmpleado, 0);
             const pagoDigitado = totalPagoMedios(estId);
             const saldoPorPagar = Math.max(netoEstimado - pagoDigitado, 0);
             const historialPagosEmpleado = (historialEstados || []).filter((h) => Number(h.estilista_id) === estId);
@@ -1086,21 +1086,20 @@ const aplicarEstadoLiquidacion = async (fila) => {
                       </div>
 
                       <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4">
-                        <p className="text-sm text-slate-700">Neto estimado a pagar hoy</p>
+                        <p className="text-sm text-slate-700">Objetivo pago al empleado</p>
                         <p className="text-3xl font-black text-indigo-900 mt-1">{formatMoney(netoEstimado)}</p>
                         <p className="text-xs text-slate-600 mt-2">Pagado digitado: {formatMoney(pagoDigitado)}</p>
                         <p className="text-xs text-amber-700">Saldo pendiente: {formatMoney(saldoPorPagar)}</p>
                       </div>
 
                       <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                        <p className="text-sm font-semibold text-slate-800">Detalle del pendiente por pagar</p>
+                        <p className="text-sm font-semibold text-slate-800">Resumen claro de movimientos</p>
                         <div className="mt-2 space-y-1 text-xs text-slate-700">
-                          <p>Total base pendiente (rango): <b>{formatMoney(pendientePagoEmpleado)}</b></p>
-                          <p>(-) Cobro consumo aplicado hoy: <b>{formatMoney(cobroConsumoAplicado)}</b></p>
-                          <p>(-) Abono puesto aplicado hoy: <b>{formatMoney(abonoPuestoDigitado)}</b></p>
-                          <p className="pt-1 text-indigo-800">(=) Neto estimado a pagar hoy: <b>{formatMoney(netoEstimado)}</b></p>
+                          <p>Total a pagar al empleado (día): <b>{formatMoney(pendientePagoEmpleado)}</b></p>
                           <p>(-) Pagado digitado por medios: <b>{formatMoney(pagoDigitado)}</b></p>
-                          <p className="pt-1 text-amber-800">(=) Saldo pendiente por pagar: <b>{formatMoney(saldoPorPagar)}</b></p>
+                          <p className="pt-1 text-amber-800">(=) Saldo pendiente de pago al empleado: <b>{formatMoney(saldoPorPagar)}</b></p>
+                          <p className="pt-2 text-slate-600">Abono a puesto (se registra aparte, no descuenta el pago al empleado): <b>{formatMoney(abonoPuestoDigitado)}</b></p>
+                          <p className="text-slate-600">Cobro consumo aplicado (se registra aparte): <b>{formatMoney(cobroConsumoAplicado)}</b></p>
                         </div>
                       </div>
 
