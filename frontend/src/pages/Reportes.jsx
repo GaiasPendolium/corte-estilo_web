@@ -118,6 +118,7 @@ const Reportes = () => {
   const [pagosPorEstilista, setPagosPorEstilista] = useState({});
   const [estadoDiaPorEstilista, setEstadoDiaPorEstilista] = useState({});
   const [abonoPuestoPorEstilista, setAbonoPuestoPorEstilista] = useState({});
+  const [abonoPuestoAcumuladoPorEstilista, setAbonoPuestoAcumuladoPorEstilista] = useState({});
   const [medioAbonoPuestoPorEstilista, setMedioAbonoPuestoPorEstilista] = useState({});
   const [cobroConsumoPorEstilista, setCobroConsumoPorEstilista] = useState({});
   const [medioCobroConsumoPorEstilista, setMedioCobroConsumoPorEstilista] = useState({});
@@ -246,9 +247,10 @@ const Reportes = () => {
 
         setPagosPorEstilista(mapPagos);
         setEstadoDiaPorEstilista(mapEstado);
-        setAbonoPuestoPorEstilista(
-          Object.fromEntries((estadoDia?.items || []).map((x) => [x.estilista_id, String(Number(x.abono_puesto || 0) || '')]))
+        setAbonoPuestoAcumuladoPorEstilista(
+          Object.fromEntries((estadoDia?.items || []).map((x) => [x.estilista_id, Number(x.abono_puesto || 0)]))
         );
+        setAbonoPuestoPorEstilista({});
         setMedioAbonoPuestoPorEstilista(
           Object.fromEntries((estadoDia?.items || []).map((x) => [x.estilista_id, x.medio_abono_puesto || 'efectivo']))
         );
@@ -257,6 +259,7 @@ const Reportes = () => {
         setPagosPorEstilista({});
         setEstadoDiaPorEstilista({});
         setAbonoPuestoPorEstilista({});
+        setAbonoPuestoAcumuladoPorEstilista({});
         setMedioAbonoPuestoPorEstilista({});
       }
     };
@@ -1060,7 +1063,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
                       </div>
 
                       <div>
-                        <label className="block text-xs text-slate-600 mb-1">Abono puesto</label>
+                        <label className="block text-xs text-slate-600 mb-1">Abono puesto (esta operación)</label>
                         <input
                           className="input-field"
                           type="number"
@@ -1070,6 +1073,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
                           onFocus={() => setNumericPadTarget({ estilistaId: estId, field: 'abono_puesto' })}
                           onChange={(e) => setAbonoPuestoPorEstilista((prev) => ({ ...prev, [estId]: String(e.target.value || '').replace(/[^\d.]/g, '') }))}
                         />
+                        <p className="text-xs text-slate-500 mt-1">Acumulado del día antes de guardar: {formatMoney(abonoPuestoAcumuladoPorEstilista[estId] || 0)}</p>
                       </div>
 
                       <div>

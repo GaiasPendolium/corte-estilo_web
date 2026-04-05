@@ -2758,6 +2758,7 @@ def estado_pago_estilista_dia(request):
     pago_daviplata = _to_decimal_non_negative(pagos_detalle.get('daviplata'))
     pago_otros = _to_decimal_non_negative(pagos_detalle.get('otros'))
     total_pagado = pago_efectivo + pago_nequi + pago_daviplata + pago_otros
+    abono_operacion_puesto = abono_puesto
     abono_puesto = _to_decimal_non_negative(abono_puesto_raw)
 
     if medio_abono_puesto not in {'efectivo', 'nequi', 'daviplata', 'otros'}:
@@ -3064,6 +3065,21 @@ def liquidar_dia_v2(request):
     # Se permite que el empleado pague abono de puesto adelantado.
     # Si no hay deuda suficiente para aplicarlo en el saldo, el excedente queda
     # como abono registrado del día (sin bloquear la liquidación).
+
+    # Abono acumulado del mismo día: el valor enviado se toma como abono de esta operación,
+    # no como reemplazo del histórico ya registrado ese día.
+    abono_puesto_previo_dia = Decimal(0)
+    try:
+        estado_existente_dia = EstadoPagoEstilistaDia.objects.filter(
+            estilista=estilista,
+            fecha=fecha,
+        ).first()
+        if estado_existente_dia:
+            abono_puesto_previo_dia = Decimal(estado_existente_dia.abono_puesto or 0)
+    except (OperationalError, ProgrammingError):
+        abono_puesto_previo_dia = Decimal(0)
+
+    abono_puesto = abono_puesto_previo_dia + abono_operacion_puesto
     
     # ============ [3] SALDO PENDIENTE ACUMULADO DE PUESTO ============
     deuda_total_puesto = deuda_anterior_puesto + descuento
@@ -3257,7 +3273,7 @@ def liquidar_dia_v2(request):
                 notas=notas,
                 usuario=request.user,
                 monto_liquidado=total_pagado,
-                abono_puesto=abono_puesto,
+                abono_puesto=abono_operacion_puesto,
                 medio_abono_puesto=medio_abono_puesto,
                 pendiente_puesto=saldo_puesto,
             )
@@ -3300,6 +3316,8 @@ def liquidar_dia_v2(request):
         'puesto': {
             'descuento': float(descuento),
             'abono': float(abono_puesto),
+            'abono_operacion': float(abono_operacion_puesto),
+            'abono_previo_dia': float(abono_puesto_previo_dia),
             'medio_abono': medio_abono_puesto,
             'deuda_anterior': float(deuda_anterior_puesto),
             'deuda_total': float(deuda_total_puesto),
