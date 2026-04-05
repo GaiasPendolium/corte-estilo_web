@@ -228,7 +228,7 @@ const Reportes = () => {
     let cancelado = false;
     const cargarEstadoDia = async () => {
       try {
-        const fechaDia = format(new Date(), 'yyyy-MM-dd');
+        const fechaDia = fechaFin || format(new Date(), 'yyyy-MM-dd');
         const estadoDia = await reportesService.getEstadoPagoEstilistaDia(fechaDia);
         if (cancelado) return;
 
@@ -265,7 +265,7 @@ const Reportes = () => {
     return () => {
       cancelado = true;
     };
-  }, [moduloActivo]);
+  }, [moduloActivo, fechaFin]);
 
   useEffect(() => {
     if (moduloActivo !== 'liquidacion') return;
@@ -547,7 +547,7 @@ const Reportes = () => {
 
 const aplicarEstadoLiquidacion = async (fila) => {
   const estilistaId = fila.estilista_id;
-  const fechaLiquidacion = format(new Date(), 'yyyy-MM-dd');
+  const fechaLiquidacion = fechaFin || format(new Date(), 'yyyy-MM-dd');
   
   const pago_efectivo = Number(pagosPorEstilista[estilistaId]?.efectivo || 0);
   const pago_nequi = Number(pagosPorEstilista[estilistaId]?.nequi || 0);
@@ -560,6 +560,14 @@ const aplicarEstadoLiquidacion = async (fila) => {
   const cobroConsumoAplicado = Math.min(Math.max(cobroConsumoDigitado, 0), Math.max(saldoConsumoEmpleado, 0));
   const deudaConsumoSeleccionada = Number(deudaConsumoSeleccionadaPorEstilista[estilistaId] || 0);
   const medioCobroConsumo = medioCobroConsumoPorEstilista[estilistaId] || 'efectivo';
+  const valorTotalEmpleado = Number((fila.valor_total_empleado ?? fila.facturacion_servicios ?? fila.ganancias_servicios) || 0);
+  const comisionesEmpleado = Number(fila.comision_ventas_producto || 0);
+  const topePagoEmpleado = Math.max(Number(fila.pago_neto_pendiente ?? (valorTotalEmpleado + comisionesEmpleado)), 0);
+
+  if (pago_efectivo + pago_nequi + pago_daviplata + pago_otros > topePagoEmpleado) {
+    toast.warning(`El pago al empleado no puede superar ${formatMoney(topePagoEmpleado)} para el día ${fechaLiquidacion}.`);
+    return;
+  }
   
   setSavingEstadoByEstilista((prev) => ({ ...prev, [estilistaId]: true }));
   
@@ -921,7 +929,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
                     <div>
                       <h3 className="text-2xl font-black text-slate-900">{empleado.estilista_nombre}</h3>
                       <p className="text-sm text-slate-600 mt-1">Resumen calculado con los filtros superiores actualmente aplicados.</p>
-                      <p className="text-xs text-slate-500 mt-1">La liquidación se registra con la fecha actual del sistema.</p>
+                      <p className="text-xs text-slate-500 mt-1">Liquidando el día: <b>{fechaFin}</b> (según filtro superior).</p>
                       <p className="text-xs text-slate-500 mt-1">Pendiente por pagar calculado en rango: <b>{fechaInicio}</b> a <b>{fechaFin}</b>.</p>
                     </div>
                   </div>
@@ -978,6 +986,28 @@ const aplicarEstadoLiquidacion = async (fila) => {
                   <h4 className="card-header mb-3">Liquidación integrada</h4>
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                     <div className="space-y-3">
+                      <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+                        <p className="text-sm font-semibold text-emerald-900">1) Pago al empleado</p>
+                        <p className="text-xs text-emerald-800">Ingresa solo lo que realmente se le entrega a la empleada.</p>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        {['efectivo', 'nequi', 'daviplata', 'otros'].map((medio) => (
+                          <div key={medio}>
+                            <label className="block text-xs text-slate-600 mb-1 capitalize">Pago {medio}</label>
+                            <input
+                              className="input-field"
+                              type="number"
+                              min="0"
+                              step="1"
+                              value={pagosPorEstilista[estId]?.[medio] || ''}
+                              onFocus={() => setNumericPadTarget({ estilistaId: estId, field: medio })}
+                              onChange={(e) => actualizarPagoMedio(estId, medio, e.target.value)}
+                            />
+                          </div>
+                        ))}
+                      </div>
+
                       <div>
                         <label className="block text-xs text-slate-600 mb-1">Factura de consumo a abonar</label>
                         <select
@@ -1021,6 +1051,14 @@ const aplicarEstadoLiquidacion = async (fila) => {
                         </select>
                       </div>
 
+                    </div>
+
+                    <div className="space-y-3">
+                      <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+                        <p className="text-sm font-semibold text-amber-900">2) Abonos y deducciones</p>
+                        <p className="text-xs text-amber-800">Estos valores descuentan o cubren deuda, no son pago directo a la empleada.</p>
+                      </div>
+
                       <div>
                         <label className="block text-xs text-slate-600 mb-1">Abono puesto</label>
                         <input
@@ -1045,25 +1083,6 @@ const aplicarEstadoLiquidacion = async (fila) => {
                             <option key={m.value} value={m.value}>{m.label}</option>
                           ))}
                         </select>
-                      </div>
-                    </div>
-
-                    <div className="space-y-3">
-                      <div className="grid grid-cols-2 gap-2">
-                        {['efectivo', 'nequi', 'daviplata', 'otros'].map((medio) => (
-                          <div key={medio}>
-                            <label className="block text-xs text-slate-600 mb-1 capitalize">Pago {medio}</label>
-                            <input
-                              className="input-field"
-                              type="number"
-                              min="0"
-                              step="1"
-                              value={pagosPorEstilista[estId]?.[medio] || ''}
-                              onFocus={() => setNumericPadTarget({ estilistaId: estId, field: medio })}
-                              onChange={(e) => actualizarPagoMedio(estId, medio, e.target.value)}
-                            />
-                          </div>
-                        ))}
                       </div>
 
                       <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4">
