@@ -438,15 +438,24 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({'adicional_otro_cantidad': 'La cantidad debe ser mayor o igual a 1.'})
 
         if tiene_adicionales:
+            ids_previos_adicionales = set()
+            if self.instance is not None:
+                ids_previos_adicionales = {
+                    int(x)
+                    for x in self.instance.adicionales_asignados.values_list('servicio_id', flat=True)
+                    if x is not None
+                }
+
             adicionales_ids = attrs.get('adicionales_servicio_ids')
             if adicionales_ids is not None:
                 ids_norm = sorted({int(x) for x in adicionales_ids if x is not None})
                 if ids_norm:
-                    candidatos = list(Servicio.objects.filter(id__in=ids_norm, activo=True))
+                    candidatos = list(Servicio.objects.filter(id__in=ids_norm))
                     validos_set = {
                         int(s.id)
                         for s in candidatos
-                        if self._es_servicio_adicional_permitido(s)
+                        if (bool(s.activo) or int(s.id) in ids_previos_adicionales)
+                        and self._es_servicio_adicional_permitido(s)
                     }
                     faltantes = [x for x in ids_norm if x not in validos_set]
                     if faltantes:
@@ -468,8 +477,12 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
 
                 servicios_mapa = {}
                 if ids_items:
-                    servicios_candidatos = list(Servicio.objects.filter(id__in=ids_items, activo=True))
+                    servicios_candidatos = list(Servicio.objects.filter(id__in=ids_items))
                     servicios_validos = [s for s in servicios_candidatos if self._es_servicio_adicional_permitido(s)]
+                    servicios_validos = [
+                        s for s in servicios_validos
+                        if bool(s.activo) or int(s.id) in ids_previos_adicionales
+                    ]
                     validos_set = {int(s.id) for s in servicios_validos}
                     servicios_mapa = {int(s.id): s for s in servicios_validos}
                     faltantes = [x for x in ids_items if x not in validos_set]
@@ -599,7 +612,7 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
         ids_items = sorted({int(item.get('id')) for item in adicionales_servicio_items if item.get('id') is not None})
         servicios_mapa = {
             int(s.id): s
-            for s in Servicio.objects.filter(id__in=ids_items, activo=True)
+            for s in Servicio.objects.filter(id__in=ids_items)
         }
 
         detalles = []
@@ -747,7 +760,7 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
             ids_items = sorted({int(item.get('id')) for item in adicionales_servicio_items if item.get('id') is not None})
             servicios_mapa = {
                 int(s.id): s
-                for s in Servicio.objects.filter(id__in=ids_items, activo=True)
+                for s in Servicio.objects.filter(id__in=ids_items)
                 if self._es_servicio_adicional_permitido(s)
             }
             estilistas_ids = sorted({int(item.get('estilista_id')) for item in adicionales_servicio_items if item.get('estilista_id') is not None})
@@ -844,7 +857,6 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
                 int(s.id): s
                 for s in Servicio.objects.filter(
                     id__in=[int(x) for x in adicionales_servicio_ids if x is not None],
-                    activo=True,
                 )
                 if self._es_servicio_adicional_permitido(s)
             }

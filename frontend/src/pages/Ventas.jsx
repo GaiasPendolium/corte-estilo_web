@@ -570,6 +570,7 @@ const Ventas = () => {
         adicionales_servicio_items: adicionales.map((item, idx) => ({
           _key: `${item.id || idx}`,
           id: String(item.servicio_id || ''),
+          servicio_nombre: item.servicio_nombre || '',
           estilista_id: String(item.estilista_id || ''),
           valor: String(item.valor || ''),
           aplica_porcentaje_establecimiento: Boolean(item.aplica_porcentaje_establecimiento),
@@ -1618,6 +1619,14 @@ const Ventas = () => {
                 <div key={it._key || `ad-${idx}`} className="grid grid-cols-1 md:grid-cols-12 gap-2 rounded border border-blue-200 bg-white p-2">
                   <div className="md:col-span-5">
                     <select className="input-field" value={it.id} onChange={(e) => actualizarAdicionalServicio(idx, 'id', e.target.value)}>
+                      {(() => {
+                        const servicioActualId = Number(it.id || 0);
+                        const actual = serviciosCatalogo.find((s) => Number(s.id) === servicioActualId);
+                        if (!servicioActualId || actual) return null;
+                        return (
+                          <option value={it.id}>{it.servicio_nombre || `Servicio ${it.id}`} (actual en factura)</option>
+                        );
+                      })()}
                       <option value="">Servicio adicional</option>
                       {serviciosCatalogo.filter((s) => s.es_adicional).map((s) => (
                         <option key={s.id} value={s.id}>{formatServiceSearchLabel(s)}</option>

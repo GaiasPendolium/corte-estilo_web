@@ -954,7 +954,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
                 </div>
 
                 <div className="card border border-slate-200 bg-white">
-                  <h4 className="card-header mb-2">Días incluidos en el pendiente por pagar</h4>
+                  <h4 className="card-header mb-2">Días incluidos en el pendiente por pagar (antes de liquidar)</h4>
                   <div className="space-y-2 max-h-[260px] overflow-y-auto pr-1">
                     {loadingDesgloseLiquidacion && <p className="text-sm text-slate-500">Cargando días pendientes...</p>}
                     {!loadingDesgloseLiquidacion && diasPendientes.length === 0 && (
