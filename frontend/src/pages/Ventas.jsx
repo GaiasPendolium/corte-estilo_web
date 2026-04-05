@@ -447,15 +447,7 @@ const Ventas = () => {
         items,
       });
       toast.success(tipoFacturaEditando === 'consumo_empleado' ? 'Factura de consumo actualizada' : 'Factura de venta actualizada');
-                    onChange={(e) => {
-                      const nextProducto = e.target.value;
-                      setServicioForm((p) => ({
-                        ...p,
-                        adicional_otro_producto: nextProducto,
-                        adicional_otro_estilista: nextProducto ? p.adicional_otro_estilista : '',
-                        adicional_otro_cantidad: nextProducto ? p.adicional_otro_cantidad : '1',
-                      }));
-                    }}
+      setShowInvoiceEditForm(false);
       await cargarDatos();
     } catch (error) {
       toast.error(error?.response?.data?.error || 'No se pudo actualizar la factura');
