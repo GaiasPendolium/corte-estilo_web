@@ -1605,6 +1605,7 @@ const Ventas = () => {
                   <select
                     className="input-field"
                     value={servicioForm.adicional_otro_estilista || ''}
+                    disabled={!servicioForm.adicional_otro_producto}
                     onChange={(e) => setServicioForm((p) => ({ ...p, adicional_otro_estilista: e.target.value }))}
                   >
                     <option value="">Empleado comisión producto</option>

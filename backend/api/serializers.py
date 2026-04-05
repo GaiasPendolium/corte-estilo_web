@@ -531,9 +531,13 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
                             {'adicionales_servicio_items': f'Empleados no válidos o inactivos: {faltantes_est}'}
                         )
 
-            adicional_otro_producto = attrs.get('adicional_otro_producto')
-            if adicional_otro_producto is None and self.instance is not None:
+            if 'adicional_otro_producto' in attrs:
+                # Si llega explícitamente null desde frontend, respetarlo (quitar producto adicional).
+                adicional_otro_producto = attrs.get('adicional_otro_producto')
+            elif self.instance is not None:
                 adicional_otro_producto = self.instance.adicional_otro_producto
+            else:
+                adicional_otro_producto = None
 
             cantidad_requerida = int(adicional_otro_cantidad or 1)
             stock_disponible = int(adicional_otro_producto.stock or 0) if adicional_otro_producto else 0
@@ -555,9 +559,12 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
                     {'adicional_otro_producto': f'Stock insuficiente para adicional. Disponible: {stock_disponible}'}
                 )
 
-            adicional_otro_estilista = attrs.get('adicional_otro_estilista')
-            if adicional_otro_estilista is None and self.instance is not None:
+            if 'adicional_otro_estilista' in attrs:
+                adicional_otro_estilista = attrs.get('adicional_otro_estilista')
+            elif self.instance is not None:
                 adicional_otro_estilista = self.instance.adicional_otro_estilista
+            else:
+                adicional_otro_estilista = None
 
             servicio_principal = attrs.get('servicio') or (self.instance.servicio if self.instance else None)
             tipo_reparto_vigente = attrs.get('tipo_reparto_establecimiento')
