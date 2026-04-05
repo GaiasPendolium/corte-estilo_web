@@ -433,7 +433,15 @@ const Ventas = () => {
         items,
       });
       toast.success(tipoFacturaEditando === 'consumo_empleado' ? 'Factura de consumo actualizada' : 'Factura de venta actualizada');
-      setShowInvoiceEditForm(false);
+                    onChange={(e) => {
+                      const nextProducto = e.target.value;
+                      setServicioForm((p) => ({
+                        ...p,
+                        adicional_otro_producto: nextProducto,
+                        adicional_otro_estilista: nextProducto ? p.adicional_otro_estilista : '',
+                        adicional_otro_cantidad: nextProducto ? p.adicional_otro_cantidad : '1',
+                      }));
+                    }}
       await cargarDatos();
     } catch (error) {
       toast.error(error?.response?.data?.error || 'No se pudo actualizar la factura');
@@ -675,7 +683,9 @@ const Ventas = () => {
         adicionales_servicio_ids: tieneAdicionalesFinal ? idsAdicionales : [],
         adicionales_servicio_items: tieneAdicionalesFinal ? adicionalesNormalizados : [],
         adicional_otro_producto: servicioForm.adicional_otro_producto ? Number(servicioForm.adicional_otro_producto) : null,
-        adicional_otro_estilista: servicioForm.adicional_otro_estilista ? Number(servicioForm.adicional_otro_estilista) : null,
+        adicional_otro_estilista: servicioForm.adicional_otro_producto && servicioForm.adicional_otro_estilista
+          ? Number(servicioForm.adicional_otro_estilista)
+          : null,
         adicional_otro_cantidad: servicioForm.adicional_otro_producto ? Number(servicioForm.adicional_otro_cantidad || 1) : 1,
         notas: servicioForm.notas || null,
       });
