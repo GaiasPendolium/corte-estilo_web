@@ -178,6 +178,7 @@ const Reportes = () => {
   const [filtroAjusteTexto, setFiltroAjusteTexto] = useState('');
   const [soloPendientesAjuste, setSoloPendientesAjuste] = useState(false);
   const [vistaSimpleLiquidacion, setVistaSimpleLiquidacion] = useState(true);
+  const [pasoLiquidacion, setPasoLiquidacion] = useState(1);
   const [reabastecerByProductoId, setReabastecerByProductoId] = useState({});
   const [savingStockByProductoId, setSavingStockByProductoId] = useState({});
 
@@ -1132,6 +1133,63 @@ const aplicarEstadoLiquidacion = async (fila) => {
   }
 };
 
+const aplicarLiquidacionSimple = async ({
+  fila,
+  pendientePagoEmpleado,
+  abonoPuestoAplicado,
+  cobroConsumoAplicado,
+  deudasConsumoSeleccionadas,
+}) => {
+  const estilistaId = Number(fila?.estilista_id || 0);
+  if (!estilistaId) {
+    toast.error('No se pudo identificar el empleado para liquidar.');
+    return;
+  }
+
+  const fechaLiquidacion = fechaFin || format(new Date(), 'yyyy-MM-dd');
+  const pagoFinalEmpleado = Math.max(Number(pendientePagoEmpleado || 0) - Number(abonoPuestoAplicado || 0) - Number(cobroConsumoAplicado || 0), 0);
+  const medio_abono_puesto = medioAbonoPuestoPorEstilista[estilistaId] || 'efectivo';
+  const medioCobroConsumo = medioCobroConsumoPorEstilista[estilistaId] || 'efectivo';
+
+  setSavingEstadoByEstilista((prev) => ({ ...prev, [estilistaId]: true }));
+  try {
+    if (cobroConsumoAplicado > 0) {
+      const resumenCobro = await cobrarConsumoEnDeudas({
+        estilistaId,
+        deudaIds: deudasConsumoSeleccionadas,
+        monto: cobroConsumoAplicado,
+        medioPago: medioCobroConsumo,
+        fecha: fechaLiquidacion,
+      });
+      if (resumenCobro?.sinPendientes) {
+        toast.warning('Las facturas de consumo seleccionadas ya no tienen saldo pendiente.');
+      }
+    }
+
+    await reportesService.liquidarDiaV2({
+      estilista_id: estilistaId,
+      fecha: fechaLiquidacion,
+      pago_efectivo: pagoFinalEmpleado,
+      pago_nequi: 0,
+      pago_daviplata: 0,
+      pago_otros: 0,
+      abono_puesto: Number(abonoPuestoAplicado || 0),
+      medio_abono_puesto,
+      forzar_reemplazo_dia: false,
+      notas: `Liquidación simple ${fechaLiquidacion}`,
+    });
+
+    toast.success(`Liquidación guardada. Pago final empleado: ${formatMoney(pagoFinalEmpleado)}.`);
+    setPasoLiquidacion(1);
+    await Promise.all([cargarTodo(), cargarCarteraLiquidacionGlobal()]);
+  } catch (error) {
+    const msg = error?.response?.data?.error || error?.message || 'No se pudo guardar la liquidación simple.';
+    toast.error(String(msg));
+  } finally {
+    setSavingEstadoByEstilista((prev) => ({ ...prev, [estilistaId]: false }));
+  }
+};
+
 const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
   const key = `${estilistaId}|${fecha}`;
   const porEstilista = cuadreDiarioByEstilista[estilistaId] || {};
@@ -1559,7 +1617,10 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                 <button
                   key={estId}
                   type="button"
-                  onClick={() => setEstilistaActivoLiquidacion(estId)}
+                  onClick={() => {
+                    setEstilistaActivoLiquidacion(estId);
+                    setPasoLiquidacion(1);
+                  }}
                   className={`w-full rounded-2xl border p-3 text-left transition ${activo ? 'border-emerald-400 bg-emerald-50 shadow-md' : 'border-slate-200 bg-white hover:border-slate-300'}`}
                 >
                   <p className="font-semibold text-slate-900">{item.estilista_nombre}</p>
@@ -1667,6 +1728,220 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
             const deudasEmpleado = (carteraDataLiquidacionGlobal?.deudas || []).filter((d) => Number(d.estilista_id) === estId && Number(d.saldo_pendiente || 0) > 0);
             const deudasConsumoSeleccionadas = deudaConsumoSeleccionadasPorEstilista[estId] || [];
             const cuadrePorFecha = cuadreDiarioByEstilista[estId] || {};
+            const descuentoPuestoAplicado = Math.min(abonoPuestoDigitado, Math.max(deudaPuestoAcumulada, 0));
+            const descuentoConsumoAplicado = cobroConsumoAplicado;
+            const totalDescuentosSimple = descuentoPuestoAplicado + descuentoConsumoAplicado;
+            const totalPagarFinalSimple = Math.max(pendientePagoEmpleado - totalDescuentosSimple, 0);
+
+            if (vistaSimpleLiquidacion) {
+              return (
+                <>
+                  <div className="card border border-slate-200 bg-white">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4">
+                        <p className="text-xs uppercase tracking-wide text-sky-700 font-semibold">Total generado</p>
+                        <p className="text-2xl font-black text-sky-900 mt-1">{formatMoney(generadoEmpleado)}</p>
+                      </div>
+                      <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4">
+                        <p className="text-xs uppercase tracking-wide text-rose-700 font-semibold">Total descuentos</p>
+                        <p className="text-2xl font-black text-rose-900 mt-1">{formatMoney(totalDescuentosSimple)}</p>
+                      </div>
+                      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+                        <p className="text-xs uppercase tracking-wide text-emerald-700 font-semibold">Total a pagar final</p>
+                        <p className="text-3xl font-black text-emerald-900 mt-1">{formatMoney(totalPagarFinalSimple)}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="card border border-slate-200 bg-white">
+                    <div className="flex flex-wrap gap-2">
+                      {[1, 2, 3, 4].map((paso) => {
+                        const activo = pasoLiquidacion === paso;
+                        const completado = pasoLiquidacion > paso;
+                        return (
+                          <button
+                            key={`paso-${paso}`}
+                            type="button"
+                            className={`px-3 py-2 rounded-xl border text-sm font-semibold ${activo ? 'border-sky-400 bg-sky-100 text-sky-900' : completado ? 'border-emerald-300 bg-emerald-50 text-emerald-800' : 'border-slate-200 bg-slate-50 text-slate-700'}`}
+                            onClick={() => setPasoLiquidacion(paso)}
+                          >
+                            Paso {paso}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {pasoLiquidacion === 1 && (
+                    <div className="card border border-sky-200 bg-sky-50">
+                      <h4 className="card-header mb-2">Paso 1: Seleccionar empleado y rango de fechas</h4>
+                      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+                        <div className="xl:col-span-2">
+                          <label className="block text-xs text-slate-600 mb-1">Empleado</label>
+                          <select
+                            className="input-field"
+                            value={String(estId)}
+                            onChange={(e) => {
+                              setEstilistaActivoLiquidacion(Number(e.target.value || 0));
+                              setPasoLiquidacion(1);
+                            }}
+                          >
+                            {(biData?.estilistas || []).map((e) => (
+                              <option key={`sel-${e.estilista_id}`} value={String(e.estilista_id)}>{e.estilista_nombre}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs text-slate-600 mb-1">Fecha inicio</label>
+                          <input type="date" className="input-field" value={fechaInicio} onChange={(e) => setFechaInicio(e.target.value)} />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-slate-600 mb-1">Fecha fin</label>
+                          <input type="date" className="input-field" value={fechaFin} onChange={(e) => setFechaFin(e.target.value)} />
+                        </div>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button className="btn-primary" onClick={cargarTodo} disabled={loading}>{loading ? 'Actualizando...' : 'Calcular liquidación'}</button>
+                        <button className="btn-secondary" onClick={() => setPasoLiquidacion(2)}>Siguiente</button>
+                      </div>
+                    </div>
+                  )}
+
+                  {pasoLiquidacion === 2 && (
+                    <div className="card border border-sky-200 bg-white">
+                      <h4 className="card-header mb-2">Paso 2: Resumen de ganancias</h4>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                          <p className="text-xs text-slate-500">Empleado</p>
+                          <p className="font-bold text-slate-900">{empleado.estilista_nombre}</p>
+                          <p className="text-xs text-slate-500 mt-2">Rango</p>
+                          <p className="text-sm text-slate-800">{fechaInicio} a {fechaFin}</p>
+                        </div>
+                        <div className="rounded-xl border border-sky-200 bg-sky-50 p-3">
+                          <p className="text-xs text-slate-600">Generado por servicios + comisiones</p>
+                          <p className="text-3xl font-black text-sky-900 mt-1">{formatMoney(generadoEmpleado)}</p>
+                          <p className="text-xs text-slate-600 mt-2">Pendiente por pagar al empleado</p>
+                          <p className="text-xl font-black text-emerald-700">{formatMoney(pendientePagoEmpleado)}</p>
+                        </div>
+                      </div>
+                      <div className="mt-3 flex gap-2">
+                        <button className="btn-secondary" onClick={() => setPasoLiquidacion(1)}>Anterior</button>
+                        <button className="btn-primary" onClick={() => setPasoLiquidacion(3)}>Siguiente</button>
+                      </div>
+                    </div>
+                  )}
+
+                  {pasoLiquidacion === 3 && (
+                    <div className="card border border-rose-200 bg-rose-50">
+                      <h4 className="card-header mb-2">Paso 3: Aplicar descuentos</h4>
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                        <div className="rounded-xl border border-amber-200 bg-white p-3">
+                          <p className="text-sm font-semibold text-slate-900">Alquiler del puesto</p>
+                          <label className="block text-xs text-slate-600 mt-2 mb-1">Valor a descontar</label>
+                          <input
+                            className="input-field"
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={abonoPuestoPorEstilista[estId] || ''}
+                            onChange={(e) => setAbonoPuestoPorEstilista((prev) => ({ ...prev, [estId]: String(e.target.value || '').replace(/[^\d.]/g, '') }))}
+                          />
+                          <label className="block text-xs text-slate-600 mt-2 mb-1">Medio del abono</label>
+                          <select
+                            className="input-field"
+                            value={medioAbonoPuestoPorEstilista[estId] || 'efectivo'}
+                            onChange={(e) => setMedioAbonoPuestoPorEstilista((prev) => ({ ...prev, [estId]: e.target.value }))}
+                          >
+                            {MEDIOS_PAGO_OPERACION.map((m) => (
+                              <option key={`medio-puesto-${m.value}`} value={m.value}>{m.label}</option>
+                            ))}
+                          </select>
+                          <p className="text-xs text-amber-700 mt-2">Aplicado: {formatMoney(descuentoPuestoAplicado)}</p>
+                        </div>
+
+                        <div className="rounded-xl border border-rose-200 bg-white p-3">
+                          <p className="text-sm font-semibold text-slate-900">Consumo de productos</p>
+                          <div className="mt-2 flex items-center gap-2">
+                            <button type="button" className="btn-secondary !py-1 !px-2 text-xs" onClick={() => seleccionarTodasDeudasConsumo(estId, deudasEmpleado)}>Seleccionar todas</button>
+                            <button type="button" className="btn-secondary !py-1 !px-2 text-xs" onClick={() => limpiarSeleccionDeudasConsumo(estId)}>Limpiar</button>
+                          </div>
+                          <div className="mt-2 max-h-40 overflow-y-auto space-y-2 pr-1">
+                            {deudasEmpleado.length === 0 && <p className="text-xs text-slate-500">No hay facturas pendientes.</p>}
+                            {deudasEmpleado.map((d) => (
+                              <label key={`deuda-simple-${d.deuda_id}`} className="flex items-start gap-2 rounded-lg border border-slate-200 p-2 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={deudasConsumoSeleccionadas.includes(String(d.deuda_id))}
+                                  onChange={() => toggleDeudaConsumoSeleccion(estId, d.deuda_id)}
+                                />
+                                <span className="text-xs text-slate-700">{d.numero_factura || `Deuda ${d.deuda_id}`} - {formatMoney(d.saldo_pendiente)}</span>
+                              </label>
+                            ))}
+                          </div>
+                          <label className="block text-xs text-slate-600 mt-2 mb-1">Valor a descontar por consumo</label>
+                          <input
+                            className="input-field"
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={cobroConsumoPorEstilista[estId] || ''}
+                            onChange={(e) => setCobroConsumoPorEstilista((prev) => ({ ...prev, [estId]: String(e.target.value || '').replace(/[^\d.]/g, '') }))}
+                          />
+                          <label className="block text-xs text-slate-600 mt-2 mb-1">Medio del cobro consumo</label>
+                          <select
+                            className="input-field"
+                            value={medioCobroConsumoPorEstilista[estId] || 'efectivo'}
+                            onChange={(e) => setMedioCobroConsumoPorEstilista((prev) => ({ ...prev, [estId]: e.target.value }))}
+                          >
+                            {MEDIOS_PAGO_OPERACION.map((m) => (
+                              <option key={`medio-consumo-${m.value}`} value={m.value}>{m.label}</option>
+                            ))}
+                          </select>
+                          <p className="text-xs text-rose-700 mt-2">Aplicado: {formatMoney(descuentoConsumoAplicado)}</p>
+                        </div>
+                      </div>
+                      <div className="mt-3 rounded-xl border border-rose-200 bg-white p-3">
+                        <p className="text-sm text-slate-700">Descuento total en tiempo real</p>
+                        <p className="text-2xl font-black text-rose-700">{formatMoney(totalDescuentosSimple)}</p>
+                      </div>
+                      <div className="mt-3 flex gap-2">
+                        <button className="btn-secondary" onClick={() => setPasoLiquidacion(2)}>Anterior</button>
+                        <button className="btn-primary" onClick={() => setPasoLiquidacion(4)}>Siguiente</button>
+                      </div>
+                    </div>
+                  )}
+
+                  {pasoLiquidacion === 4 && (
+                    <div className="card border border-emerald-200 bg-emerald-50">
+                      <h4 className="card-header mb-2">Paso 4: Total final a pagar</h4>
+                      <div className="rounded-2xl border border-emerald-300 bg-white p-4">
+                        <p className="text-sm text-slate-700">Pendiente por pagar</p>
+                        <p className="text-lg font-bold text-slate-900">{formatMoney(pendientePagoEmpleado)}</p>
+                        <p className="text-sm text-rose-700 mt-2">(-) Descuentos: {formatMoney(totalDescuentosSimple)}</p>
+                        <p className="text-xs text-slate-500">Puesto {formatMoney(descuentoPuestoAplicado)} + Consumo {formatMoney(descuentoConsumoAplicado)}</p>
+                        <p className="text-4xl font-black text-emerald-800 mt-3">{formatMoney(totalPagarFinalSimple)}</p>
+                      </div>
+                      <div className="mt-3 flex gap-2">
+                        <button className="btn-secondary" onClick={() => setPasoLiquidacion(3)}>Anterior</button>
+                        <button
+                          className="btn-primary"
+                          onClick={() => aplicarLiquidacionSimple({
+                            fila: empleado,
+                            pendientePagoEmpleado,
+                            abonoPuestoAplicado: descuentoPuestoAplicado,
+                            cobroConsumoAplicado: descuentoConsumoAplicado,
+                            deudasConsumoSeleccionadas,
+                          })}
+                          disabled={!!savingEstadoByEstilista[estId]}
+                        >
+                          {savingEstadoByEstilista[estId] ? 'Guardando...' : 'Confirmar liquidación'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              );
+            }
 
             return (
               <>
