@@ -19,7 +19,6 @@ import io
 import json
 import os
 import uuid
-import inspect
 from cryptography.hazmat.primitives import hashes, serialization
 from .models import (
     Usuario, Estilista, Servicio, Cliente, Producto,
@@ -3262,9 +3261,7 @@ def estado_pago_estilista_dia(request):
     )
 
 
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def liquidar_dia_v2(request):
+def _liquidar_dia_v2_core(request):
     """
     NUEVO ENDPOINT SIMPLIFICADO - LIQUIDADOR CLARO Y CORRECTO
     
@@ -3671,6 +3668,12 @@ def liquidar_dia_v2(request):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
+def liquidar_dia_v2(request):
+    return _liquidar_dia_v2_core(request)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
 def liquidar_operacion_integral(request):
     """Ejecuta en una sola transacción: cobro de consumo (opcional) + liquidación diaria."""
     if _es_recepcion(request.user):
@@ -3725,15 +3728,8 @@ def liquidar_operacion_integral(request):
                     deuda_ids=deuda_ids,
                 )
 
-            # Flujo robusto: el endpoint decorado puede requerir HttpRequest
-            # y convertirlo internamente a DRF Request.
-            django_request = getattr(request, '_request', None)
-            try:
-                response_liq = liquidar_dia_v2(django_request or request)
-            except Exception:
-                # Fallback defensivo por si cambia el apilado de decoradores.
-                liq_callable = inspect.unwrap(liquidar_dia_v2)
-                response_liq = liq_callable(request)
+            # Reutilizar core interno evita conflicto HttpRequest vs DRF Request.
+            response_liq = _liquidar_dia_v2_core(request)
             status_liq = int(getattr(response_liq, 'status_code', 500) or 500)
             if status_liq >= 400:
                 data_liq = getattr(response_liq, 'data', None) or {}
