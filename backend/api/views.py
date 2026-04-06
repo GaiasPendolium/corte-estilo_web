@@ -3888,7 +3888,9 @@ def bi_desglose_estilista_debug(request):
         
         descuento_dia = _descuento_puesto_dia(estilista, base_servicio_dia)
         
-        neto_dia = (base_servicio_dia - descuento_dia) + comision_dia
+        # Regla unificada: el descuento de puesto se registra como deuda aparte,
+        # no se descuenta del pagable del empleado en neto_dia.
+        neto_dia = base_servicio_dia + comision_dia
         estado_dia = estados_pago_map.get((estilista.id, dia), 'pendiente')
         
         pago_neto_periodo += neto_dia
@@ -4058,7 +4060,9 @@ def bi_desglose_estilista(request):
         
         descuento_dia = _descuento_puesto_dia(estilista, base_servicio_dia)
         
-        neto_dia = (base_servicio_dia - descuento_dia) + comision_dia
+        # Regla unificada: el descuento de puesto se registra como deuda aparte,
+        # no se descuenta del pagable del empleado en neto_dia.
+        neto_dia = base_servicio_dia + comision_dia
         estado_dia = estados_pago_map.get((estilista.id, dia), 'pendiente')
         
         pago_neto_periodo += neto_dia

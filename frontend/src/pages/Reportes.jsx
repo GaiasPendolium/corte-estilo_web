@@ -143,6 +143,11 @@ const Reportes = () => {
   const [savingFechaAbonoConsumoById, setSavingFechaAbonoConsumoById] = useState({});
 
   const calcularPendientePagoEmpleado = useCallback((fila) => {
+    const pendienteBackend = Number(fila?.pago_neto_pendiente ?? 0);
+    if (Number.isFinite(pendienteBackend) && pendienteBackend >= 0) {
+      return pendienteBackend;
+    }
+
     const valorTotalEmpleado = Number((fila?.valor_total_empleado ?? fila?.facturacion_servicios ?? fila?.ganancias_servicios) || 0);
     const comisionesEmpleado = Number(fila?.comision_ventas_producto || 0);
     const deudaPuestoAcumulada = Number(fila?.deuda_total_acumulada || 0);
@@ -544,9 +549,13 @@ const Reportes = () => {
   const liquidacionPagadoCaja = Number(resumen?.liquidacion_empleados ?? 0);
 
   const liquidacionTotal = (biData?.estilistas || []).reduce((sum, item) => {
+    const generadoPeriodo = Number(item?.pago_neto_periodo ?? 0);
+    if (Number.isFinite(generadoPeriodo) && generadoPeriodo >= 0) {
+      return sum + generadoPeriodo;
+    }
     const valorTotalEmpleado = Number((item.valor_total_empleado ?? item.facturacion_servicios ?? item.ganancias_servicios) || 0);
     const comisionesEmpleado = Number(item.comision_ventas_producto || 0);
-    return sum + valorTotalEmpleado + comisionesEmpleado;
+    return sum + (valorTotalEmpleado + comisionesEmpleado);
   }, 0);
   const liquidacionPendiente = Math.max(liquidacionTotal - liquidacionPagadoCaja, 0);
 
@@ -1304,10 +1313,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
             const valorTotalEmpleado = Number((empleado.valor_total_empleado ?? empleado.facturacion_servicios ?? empleado.ganancias_servicios) || 0);
             const comisionesEmpleado = Number(empleado.comision_ventas_producto || 0);
             const generadoEmpleadoCalculado = valorTotalEmpleado + comisionesEmpleado;
-            const generadoEmpleado = Math.max(
-              Number(desgloseLiquidacion?.servicios?.total_precio_cobrado ?? generadoEmpleadoCalculado),
-              0
-            );
+            const generadoEmpleado = Math.max(Number(empleado?.pago_neto_periodo ?? generadoEmpleadoCalculado), 0);
             const pendientePagoEmpleado = calcularPendientePagoEmpleado(empleado);
             const consumoPendiente = Number(resumenPorEstilistaLiquidacion[estId]?.saldo_pendiente || 0);
             const cobroConsumoDigitado = Number(cobroConsumoPorEstilista[estId] || 0);
