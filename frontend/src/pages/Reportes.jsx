@@ -14,7 +14,7 @@ const MODULOS = [
   { key: 'ajuste', label: '4. Ajuste Diario' },
   { key: 'agotarse', label: '5. Productos por Agotarse' },
 ];
-const REPORTES_UI_VERSION = '2026-04-05 v3';
+const REPORTES_UI_VERSION = '2026-04-06 v4';
 
 const MODULO_META = {
   cierre: {
