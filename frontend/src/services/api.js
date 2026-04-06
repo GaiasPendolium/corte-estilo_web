@@ -415,6 +415,13 @@ export const reportesService = {
     return response.data;
   },
 
+  getEstadoPagoEstilistaDiaRango: async ({ fecha_inicio, fecha_fin, estilista_id }) => {
+    const response = await api.get('/reportes/estilistas/estado-pago-dia/', {
+      params: { fecha_inicio, fecha_fin, estilista_id },
+    });
+    return response.data;
+  },
+
   getEstadoPagoHistorial: async (params) => {
     const response = await api.get('/reportes/estilistas/estado-pago-historial/', { params });
     return response.data;

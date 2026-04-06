@@ -133,6 +133,8 @@ const Reportes = () => {
   const [loadingDesgloseLiquidacion, setLoadingDesgloseLiquidacion] = useState(false);
   const [historialEstados, setHistorialEstados] = useState([]);
   const [loadingHistorial, setLoadingHistorial] = useState(false);
+  const [cuadreDiarioByEstilista, setCuadreDiarioByEstilista] = useState({});
+  const [savingCuadreDiaByKey, setSavingCuadreDiaByKey] = useState({});
   const [nuevaFechaEspacioById, setNuevaFechaEspacioById] = useState({});
   const [montoMoverEspacioById, setMontoMoverEspacioById] = useState({});
   const [savingFechaEspacioById, setSavingFechaEspacioById] = useState({});
@@ -181,6 +183,40 @@ const Reportes = () => {
     } finally {
       setSavingFechaEspacioById((prev) => ({ ...prev, [estadoId]: false }));
     }
+  };
+
+  const toMontoNoNegativo = (value) => {
+    const n = Number(String(value ?? '').replace(/[^\d.]/g, ''));
+    if (!Number.isFinite(n) || n < 0) return 0;
+    return n;
+  };
+
+  const actualizarCuadreDiaCampo = (estilistaId, fecha, campo, valor) => {
+    setCuadreDiarioByEstilista((prev) => {
+      const porEstilista = prev[estilistaId] || {};
+      const actual = porEstilista[fecha] || {
+        pago_efectivo: '',
+        pago_nequi: '',
+        pago_daviplata: '',
+        pago_otros: '',
+        abono_puesto: '',
+        medio_abono_puesto: 'efectivo',
+      };
+      const nextValue = campo === 'medio_abono_puesto'
+        ? valor
+        : String(valor || '').replace(/[^\d.]/g, '');
+
+      return {
+        ...prev,
+        [estilistaId]: {
+          ...porEstilista,
+          [fecha]: {
+            ...actual,
+            [campo]: nextValue,
+          },
+        },
+      };
+    });
   };
 
   const modulosVisibles = useMemo(() => {
@@ -378,6 +414,51 @@ const Reportes = () => {
     };
 
     cargarDesglose();
+    return () => {
+      cancelado = true;
+    };
+  }, [moduloActivo, estilistaActivoLiquidacion, fechaInicio, fechaFin]);
+
+  useEffect(() => {
+    if (moduloActivo !== 'liquidacion') return;
+    if (!estilistaActivoLiquidacion || !fechaInicio || !fechaFin) return;
+
+    let cancelado = false;
+    const cargarCuadreDiario = async () => {
+      try {
+        const resp = await reportesService.getEstadoPagoEstilistaDiaRango({
+          fecha_inicio: fechaInicio,
+          fecha_fin: fechaFin,
+          estilista_id: estilistaActivoLiquidacion,
+        });
+        if (cancelado) return;
+
+        const mapa = {};
+        (resp?.items || []).forEach((x) => {
+          mapa[String(x.fecha || '')] = {
+            pago_efectivo: String(Number(x.pago_efectivo || 0) || ''),
+            pago_nequi: String(Number(x.pago_nequi || 0) || ''),
+            pago_daviplata: String(Number(x.pago_daviplata || 0) || ''),
+            pago_otros: String(Number(x.pago_otros || 0) || ''),
+            abono_puesto: String(Number(x.abono_puesto || 0) || ''),
+            medio_abono_puesto: x.medio_abono_puesto || 'efectivo',
+          };
+        });
+
+        setCuadreDiarioByEstilista((prev) => ({
+          ...prev,
+          [estilistaActivoLiquidacion]: mapa,
+        }));
+      } catch (error) {
+        if (cancelado) return;
+        setCuadreDiarioByEstilista((prev) => ({
+          ...prev,
+          [estilistaActivoLiquidacion]: prev[estilistaActivoLiquidacion] || {},
+        }));
+      }
+    };
+
+    cargarCuadreDiario();
     return () => {
       cancelado = true;
     };
@@ -748,6 +829,50 @@ const aplicarEstadoLiquidacion = async (fila) => {
     toast.error(`❌ ${msg}`);
   } finally {
     setSavingEstadoByEstilista((prev) => ({ ...prev, [estilistaId]: false }));
+  }
+};
+
+const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
+  const key = `${estilistaId}|${fecha}`;
+  const porEstilista = cuadreDiarioByEstilista[estilistaId] || {};
+  const fila = porEstilista[fecha] || {};
+
+  const pago_efectivo = toMontoNoNegativo(fila.pago_efectivo);
+  const pago_nequi = toMontoNoNegativo(fila.pago_nequi);
+  const pago_daviplata = toMontoNoNegativo(fila.pago_daviplata);
+  const pago_otros = toMontoNoNegativo(fila.pago_otros);
+  const abono_puesto = toMontoNoNegativo(fila.abono_puesto);
+  const medio_abono_puesto = fila.medio_abono_puesto || 'efectivo';
+
+  const totalPagoEmpleado = pago_efectivo + pago_nequi + pago_daviplata + pago_otros;
+  const topePagoDia = Math.max(Number(netoDia || 0), 0);
+  if (totalPagoEmpleado > topePagoDia) {
+    toast.warning(`El pago al empleado no puede superar ${formatMoney(topePagoDia)} para el día ${fecha}.`);
+    return;
+  }
+
+  setSavingCuadreDiaByKey((prev) => ({ ...prev, [key]: true }));
+  try {
+    await reportesService.liquidarDiaV2({
+      estilista_id: estilistaId,
+      fecha,
+      pago_efectivo,
+      pago_nequi,
+      pago_daviplata,
+      pago_otros,
+      abono_puesto,
+      medio_abono_puesto,
+      forzar_reemplazo_dia: true,
+      notas: `Cuadre diario ${fecha}`,
+    });
+
+    toast.success(`Cuadre diario guardado para ${fecha}.`);
+    await Promise.all([cargarTodo(), cargarCarteraLiquidacionGlobal()]);
+  } catch (error) {
+    const msg = error?.response?.data?.error || error?.message || 'No se pudo guardar el cuadre del día.';
+    toast.error(String(msg));
+  } finally {
+    setSavingCuadreDiaByKey((prev) => ({ ...prev, [key]: false }));
   }
 };
 
@@ -1127,6 +1252,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
             const saldoPorPagar = Math.max(netoEstimado - pagoDigitado, 0);
             const historialPagosEmpleado = (historialEstados || []).filter((h) => Number(h.estilista_id) === estId);
             const diasPendientes = desgloseLiquidacion?.desglose_por_dia?.filter((d) => String(d.incluido_en || d.estado || '').toLowerCase() !== 'cancelado') || [];
+            const diasCuadre = [...diasPendientes].sort((a, b) => String(b.fecha || '').localeCompare(String(a.fecha || '')));
             const descuentoPorFecha = diasPendientes.reduce((acc, d) => {
               acc[String(d.fecha || '')] = Number(d.descuento_espacio || 0);
               return acc;
@@ -1192,6 +1318,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
             }, {});
             const deudasEmpleado = (carteraDataLiquidacionGlobal?.deudas || []).filter((d) => Number(d.estilista_id) === estId && Number(d.saldo_pendiente || 0) > 0);
             const deudasConsumoSeleccionadas = deudaConsumoSeleccionadasPorEstilista[estId] || [];
+            const cuadrePorFecha = cuadreDiarioByEstilista[estId] || {};
 
             return (
               <>
@@ -1262,6 +1389,138 @@ const aplicarEstadoLiquidacion = async (fila) => {
                         })()}
                       </div>
                     ))}
+                  </div>
+                </div>
+
+                <div className="card border border-indigo-200 bg-indigo-50">
+                  <h4 className="card-header mb-2">Cuadre diario editable (por fecha)</h4>
+                  <p className="text-xs text-slate-600 mb-3">Ajusta medios pagados al empleado y abono de puesto por cada día. Al guardar, se reemplaza solo ese día.</p>
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-indigo-200">
+                      <thead className="bg-indigo-100 text-indigo-900 text-xs uppercase tracking-wide">
+                        <tr>
+                          <th className="px-3 py-2 text-left">Fecha</th>
+                          <th className="px-3 py-2 text-left">Neto día</th>
+                          <th className="px-3 py-2 text-left">Efectivo</th>
+                          <th className="px-3 py-2 text-left">Nequi</th>
+                          <th className="px-3 py-2 text-left">Daviplata</th>
+                          <th className="px-3 py-2 text-left">Otros</th>
+                          <th className="px-3 py-2 text-left">Abono puesto</th>
+                          <th className="px-3 py-2 text-left">Medio abono</th>
+                          <th className="px-3 py-2 text-left">Acción</th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white divide-y divide-indigo-100">
+                        {diasCuadre.length === 0 && (
+                          <tr>
+                            <td className="table-cell text-slate-500" colSpan={9}>No hay días en el rango para cuadrar.</td>
+                          </tr>
+                        )}
+                        {diasCuadre.map((d) => {
+                          const fechaDia = String(d.fecha || '');
+                          const key = `${estId}|${fechaDia}`;
+                          const histDia = historialDiarioPorFecha[fechaDia] || {};
+                          const filaCuadre = cuadrePorFecha[fechaDia] || {};
+                          const pagoHistorial = Math.max(Number(histDia.pago_empleado_dia || 0), 0);
+                          const pagoEfectivo = filaCuadre.pago_efectivo ?? (pagoHistorial ? String(pagoHistorial) : '');
+                          const pagoNequi = filaCuadre.pago_nequi ?? '';
+                          const pagoDaviplata = filaCuadre.pago_daviplata ?? '';
+                          const pagoOtros = filaCuadre.pago_otros ?? '';
+                          const abonoPuesto = filaCuadre.abono_puesto ?? (histDia.abono_puesto_dia ? String(Number(histDia.abono_puesto_dia || 0)) : '');
+                          const medioAbono = filaCuadre.medio_abono_puesto || histDia.medio_abono_puesto || 'efectivo';
+                          const totalPagoFila = toMontoNoNegativo(pagoEfectivo) + toMontoNoNegativo(pagoNequi) + toMontoNoNegativo(pagoDaviplata) + toMontoNoNegativo(pagoOtros);
+                          const netoDia = Math.max(Number(d.neto_dia || 0), 0);
+                          const excedido = totalPagoFila > netoDia;
+
+                          return (
+                            <tr key={`cuadre-dia-${fechaDia}`} className="align-top">
+                              <td className="table-cell font-semibold text-slate-900">{fechaDia || '-'}</td>
+                              <td className="table-cell">
+                                <p className="font-semibold text-slate-900">{formatMoney(netoDia)}</p>
+                                <p className="text-[11px] text-slate-500">Base {formatMoney(d.base_servicio)} + Com. {formatMoney(d.comision_productos)} - Puesto {formatMoney(d.descuento_espacio)}</p>
+                              </td>
+                              <td className="table-cell">
+                                <input
+                                  className="input-field !py-2 !w-24"
+                                  type="number"
+                                  min="0"
+                                  step="1"
+                                  value={pagoEfectivo}
+                                  onChange={(e) => actualizarCuadreDiaCampo(estId, fechaDia, 'pago_efectivo', e.target.value)}
+                                />
+                              </td>
+                              <td className="table-cell">
+                                <input
+                                  className="input-field !py-2 !w-24"
+                                  type="number"
+                                  min="0"
+                                  step="1"
+                                  value={pagoNequi}
+                                  onChange={(e) => actualizarCuadreDiaCampo(estId, fechaDia, 'pago_nequi', e.target.value)}
+                                />
+                              </td>
+                              <td className="table-cell">
+                                <input
+                                  className="input-field !py-2 !w-24"
+                                  type="number"
+                                  min="0"
+                                  step="1"
+                                  value={pagoDaviplata}
+                                  onChange={(e) => actualizarCuadreDiaCampo(estId, fechaDia, 'pago_daviplata', e.target.value)}
+                                />
+                              </td>
+                              <td className="table-cell">
+                                <input
+                                  className="input-field !py-2 !w-24"
+                                  type="number"
+                                  min="0"
+                                  step="1"
+                                  value={pagoOtros}
+                                  onChange={(e) => actualizarCuadreDiaCampo(estId, fechaDia, 'pago_otros', e.target.value)}
+                                />
+                              </td>
+                              <td className="table-cell">
+                                <input
+                                  className="input-field !py-2 !w-24"
+                                  type="number"
+                                  min="0"
+                                  step="1"
+                                  value={abonoPuesto}
+                                  onChange={(e) => actualizarCuadreDiaCampo(estId, fechaDia, 'abono_puesto', e.target.value)}
+                                />
+                              </td>
+                              <td className="table-cell">
+                                <select
+                                  className="input-field !py-2 !w-28"
+                                  value={medioAbono}
+                                  onChange={(e) => actualizarCuadreDiaCampo(estId, fechaDia, 'medio_abono_puesto', e.target.value)}
+                                >
+                                  {MEDIOS_PAGO_OPERACION.map((m) => (
+                                    <option key={`${fechaDia}-${m.value}`} value={m.value}>{m.label}</option>
+                                  ))}
+                                </select>
+                              </td>
+                              <td className="table-cell">
+                                <div className="space-y-1">
+                                  <button
+                                    type="button"
+                                    className="btn-primary !py-2 !px-3"
+                                    onClick={() => guardarCuadreDiario({ estilistaId: estId, fecha: fechaDia, netoDia })}
+                                    disabled={!!savingCuadreDiaByKey[key] || !fechaDia}
+                                  >
+                                    {savingCuadreDiaByKey[key] ? 'Guardando...' : 'Guardar día'}
+                                  </button>
+                                  <p className={`text-[11px] ${excedido ? 'text-rose-700' : 'text-slate-500'}`}>
+                                    Pagado: {formatMoney(totalPagoFila)}
+                                  </p>
+                                  {excedido && <p className="text-[11px] text-rose-700">Supera el neto del día</p>}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
 

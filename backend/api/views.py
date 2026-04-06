@@ -2669,6 +2669,46 @@ def editar_abono_consumo_empleado(request, abono_id):
 def estado_pago_estilista_dia(request):
     if request.method == 'GET':
         fecha_raw = (request.query_params.get('fecha') or timezone.localdate().strftime('%Y-%m-%d')).strip()
+        fecha_inicio_raw = (request.query_params.get('fecha_inicio') or '').strip()
+        fecha_fin_raw = (request.query_params.get('fecha_fin') or '').strip()
+        estilista_id_raw = (request.query_params.get('estilista_id') or '').strip()
+
+        # Modo rango: útil para cuadro de cuadre diario por fechas.
+        if fecha_inicio_raw and fecha_fin_raw:
+            try:
+                fecha_inicio = datetime.strptime(fecha_inicio_raw, '%Y-%m-%d').date()
+                fecha_fin = datetime.strptime(fecha_fin_raw, '%Y-%m-%d').date()
+            except Exception:
+                return Response({'error': 'Formato de fecha inválido. Usa YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            if fecha_inicio > fecha_fin:
+                return Response({'error': 'fecha_inicio no puede ser mayor que fecha_fin.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            qs = EstadoPagoEstilistaDia.objects.filter(fecha__gte=fecha_inicio, fecha__lte=fecha_fin)
+            if estilista_id_raw:
+                try:
+                    qs = qs.filter(estilista_id=int(estilista_id_raw))
+                except Exception:
+                    return Response({'error': 'estilista_id inválido.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            items = [
+                {
+                    'estilista_id': x.estilista_id,
+                    'fecha': x.fecha.strftime('%Y-%m-%d'),
+                    'estado': x.estado,
+                    'pago_efectivo': float(x.pago_efectivo or 0),
+                    'pago_nequi': float(x.pago_nequi or 0),
+                    'pago_daviplata': float(x.pago_daviplata or 0),
+                    'pago_otros': float(x.pago_otros or 0),
+                    'abono_puesto': float(x.abono_puesto or 0),
+                    'medio_abono_puesto': getattr(x, 'medio_abono_puesto', 'efectivo') or 'efectivo',
+                    'notas': x.notas,
+                }
+                for x in qs.order_by('fecha', 'estilista_id')
+            ]
+
+            return Response({'fecha_inicio': fecha_inicio.strftime('%Y-%m-%d'), 'fecha_fin': fecha_fin.strftime('%Y-%m-%d'), 'items': items})
+
         try:
             fecha = datetime.strptime(fecha_raw, '%Y-%m-%d').date()
         except Exception:
