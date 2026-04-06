@@ -704,7 +704,8 @@ const Reportes = () => {
     if (!empleado) return;
 
     const sugeridoPuesto = Math.max(Number(empleado.deuda_total_acumulada || 0), 0);
-    const sugeridoConsumo = Math.max(Number(resumenPorEstilistaLiquidacion[estId]?.saldo_pendiente || 0), 0);
+    const resumenEstilista = (carteraDataLiquidacionGlobal?.resumen || []).find((x) => Number(x.estilista_id) === estId);
+    const sugeridoConsumo = Math.max(Number(resumenEstilista?.saldo_pendiente || 0), 0);
 
     setAbonoPuestoPorEstilista((prev) => {
       const actual = String(prev?.[estId] ?? '').trim();
@@ -729,7 +730,7 @@ const Reportes = () => {
     pasoLiquidacion,
     estilistaActivoLiquidacion,
     biData,
-    resumenPorEstilistaLiquidacion,
+    carteraDataLiquidacionGlobal,
   ]);
 
   const aplicarRangoRapido = (tipo) => {
