@@ -1233,21 +1233,33 @@ const aplicarEstadoLiquidacion = async (fila) => {
                   </div>
 
                   <div className="card border border-sky-200 bg-sky-50">
-                    <h4 className="card-header mb-2">Historial diario de liquidación (por fecha)</h4>
+                    <h4 className="card-header mb-2">Historico de deuda de puesto (por dia)</h4>
                     <div className="space-y-2 max-h-[280px] overflow-y-auto pr-1">
                       {historialDiarioLiquidacion.length === 0 && <p className="text-sm text-slate-500">Sin movimientos registrados.</p>}
-                      {historialDiarioLiquidacion.map((h) => (
-                        <div key={`hist-dia-${h.fecha}`} className="rounded-xl border border-sky-200 bg-white p-3">
-                          <div className="flex justify-between gap-2">
-                            <p className="text-sm font-semibold text-slate-900">{h.fecha || '-'}</p>
-                            <p className="text-sm font-bold text-emerald-700">Pago empleado: {formatMoney(h.pago_empleado_dia)}</p>
+                      {historialDiarioLiquidacion.map((h) => {
+                        const cobroPuestoDia = Math.max(Number(h.descuento_dia || 0), 0);
+                        const abonadoPuestoDia = Math.max(Number(h.abono_aplicado_dia || 0), 0);
+                        const pendientePuestoDia = Math.max(cobroPuestoDia - abonadoPuestoDia, 0);
+                        const saldoPuestoCierre = Math.max(Number(h.saldo_puesto_cierre || 0), 0);
+                        const estadoPuesto = saldoPuestoCierre > 0 ? 'Debe' : 'Liquidado';
+
+                        return (
+                          <div key={`hist-dia-${h.fecha}`} className="rounded-xl border border-sky-200 bg-white p-3">
+                            <div className="flex justify-between gap-2 items-center">
+                              <p className="text-sm font-semibold text-slate-900">{h.fecha || '-'}</p>
+                              <span className={`text-xs font-semibold px-2 py-1 rounded-full border ${estadoPuesto === 'Debe' ? 'bg-rose-100 text-rose-700 border-rose-200' : 'bg-emerald-100 text-emerald-700 border-emerald-200'}`}>
+                                {estadoPuesto}
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-500">{h.fecha_cambio || '-'}</p>
+                            <p className="text-xs text-slate-700 mt-1">Cobro puesto del día: {formatMoney(cobroPuestoDia)}</p>
+                            <p className="text-xs text-sky-700">Cancelado de puesto: {formatMoney(abonadoPuestoDia)}</p>
+                            <p className="text-xs text-rose-700">Quedó debiendo del día: {formatMoney(pendientePuestoDia)}</p>
+                            <p className="text-xs text-amber-700">Saldo acumulado pendiente: {formatMoney(saldoPuestoCierre)}</p>
+                            <p className="text-xs text-slate-500">Usuario: {h.usuario_nombre || 'Sistema'}</p>
                           </div>
-                          <p className="text-xs text-slate-500">{h.fecha_cambio || '-'}</p>
-                          <p className="text-xs text-sky-700 mt-1">Abono puesto aplicado al día: {formatMoney(h.abono_aplicado_dia)}</p>
-                          <p className="text-xs text-amber-700">Saldo puesto al cierre del día: {formatMoney(h.saldo_puesto_cierre)}</p>
-                          <p className="text-xs text-slate-500">Usuario: {h.usuario_nombre || 'Sistema'}</p>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 </div>
