@@ -14,6 +14,7 @@ const MODULOS = [
   { key: 'cartera', label: '4. Cartera Empleado' },
   { key: 'agotarse', label: '5. Productos Agotarse' },
 ];
+const REPORTES_UI_VERSION = '2026-04-05 v3';
 
 const MEDIOS_PAGO = [
   { value: 'todos', label: 'Todos los medios' },
@@ -269,7 +270,7 @@ const Reportes = () => {
 
   const modulosVisibles = useMemo(() => {
     if (!esRecepcion) return MODULOS;
-    return MODULOS.filter((mod) => mod.key === 'cierre' || mod.key === 'liquidacion');
+    return MODULOS.filter((mod) => mod.key === 'cierre' || mod.key === 'liquidacion' || mod.key === 'ajuste');
   }, [esRecepcion]);
 
   useEffect(() => {
@@ -2218,6 +2219,12 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
 
   const renderModuloAjusteDiario = () => (
     <div className="space-y-6">
+      {esRecepcion && (
+        <div className="card border border-amber-200 bg-amber-50">
+          <h3 className="card-header">Ajuste Diario Unificado</h3>
+          <p className="text-sm text-slate-700">Este módulo está visible para consulta, pero la edición requiere rol administrador o gerente.</p>
+        </div>
+      )}
       <section className="rounded-3xl bg-gradient-to-br from-emerald-900 via-teal-800 to-slate-900 p-6 text-white shadow-2xl">
         <h2 className="text-2xl font-black tracking-tight">Ajuste Diario Unificado</h2>
         <p className="mt-2 text-sm text-emerald-100">
@@ -2366,6 +2373,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
       <section className="rounded-[28px] bg-[radial-gradient(circle_at_top_left,_rgba(59,130,246,0.18),_transparent_34%),linear-gradient(135deg,#0f172a_0%,#111827_35%,#1f2937_100%)] p-6 text-white shadow-2xl">
         <h1 className="text-3xl font-black tracking-tight">Reportes</h1>
         <p className="text-slate-300 mt-2">Panel unificado para cierre, liquidación, cartera y ajustes diarios en una sola experiencia.</p>
+        <span className="inline-flex mt-3 rounded-full bg-white/15 border border-white/30 px-3 py-1 text-xs font-semibold tracking-wide">UI {REPORTES_UI_VERSION}</span>
       </section>
 
       <div className="card">
