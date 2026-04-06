@@ -1414,11 +1414,15 @@ def _calcular_datos_bi(request):
 
     abonos_consumo_lista = []
     for ab in abonos_consumo_qs:
-        fecha_operativa_ab = _fecha_operativa_desde_dt(ab.fecha_hora)
-        if not fecha_operativa_ab:
+        try:
+            fecha_operativa_ab = _fecha_operativa_desde_dt(ab.fecha_hora)
+            if not fecha_operativa_ab:
+                continue
+            if fecha_inicio_dt <= fecha_operativa_ab <= fecha_fin_dt:
+                abonos_consumo_lista.append(ab)
+        except Exception:
+            # Evita tumbar cierre por un registro inconsistente aislado.
             continue
-        if fecha_inicio_dt <= fecha_operativa_ab <= fecha_fin_dt:
-            abonos_consumo_lista.append(ab)
 
     ingresos_abonos_consumo = Decimal(abonos_consumo_qs.aggregate(total=Sum('monto'))['total'] or 0)
     deuda_consumo_empleado_total = Decimal(
@@ -4232,49 +4236,53 @@ def reporte_cierre_caja(request):
     # Consumo empleado: en cierre de caja se reconoce por fecha de ABONO,
     # no por fecha de creación de la factura de consumo.
     for ab in sorted(abonos_consumo_lista, key=lambda x: (x.fecha_hora or datetime.min, x.id or 0), reverse=True):
-        deuda = getattr(ab, 'deuda', None)
-        if not deuda:
+        try:
+            deuda = getattr(ab, 'deuda', None)
+            if not deuda:
+                continue
+
+            valor_venta = Decimal(ab.monto or 0)
+            if valor_venta <= 0:
+                continue
+
+            total_credito_deuda = Decimal(deuda.total_cargo or 0)
+            costo_total_deuda = Decimal(0)
+            for item in deuda.ventas_items.select_related('producto').filter(tipo_operacion='consumo_empleado'):
+                costo_total_deuda += Decimal(item.producto.precio_compra or 0) * Decimal(item.cantidad or 0)
+
+            factor_pago = (valor_venta / total_credito_deuda) if total_credito_deuda > 0 else Decimal(0)
+            if factor_pago < 0:
+                factor_pago = Decimal(0)
+            if factor_pago > 1:
+                factor_pago = Decimal(1)
+
+            valor_compra = costo_total_deuda * factor_pago
+            ganancia = valor_venta - valor_compra
+
+            ventas_productos_total += valor_venta
+            costo_productos_total += valor_compra
+            consumo_empleado_abonado_total += valor_venta
+
+            detalle_productos.append(
+                {
+                    'fecha_hora': timezone.localtime(ab.fecha_hora).strftime('%Y-%m-%d %H:%M:%S') if ab.fecha_hora else None,
+                    'fecha': _fecha_operativa_desde_dt(ab.fecha_hora).strftime('%Y-%m-%d') if ab.fecha_hora else None,
+                    'origen': 'consumo_empleado_abono',
+                    'numero_factura': deuda.numero_factura,
+                    'medio_pago': ab.medio_pago,
+                    'estilista_nombre': deuda.estilista.nombre if deuda.estilista_id else '',
+                    'descripcion': f"Abono consumo empleado ({deuda.numero_factura or deuda.id})",
+                    'cantidad': 1,
+                    'valor_venta': float(valor_venta),
+                    'valor_compra': float(valor_compra),
+                    'con_comision_empleado': False,
+                    'comision_empleado': 0.0,
+                    'ganancia_neta': float(ganancia),
+                }
+            )
+        except Exception:
+            # Evita error 500 por una deuda/abono inconsistente.
             continue
-
-        valor_venta = Decimal(ab.monto or 0)
-        if valor_venta <= 0:
-            continue
-
-        total_credito_deuda = Decimal(deuda.total_cargo or 0)
-        costo_total_deuda = Decimal(0)
-        for item in deuda.ventas_items.select_related('producto').filter(tipo_operacion='consumo_empleado'):
-            costo_total_deuda += Decimal(item.producto.precio_compra or 0) * Decimal(item.cantidad or 0)
-
-        factor_pago = (valor_venta / total_credito_deuda) if total_credito_deuda > 0 else Decimal(0)
-        if factor_pago < 0:
-            factor_pago = Decimal(0)
-        if factor_pago > 1:
-            factor_pago = Decimal(1)
-
-        valor_compra = costo_total_deuda * factor_pago
-        ganancia = valor_venta - valor_compra
-
-        ventas_productos_total += valor_venta
-        costo_productos_total += valor_compra
-        consumo_empleado_abonado_total += valor_venta
-
-        detalle_productos.append(
-            {
-                'fecha_hora': timezone.localtime(ab.fecha_hora).strftime('%Y-%m-%d %H:%M:%S') if ab.fecha_hora else None,
-                'fecha': _fecha_operativa_desde_dt(ab.fecha_hora).strftime('%Y-%m-%d') if ab.fecha_hora else None,
-                'origen': 'consumo_empleado_abono',
-                'numero_factura': deuda.numero_factura,
-                'medio_pago': ab.medio_pago,
-                'estilista_nombre': deuda.estilista.nombre if deuda.estilista_id else '',
-                'descripcion': f"Abono consumo empleado ({deuda.numero_factura or deuda.id})",
-                'cantidad': 1,
-                'valor_venta': float(valor_venta),
-                'valor_compra': float(valor_compra),
-                'con_comision_empleado': False,
-                'comision_empleado': 0.0,
-                'ganancia_neta': float(ganancia),
-            }
-        )
 
     for srv in servicios_qs.order_by('-fecha_hora'):
         if not srv.adicional_otro_producto_id:
