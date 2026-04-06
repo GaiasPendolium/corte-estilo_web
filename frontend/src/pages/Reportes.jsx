@@ -1843,19 +1843,36 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
             const deudasEmpleado = (carteraDataLiquidacionGlobal?.deudas || []).filter((d) => Number(d.estilista_id) === estId && Number(d.saldo_pendiente || 0) > 0);
             const deudasConsumoSeleccionadas = deudaConsumoSeleccionadasPorEstilista[estId] || [];
             const cuadrePorFecha = cuadreDiarioByEstilista[estId] || {};
+            const fechaOperacionSimple = String(fechaFin || '');
+            const diaSeleccionadoSimple = (desgloseLiquidacion?.desglose_por_dia || []).find(
+              (d) => String(d.fecha || '') === fechaOperacionSimple
+            );
+            const generadoEmpleadoSimple = diaSeleccionadoSimple
+              ? Math.max(Number(diaSeleccionadoSimple.neto_dia || 0), 0)
+              : generadoEmpleado;
+            const pagoRegistradoDiaSimple = diaSeleccionadoSimple ? Math.max(totalPagoMedios(estId), 0) : 0;
+            const pendientePagoEmpleadoSimple = diaSeleccionadoSimple
+              ? Math.max(generadoEmpleadoSimple - pagoRegistradoDiaSimple, 0)
+              : pendientePagoEmpleado;
             const descuentoPuestoAplicado = Math.min(abonoPuestoDigitado, Math.max(deudaPuestoAcumulada, 0));
             const descuentoConsumoAplicado = cobroConsumoAplicado;
             const totalDescuentosSimple = descuentoConsumoAplicado;
-            const totalPagarFinalSimple = Math.max(pendientePagoEmpleado - descuentoConsumoAplicado, 0);
+            const totalPagarFinalSimple = Math.max(pendientePagoEmpleadoSimple - descuentoConsumoAplicado, 0);
 
             if (vistaSimpleLiquidacion) {
               return (
                 <>
+                  {String(fechaInicio || '') !== String(fechaFin || '') && (
+                    <div className="card border border-amber-300 bg-amber-50 text-amber-900">
+                      Esta vista liquida un solo día. Para evitar diferencias, usa la misma fecha en inicio y fin.
+                    </div>
+                  )}
                   <div className="card border border-slate-200 bg-white">
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                       <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4">
                         <p className="text-xs uppercase tracking-wide text-sky-700 font-semibold">Total generado</p>
-                        <p className="text-2xl font-black text-sky-900 mt-1">{formatMoney(generadoEmpleado)}</p>
+                        <p className="text-2xl font-black text-sky-900 mt-1">{formatMoney(generadoEmpleadoSimple)}</p>
+                        <p className="text-[11px] text-sky-700 mt-1">Fecha operativa: {fechaOperacionSimple || '-'}</p>
                       </div>
                       <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4">
                         <p className="text-xs uppercase tracking-wide text-rose-700 font-semibold">Total descuentos</p>
@@ -1935,9 +1952,9 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                         </div>
                         <div className="rounded-xl border border-sky-200 bg-sky-50 p-3">
                           <p className="text-xs text-slate-600">Generado por servicios + comisiones</p>
-                          <p className="text-3xl font-black text-sky-900 mt-1">{formatMoney(generadoEmpleado)}</p>
+                          <p className="text-3xl font-black text-sky-900 mt-1">{formatMoney(generadoEmpleadoSimple)}</p>
                           <p className="text-xs text-slate-600 mt-2">Pendiente por pagar al empleado</p>
-                          <p className="text-xl font-black text-emerald-700">{formatMoney(pendientePagoEmpleado)}</p>
+                          <p className="text-xl font-black text-emerald-700">{formatMoney(pendientePagoEmpleadoSimple)}</p>
                         </div>
                       </div>
                       <div className="mt-3 flex gap-2">
@@ -2034,7 +2051,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                       <h4 className="card-header mb-2">Paso 4: Total final a pagar</h4>
                       <div className="rounded-2xl border border-emerald-300 bg-white p-4">
                         <p className="text-sm text-slate-700">Pendiente por pagar</p>
-                        <p className="text-lg font-bold text-slate-900">{formatMoney(pendientePagoEmpleado)}</p>
+                        <p className="text-lg font-bold text-slate-900">{formatMoney(pendientePagoEmpleadoSimple)}</p>
                         <p className="text-sm text-rose-700 mt-2">(-) Descuentos: {formatMoney(totalDescuentosSimple)}</p>
                         <p className="text-xs text-slate-500">Consumo {formatMoney(descuentoConsumoAplicado)}. Puesto registrado: {formatMoney(descuentoPuestoAplicado)} (ya incluido en pendiente).</p>
                         <p className="text-4xl font-black text-emerald-800 mt-3">{formatMoney(totalPagarFinalSimple)}</p>
@@ -2045,7 +2062,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                           className="btn-primary"
                           onClick={() => aplicarLiquidacionSimple({
                             fila: empleado,
-                            pendientePagoEmpleado,
+                            pendientePagoEmpleado: pendientePagoEmpleadoSimple,
                             abonoPuestoAplicado: descuentoPuestoAplicado,
                             cobroConsumoAplicado: descuentoConsumoAplicado,
                             deudasConsumoSeleccionadas,
