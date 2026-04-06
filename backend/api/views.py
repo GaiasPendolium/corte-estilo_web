@@ -5129,21 +5129,70 @@ def reporte_cierre_caja(request):
 
     suma_componentes = ingresos_servicios_tarjeta + ingresos_productos_tarjeta + ingresos_espacios_tarjeta
     liquidacion_empleados_resumen = Decimal(str(kpis.get('pago_total_estilistas', 0) or 0))
+    salidas_por_medio_ajuste = {
+        'efectivo': Decimal(0),
+        'nequi': Decimal(0),
+        'daviplata': Decimal(0),
+        'otros': Decimal(0),
+    }
+    ajuste_items = []
     try:
         ajuste_resp = reporte_ajuste_diario_unificado(request)
         ajuste_items = (getattr(ajuste_resp, 'data', {}) or {}).get('items', []) or []
         if ajuste_items:
-            liquidacion_empleados_resumen = sum(
-                (Decimal(str(item.get('pagado_total', 0) or 0)) for item in ajuste_items),
-                Decimal(0),
-            )
+            for item in ajuste_items:
+                salidas_por_medio_ajuste['efectivo'] += Decimal(str(item.get('pago_efectivo', 0) or 0))
+                salidas_por_medio_ajuste['nequi'] += Decimal(str(item.get('pago_nequi', 0) or 0))
+                salidas_por_medio_ajuste['daviplata'] += Decimal(str(item.get('pago_daviplata', 0) or 0))
+                salidas_por_medio_ajuste['otros'] += Decimal(str(item.get('pago_otros', 0) or 0))
+
+            if medio_pago and medio_pago != 'todos' and medio_pago in salidas_por_medio_ajuste:
+                liquidacion_empleados_resumen = salidas_por_medio_ajuste.get(medio_pago, Decimal(0))
+            else:
+                liquidacion_empleados_resumen = sum(salidas_por_medio_ajuste.values(), Decimal(0))
     except Exception:
         pass
     if liquidacion_empleados_resumen < 0:
         liquidacion_empleados_resumen = Decimal(0)
     ganancia_total = total_ingresos - liquidacion_empleados_resumen
 
-    detalle_medios_serializado = data_bi.get('cierre_medios', {}).get('detalle', []) or []
+    detalle_medios_bi = data_bi.get('cierre_medios', {}).get('detalle', []) or []
+    medios_orden = ['efectivo', 'nequi', 'daviplata', 'otros']
+    ingresos_por_medio = {m: Decimal(0) for m in medios_orden}
+    salidas_por_medio_bi = {m: Decimal(0) for m in medios_orden}
+
+    for item in detalle_medios_bi:
+        medio_item = str(item.get('medio_pago') or 'otros').strip().lower()
+        if medio_item not in ingresos_por_medio:
+            medio_item = 'otros'
+        ingresos_por_medio[medio_item] += Decimal(str(item.get('ingresos', 0) or 0))
+        salidas_por_medio_bi[medio_item] += Decimal(str(item.get('salidas', 0) or 0))
+
+    salidas_final_por_medio = salidas_por_medio_ajuste if ajuste_items else salidas_por_medio_bi
+
+    # Si se solicita un medio específico, el detalle conserva el formato completo
+    # pero con valores solo para ese medio para evitar descuadres visuales.
+    if medio_pago and medio_pago != 'todos' and medio_pago in ingresos_por_medio:
+        for m in medios_orden:
+            if m != medio_pago:
+                ingresos_por_medio[m] = Decimal(0)
+                salidas_final_por_medio[m] = Decimal(0)
+
+    detalle_medios_serializado = []
+    for m in medios_orden:
+        ingreso_m = ingresos_por_medio.get(m, Decimal(0))
+        salida_m = salidas_final_por_medio.get(m, Decimal(0))
+        detalle_medios_serializado.append(
+            {
+                'medio_pago': m,
+                'ingresos': float(ingreso_m),
+                'salidas': float(salida_m),
+                'saldo': float(ingreso_m - salida_m),
+            }
+        )
+
+    total_ingresos_medios = sum(ingresos_por_medio.values(), Decimal(0))
+    total_salidas_medios = sum(salidas_final_por_medio.values(), Decimal(0))
 
     return Response(
         {
@@ -5163,9 +5212,9 @@ def reporte_cierre_caja(request):
             'medios': {
                 'detalle': detalle_medios_serializado,
                 'totales': {
-                    'ingresos': float(total_ingresos),
-                    'salidas': float(liquidacion_empleados_resumen),
-                    'saldo': float(total_ingresos - liquidacion_empleados_resumen),
+                    'ingresos': float(total_ingresos_medios),
+                    'salidas': float(total_salidas_medios),
+                    'saldo': float(total_ingresos_medios - total_salidas_medios),
                 },
             },
             'productos': {
