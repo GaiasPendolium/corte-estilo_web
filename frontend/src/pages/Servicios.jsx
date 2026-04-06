@@ -943,7 +943,8 @@ const Servicios = () => {
       return;
     }
     setProductoVentaSeleccionado(producto);
-    setVentaBusqueda(formatProductSearchLabel(producto));
+    // En caja dejamos el buscador limpio para escaneos consecutivos.
+    setVentaBusqueda('');
     setVentaSugerencias([]);
     setVentaForm((prev) => ({ ...prev, precio_unitario: String(toPesoInt(producto.precio_venta || 0)) }));
   };
@@ -1169,7 +1170,18 @@ const Servicios = () => {
                 inputMode="search"
                 enterKeyHint="search"
                 value={ventaBusqueda}
-                onChange={(e) => setVentaBusqueda(e.target.value)}
+                onChange={(e) => {
+                  const valor = e.target.value;
+                  setVentaBusqueda(valor);
+
+                  const codigo = String(valor || '').trim();
+                  if (!codigo) return;
+
+                  const exacto = productos.find((p) => String(p.codigo_barras || '').trim() === codigo);
+                  if (exacto) {
+                    seleccionarProductoCaja(exacto);
+                  }
+                }}
               />
               <div className="mt-2 flex justify-end">
                 <button
