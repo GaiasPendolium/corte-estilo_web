@@ -1007,6 +1007,10 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
             <p className="text-2xl font-bold text-slate-900 mt-1">{formatMoney(productos.ingresos_venta)}</p>
           </div>
           <div className="rounded-xl border border-emerald-200 bg-white p-4">
+            <p className="text-sm text-slate-500">Abonos consumo empleado (día)</p>
+            <p className="text-2xl font-bold text-indigo-700 mt-1">{formatMoney(productos.total_abonos_consumo_dia || 0)}</p>
+          </div>
+          <div className="rounded-xl border border-emerald-200 bg-white p-4">
             <p className="text-sm text-slate-500">Valor de compra</p>
             <p className="text-2xl font-bold text-slate-900 mt-1">{formatMoney(productos.valor_compra)}</p>
           </div>
@@ -1042,6 +1046,8 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                   <td className="table-cell">
                     {item.origen === 'adicional_producto_servicio'
                       ? 'Servicio adicional producto'
+                      : item.origen === 'consumo_empleado_abono'
+                        ? 'Abono consumo empleado'
                       : item.origen === 'consumo_empleado'
                         ? 'Consumo empleado'
                         : 'Venta producto'}

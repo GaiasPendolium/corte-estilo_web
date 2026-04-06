@@ -4524,6 +4524,7 @@ def reporte_cierre_caja(request):
             'productos': {
                 'ingresos_venta': float(ventas_productos_total),
                 'ingresos_venta_neto_comision': float(max(ventas_productos_total - comision_productos_total, Decimal(0))),
+                'total_abonos_consumo_dia': float(consumo_empleado_abonado_total),
                 'valor_compra': float(costo_productos_total),
                 'comision_empleado_total': float(comision_productos_total),
                 'ganancia_neta': float(ventas_productos_total - costo_productos_total - comision_productos_total),
