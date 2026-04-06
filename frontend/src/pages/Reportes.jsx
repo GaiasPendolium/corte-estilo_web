@@ -133,6 +133,14 @@ const Reportes = () => {
   const [historialEstados, setHistorialEstados] = useState([]);
   const [loadingHistorial, setLoadingHistorial] = useState(false);
 
+  const calcularPendientePagoConPuesto = useCallback((fila) => {
+    const valorTotalEmpleado = Number((fila?.valor_total_empleado ?? fila?.facturacion_servicios ?? fila?.ganancias_servicios) || 0);
+    const comisionesEmpleado = Number(fila?.comision_ventas_producto || 0);
+    const generado = valorTotalEmpleado + comisionesEmpleado;
+    const deudaPuestoAcumulada = Number(fila?.deuda_total_acumulada || 0);
+    return Math.max(generado - deudaPuestoAcumulada, 0);
+  }, []);
+
   const modulosVisibles = useMemo(() => {
     if (!esRecepcion) return MODULOS;
     return MODULOS.filter((mod) => mod.key === 'cierre' || mod.key === 'liquidacion');
@@ -625,9 +633,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
     .map((x) => Number(x))
     .filter((x) => Number.isFinite(x) && x > 0);
   const medioCobroConsumo = medioCobroConsumoPorEstilista[estilistaId] || 'efectivo';
-  const valorTotalEmpleado = Number((fila.valor_total_empleado ?? fila.facturacion_servicios ?? fila.ganancias_servicios) || 0);
-  const comisionesEmpleado = Number(fila.comision_ventas_producto || 0);
-  const topePagoEmpleado = Math.max(Number(fila.pago_neto_pendiente ?? (valorTotalEmpleado + comisionesEmpleado)), 0);
+  const topePagoEmpleado = calcularPendientePagoConPuesto(fila);
 
   if (pago_efectivo + pago_nequi + pago_daviplata + pago_otros > topePagoEmpleado) {
     toast.warning(`El pago al empleado no puede superar ${formatMoney(topePagoEmpleado)} para el día ${fechaLiquidacion}.`);
@@ -981,7 +987,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
             {(biData?.estilistas || []).map((item) => {
               const estId = Number(item.estilista_id);
               const activo = estId === Number(estilistaActivoLiquidacion);
-              const totalPendiente = Math.max(Number(item.pago_neto_pendiente || 0), 0);
+              const totalPendiente = calcularPendientePagoConPuesto(item);
               const consumoPendiente = Number(resumenPorEstilistaLiquidacion[estId]?.saldo_pendiente || 0);
               const deudaPuesto = Number(item.deuda_total_acumulada || 0);
               return (
@@ -1014,7 +1020,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
             const valorTotalEmpleado = Number((empleado.valor_total_empleado ?? empleado.facturacion_servicios ?? empleado.ganancias_servicios) || 0);
             const comisionesEmpleado = Number(empleado.comision_ventas_producto || 0);
             const generadoEmpleado = valorTotalEmpleado + comisionesEmpleado;
-            const pendientePagoEmpleado = Math.max(Number(desgloseLiquidacion?.resumen?.pago_neto_pendiente ?? empleado.pago_neto_pendiente ?? generadoEmpleado), 0);
+            const pendientePagoEmpleado = calcularPendientePagoConPuesto(empleado);
             const consumoPendiente = Number(resumenPorEstilistaLiquidacion[estId]?.saldo_pendiente || 0);
             const cobroConsumoDigitado = Number(cobroConsumoPorEstilista[estId] || 0);
             const cobroConsumoAplicado = Math.min(Math.max(cobroConsumoDigitado, 0), Math.max(consumoPendiente, 0));
@@ -1116,7 +1122,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
                     <div className="rounded-xl border border-white bg-white p-3">
                       <p className="text-xs text-slate-500">Pendiente por pagar</p>
                       <p className="text-xl font-black text-emerald-700 mt-1">{formatMoney(pendientePagoEmpleado)}</p>
-                      <p className="text-[11px] text-slate-500 mt-1">Valor base antes de deducciones de consumo y abono a puesto.</p>
+                      <p className="text-[11px] text-slate-500 mt-1">Generado empleado menos deuda de puesto acumulada.</p>
                     </div>
                     <div className="rounded-xl border border-white bg-white p-3">
                       <p className="text-xs text-slate-500">Consumo pendiente</p>
