@@ -5142,20 +5142,19 @@ def reporte_cierre_caja(request):
             }
         )
 
-    medios_existentes = {str(it.get('medio_pago') or '').strip().lower() for it in detalle_medios}
-    if 'otros' not in medios_existentes:
-        detalle_medios.append({'medio_pago': 'otros', 'ingresos': Decimal(0), 'salidas': Decimal(0)})
-
     suma_ingresos_detalle = sum((it['ingresos'] for it in detalle_medios), Decimal(0))
     suma_salidas_detalle = sum((it['salidas'] for it in detalle_medios), Decimal(0))
     ajuste_ingresos = total_ingresos - suma_ingresos_detalle
     ajuste_salidas = liquidacion_empleados_resumen - suma_salidas_detalle
 
-    for it in detalle_medios:
-        if str(it.get('medio_pago') or '').strip().lower() == 'otros':
-            it['ingresos'] = it['ingresos'] + ajuste_ingresos
-            it['salidas'] = it['salidas'] + ajuste_salidas
-            break
+    if ajuste_ingresos != 0 or ajuste_salidas != 0:
+        detalle_medios.append(
+            {
+                'medio_pago': 'ajuste_cuadre',
+                'ingresos': ajuste_ingresos,
+                'salidas': ajuste_salidas,
+            }
+        )
 
     detalle_medios_serializado = [
         {
