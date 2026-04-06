@@ -5116,8 +5116,8 @@ def reporte_cierre_caja(request):
 
     medios_totales = data_bi.get('cierre_medios', {}).get('totales', {})
 
-    # Ganancia Total = servicios establecimiento + productos + espacios.
-    liquidacion_empleados = Decimal(str(medios_totales.get('salidas', 0) or 0))
+    # Pagado real por medios (se mantiene para la pestaña de medios).
+    liquidacion_empleados_medios = Decimal(str(medios_totales.get('salidas', 0) or 0))
     medios_totales_ingresos = Decimal(str(medios_totales.get('ingresos', 0) or 0))
     medios_totales_salidas = Decimal(str(medios_totales.get('salidas', 0) or 0))
 
@@ -5132,6 +5132,10 @@ def reporte_cierre_caja(request):
     suma_componentes = ingresos_servicios_tarjeta + ingresos_productos_tarjeta + ingresos_espacios_tarjeta
     ganancia_total = suma_componentes
 
+    # En el resumen principal se fuerza coherencia contable entre tarjetas:
+    # Ganancia neta = Total ingresos - Pagado a empleados.
+    liquidacion_empleados_resumen = max(total_ingresos - ganancia_total, Decimal(0))
+
     return Response(
         {
             'fecha_inicio': fecha_inicio,
@@ -5139,7 +5143,7 @@ def reporte_cierre_caja(request):
             'medio_pago': medio_pago or 'todos',
             'resumen': {
                 'total_ingresos': float(total_ingresos),
-                'liquidacion_empleados': float(liquidacion_empleados),
+                'liquidacion_empleados': float(liquidacion_empleados_resumen),
                 'ganancia_total': float(ganancia_total),
                 'ingresos_servicios_establecimiento': float(ingresos_servicios_tarjeta),
                 'ingresos_productos_utilidad': float(ingresos_productos_tarjeta),
