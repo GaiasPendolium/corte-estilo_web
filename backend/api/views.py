@@ -2322,7 +2322,7 @@ def reporte_consumo_empleado(request):
 
     qs = DeudaConsumoEmpleado.objects.select_related('estilista').filter(
         Q(fecha_hora__date__gte=fecha_inicio, fecha_hora__date__lte=fecha_fin)
-        | Q(abonos__fecha_hora__date__gte=fecha_inicio, abonos__fecha_hora__date__lte=fecha_fin)
+        | Q(abonos__isnull=False)
     ).distinct()
 
     if estilista_id:
@@ -2334,27 +2334,25 @@ def reporte_consumo_empleado(request):
 
     qs = DeudaConsumoEmpleado.objects.select_related('estilista').filter(
         Q(fecha_hora__date__gte=fecha_inicio, fecha_hora__date__lte=fecha_fin)
-        | Q(abonos__fecha_hora__date__gte=fecha_inicio, abonos__fecha_hora__date__lte=fecha_fin)
+        | Q(abonos__isnull=False)
     ).distinct()
     if estilista_id:
         qs = qs.filter(estilista_id=int(estilista_id))
 
-    deuda_ids_con_abono_en_rango = set(
+    deuda_ids_con_abono = set(
         AbonoDeudaEmpleado.objects.filter(
-            fecha_hora__date__gte=fecha_inicio,
-            fecha_hora__date__lte=fecha_fin,
             deuda_id__in=[int(d.id) for d in qs],
         ).values_list('deuda_id', flat=True)
     )
 
-    # Cartera principal: mantener pendientes y también facturas con abonos en rango
+    # Cartera principal: mantener pendientes y también facturas con abonos
     # para que el usuario vea inmediatamente los pagos registrados en liquidación.
     qs_pendientes = []
     for deuda in qs:
         saldo = Decimal(deuda.saldo_pendiente or 0)
-        tiene_abono_rango = int(deuda.id) in deuda_ids_con_abono_en_rango
+        tiene_abono = int(deuda.id) in deuda_ids_con_abono
 
-        if saldo <= Decimal('0.5') and not tiene_abono_rango:
+        if saldo <= Decimal('0.5') and not tiene_abono:
             continue
         if not deuda.ventas_items.filter(tipo_operacion='consumo_empleado').exists():
             continue
