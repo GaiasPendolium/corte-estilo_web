@@ -3634,6 +3634,7 @@ def bi_desglose_estilista_debug(request):
         estado_dia = estados_pago_map.get((estilista.id, dia), 'pendiente')
         
         pago_neto_periodo += neto_dia
+        liquidado_empleado = estado_dia in {'cancelado', 'debe'}
         dias_desglose.append({
             'fecha': dia.strftime('%Y-%m-%d'),
             'base_servicio': float(base_servicio_dia),
@@ -3641,10 +3642,10 @@ def bi_desglose_estilista_debug(request):
             'comision_productos': float(comision_dia),
             'neto_dia': float(neto_dia),
             'estado': estado_dia,
-            'incluido_en': 'cancelado' if estado_dia == 'cancelado' else 'pendiente',
+            'incluido_en': 'cancelado' if liquidado_empleado else 'pendiente',
         })
         
-        if estado_dia == 'cancelado':
+        if liquidado_empleado:
             pago_neto_cancelado += neto_dia
             dias_cancelados += 1
         else:
@@ -3794,6 +3795,7 @@ def bi_desglose_estilista(request):
         estado_dia = estados_pago_map.get((estilista.id, dia), 'pendiente')
         
         pago_neto_periodo += neto_dia
+        liquidado_empleado = estado_dia in {'cancelado', 'debe'}
         dias_desglose.append({
             'fecha': dia.strftime('%Y-%m-%d'),
             'base_servicio': float(base_servicio_dia),
@@ -3801,10 +3803,10 @@ def bi_desglose_estilista(request):
             'comision_productos': float(comision_dia),
             'neto_dia': float(neto_dia),
             'estado': estado_dia,
-            'incluido_en': 'cancelado' if estado_dia == 'cancelado' else 'pendiente',
+            'incluido_en': 'cancelado' if liquidado_empleado else 'pendiente',
         })
         
-        if estado_dia == 'cancelado':
+        if liquidado_empleado:
             pago_neto_cancelado += neto_dia
             dias_cancelados += 1
         else:

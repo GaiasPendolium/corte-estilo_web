@@ -133,12 +133,12 @@ const Reportes = () => {
   const [historialEstados, setHistorialEstados] = useState([]);
   const [loadingHistorial, setLoadingHistorial] = useState(false);
 
-  const calcularPendientePagoConPuesto = useCallback((fila) => {
+  const calcularPendientePagoEmpleado = useCallback((fila) => {
+    const pendiente = Number(fila?.pago_neto_pendiente ?? 0);
+    if (Number.isFinite(pendiente)) return Math.max(pendiente, 0);
     const valorTotalEmpleado = Number((fila?.valor_total_empleado ?? fila?.facturacion_servicios ?? fila?.ganancias_servicios) || 0);
     const comisionesEmpleado = Number(fila?.comision_ventas_producto || 0);
-    const generado = valorTotalEmpleado + comisionesEmpleado;
-    const deudaPuestoAcumulada = Number(fila?.deuda_total_acumulada || 0);
-    return Math.max(generado - deudaPuestoAcumulada, 0);
+    return Math.max(valorTotalEmpleado + comisionesEmpleado, 0);
   }, []);
 
   const modulosVisibles = useMemo(() => {
@@ -633,7 +633,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
     .map((x) => Number(x))
     .filter((x) => Number.isFinite(x) && x > 0);
   const medioCobroConsumo = medioCobroConsumoPorEstilista[estilistaId] || 'efectivo';
-  const topePagoEmpleado = calcularPendientePagoConPuesto(fila);
+  const topePagoEmpleado = calcularPendientePagoEmpleado(fila);
 
   if (pago_efectivo + pago_nequi + pago_daviplata + pago_otros > topePagoEmpleado) {
     toast.warning(`El pago al empleado no puede superar ${formatMoney(topePagoEmpleado)} para el día ${fechaLiquidacion}.`);
@@ -987,7 +987,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
             {(biData?.estilistas || []).map((item) => {
               const estId = Number(item.estilista_id);
               const activo = estId === Number(estilistaActivoLiquidacion);
-              const totalPendiente = calcularPendientePagoConPuesto(item);
+              const totalPendiente = calcularPendientePagoEmpleado(item);
               const consumoPendiente = Number(resumenPorEstilistaLiquidacion[estId]?.saldo_pendiente || 0);
               const deudaPuesto = Number(item.deuda_total_acumulada || 0);
               return (
@@ -1024,7 +1024,10 @@ const aplicarEstadoLiquidacion = async (fila) => {
               Number(desgloseLiquidacion?.servicios?.total_precio_cobrado ?? generadoEmpleadoCalculado),
               0
             );
-            const pendientePagoEmpleado = calcularPendientePagoConPuesto(empleado);
+            const pendientePagoEmpleado = Math.max(
+              Number(desgloseLiquidacion?.resumen?.pago_neto_pendiente ?? calcularPendientePagoEmpleado(empleado)),
+              0
+            );
             const consumoPendiente = Number(resumenPorEstilistaLiquidacion[estId]?.saldo_pendiente || 0);
             const cobroConsumoDigitado = Number(cobroConsumoPorEstilista[estId] || 0);
             const cobroConsumoAplicado = Math.min(Math.max(cobroConsumoDigitado, 0), Math.max(consumoPendiente, 0));
