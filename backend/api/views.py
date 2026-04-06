@@ -1508,6 +1508,23 @@ def _calcular_datos_bi(request):
         fecha_inicio = hoy.strftime('%Y-%m-%d')
         fecha_fin = hoy.strftime('%Y-%m-%d')
 
+    fact_aplica_map = {}
+    try:
+        fact_aplica_qs = FactLiquidacionEstilistaDia.objects.filter(
+            fecha__gte=fecha_inicio_dt,
+            fecha__lte=fecha_fin_dt,
+            vigente=True,
+        ).only('estilista_id', 'fecha', 'aplica_comision_ventas')
+        for fact_ap in fact_aplica_qs:
+            fact_aplica_map[(int(fact_ap.estilista_id), fact_ap.fecha)] = bool(getattr(fact_ap, 'aplica_comision_ventas', True))
+    except Exception:
+        fact_aplica_map = {}
+
+    def _aplica_comision_ventas_dia(estilista_id, fecha_operativa):
+        if not estilista_id or not fecha_operativa:
+            return True
+        return fact_aplica_map.get((int(estilista_id), fecha_operativa), True)
+
     ventas_qs = VentaProducto.objects.select_related('producto', 'estilista').filter(
         fecha_hora__date__gte=fecha_inicio_dt,
         fecha_hora__date__lte=fecha_fin_dt,
@@ -1588,6 +1605,9 @@ def _calcular_datos_bi(request):
         detalle_ganancia_productos_mapa[key_producto]['valor_vendido_caja'] += Decimal(venta.total or 0)
 
         if venta.estilista and venta.tipo_operacion != 'consumo_empleado':
+            fecha_v = _fecha_operativa_desde_dt(venta.fecha_hora)
+            if not _aplica_comision_ventas_dia(venta.estilista_id, fecha_v):
+                continue
             # La comisión de venta se toma del producto vendido, no del estilista.
             pct = Decimal(venta.producto.comision_estilista or 0)
             comision_producto_estilistas += (Decimal(venta.total) * pct) / Decimal(100)
@@ -1637,6 +1657,9 @@ def _calcular_datos_bi(request):
             detalle_ganancia_productos_mapa[key_producto_ad]['valor_vendido_servicios'] += precio_venta_ad * cantidad_ad
 
             if srv.adicional_otro_estilista_id:
+                fecha_srv = _fecha_operativa_desde_dt(srv.fecha_hora)
+                if not _aplica_comision_ventas_dia(srv.adicional_otro_estilista_id, fecha_srv):
+                    continue
                 pct_srv = Decimal(srv.adicional_otro_producto.comision_estilista or 0)
                 if pct_srv < 0:
                     pct_srv = Decimal(0)
@@ -1651,7 +1674,6 @@ def _calcular_datos_bi(request):
                     + valor_comision_srv
                 )
 
-                fecha_srv = _fecha_operativa_desde_dt(srv.fecha_hora)
                 key_dia = (srv.adicional_otro_estilista_id, fecha_srv)
                 comision_producto_servicios_por_estilista_dia[key_dia] = (
                     comision_producto_servicios_por_estilista_dia.get(key_dia, Decimal(0))
@@ -1794,10 +1816,12 @@ def _calcular_datos_bi(request):
         for v in ventas_est:
             if v.tipo_operacion == 'consumo_empleado':
                 continue
+            fecha_v = _fecha_operativa_desde_dt(v.fecha_hora)
+            if not _aplica_comision_ventas_dia(estilista.id, fecha_v):
+                continue
             pct = Decimal(v.producto.comision_estilista or 0)
             valor_comision = (Decimal(v.total) * pct) / Decimal(100)
             comision_ventas_producto_caja_est += valor_comision
-            fecha_v = _fecha_operativa_desde_dt(v.fecha_hora)
             comision_por_dia[fecha_v] = comision_por_dia.get(fecha_v, Decimal(0)) + valor_comision
 
         comision_ventas_producto_servicios_est = comision_producto_servicios_por_estilista.get(estilista.id, Decimal(0))
@@ -4674,6 +4698,23 @@ def reporte_cierre_caja(request):
     except Exception:
         return Response({'error': 'Formato de fecha invalido. Usa YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
 
+    fact_aplica_map = {}
+    try:
+        fact_aplica_qs = FactLiquidacionEstilistaDia.objects.filter(
+            fecha__gte=fecha_inicio_dt,
+            fecha__lte=fecha_fin_dt,
+            vigente=True,
+        ).only('estilista_id', 'fecha', 'aplica_comision_ventas')
+        for fact_ap in fact_aplica_qs:
+            fact_aplica_map[(int(fact_ap.estilista_id), fact_ap.fecha)] = bool(getattr(fact_ap, 'aplica_comision_ventas', True))
+    except Exception:
+        fact_aplica_map = {}
+
+    def _aplica_comision_ventas_dia(estilista_id, fecha_operativa):
+        if not estilista_id or not fecha_operativa:
+            return True
+        return fact_aplica_map.get((int(estilista_id), fecha_operativa), True)
+
     data_bi = _calcular_datos_bi(request)
     kpis = data_bi.get('kpis', {})
 
@@ -4746,12 +4787,14 @@ def reporte_cierre_caja(request):
         valor_compra = costo_unitario * Decimal(venta.cantidad or 0)
         comision_empleado = Decimal(0)
         if venta.estilista_id:
-            pct = Decimal(venta.producto.comision_estilista or 0)
-            if pct < 0:
-                pct = Decimal(0)
-            if pct > 100:
-                pct = Decimal(100)
-            comision_empleado = (valor_venta * pct) / Decimal(100)
+            fecha_op = _fecha_operativa_desde_dt(venta.fecha_hora)
+            if _aplica_comision_ventas_dia(venta.estilista_id, fecha_op):
+                pct = Decimal(venta.producto.comision_estilista or 0)
+                if pct < 0:
+                    pct = Decimal(0)
+                if pct > 100:
+                    pct = Decimal(100)
+                comision_empleado = (valor_venta * pct) / Decimal(100)
 
         ganancia = valor_venta - valor_compra - comision_empleado
 
@@ -4856,12 +4899,14 @@ def reporte_cierre_caja(request):
         valor_compra = precio_compra * qty
         comision_empleado = Decimal(0)
         if srv.adicional_otro_estilista_id:
-            pct = Decimal(srv.adicional_otro_producto.comision_estilista or 0)
-            if pct < 0:
-                pct = Decimal(0)
-            if pct > 100:
-                pct = Decimal(100)
-            comision_empleado = (valor_venta * pct) / Decimal(100)
+            fecha_op = _fecha_operativa_desde_dt(srv.fecha_hora)
+            if _aplica_comision_ventas_dia(srv.adicional_otro_estilista_id, fecha_op):
+                pct = Decimal(srv.adicional_otro_producto.comision_estilista or 0)
+                if pct < 0:
+                    pct = Decimal(0)
+                if pct > 100:
+                    pct = Decimal(100)
+                comision_empleado = (valor_venta * pct) / Decimal(100)
 
         ganancia = valor_venta - valor_compra - comision_empleado
 
