@@ -4254,8 +4254,23 @@ def reporte_cierre_caja(request):
 
             total_credito_deuda = Decimal(deuda.total_cargo or 0)
             costo_total_deuda = Decimal(0)
-            for item in deuda.ventas_items.select_related('producto').filter(tipo_operacion='consumo_empleado'):
+            items_consumo = list(
+                deuda.ventas_items.select_related('producto').filter(tipo_operacion='consumo_empleado')
+            )
+            productos_consumo = []
+            for item in items_consumo:
                 costo_total_deuda += Decimal(item.producto.precio_compra or 0) * Decimal(item.cantidad or 0)
+                nombre_prod = (item.producto.nombre or '').strip() if item.producto_id else ''
+                if not nombre_prod:
+                    continue
+                qty = int(item.cantidad or 0)
+                productos_consumo.append(f"{nombre_prod} x{qty}" if qty > 1 else nombre_prod)
+
+            descripcion_abono = (
+                f"Abono consumo empleado - {', '.join(productos_consumo)}"
+                if productos_consumo
+                else f"Abono consumo empleado ({deuda.numero_factura or deuda.id})"
+            )
 
             factor_pago = (valor_venta / total_credito_deuda) if total_credito_deuda > 0 else Decimal(0)
             if factor_pago < 0:
@@ -4279,7 +4294,7 @@ def reporte_cierre_caja(request):
                     'numero_factura': deuda.numero_factura,
                     'medio_pago': ab.medio_pago,
                     'estilista_nombre': deuda.estilista.nombre if deuda.estilista_id else '',
-                    'descripcion': f"Abono consumo empleado ({deuda.numero_factura or deuda.id})",
+                    'descripcion': descripcion_abono,
                     'cantidad': 1,
                     'valor_venta': float(valor_venta),
                     'valor_compra': float(valor_compra),
