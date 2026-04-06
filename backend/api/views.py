@@ -3725,7 +3725,10 @@ def liquidar_operacion_integral(request):
                     deuda_ids=deuda_ids,
                 )
 
-            response_liq = liquidar_dia_v2(request)
+            # Evita reingresar al wrapper de @api_view (espera HttpRequest).
+            # Aqui ya tenemos un DRF Request valido dentro del mismo flujo.
+            liq_callable = getattr(liquidar_dia_v2, '__wrapped__', liquidar_dia_v2)
+            response_liq = liq_callable(request)
             status_liq = int(getattr(response_liq, 'status_code', 500) or 500)
             if status_liq >= 400:
                 data_liq = getattr(response_liq, 'data', None) or {}
