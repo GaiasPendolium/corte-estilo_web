@@ -2071,6 +2071,24 @@ def _calcular_datos_bi(request):
             medio_srv = 'otros'
         ingresos_por_medio[medio_srv] += Decimal(srv.precio_cobrado or 0) + Decimal(srv.valor_adicionales or 0)
 
+    def _aplicar_abono_sobre_pagos(pagos_dia, abono_valor, medio_preferido):
+        restante = max(Decimal(abono_valor or 0), Decimal(0))
+        if restante <= 0:
+            return
+
+        medio_pref = (medio_preferido or 'efectivo').strip().lower()
+        if medio_pref not in pagos_dia:
+            medio_pref = 'otros'
+
+        orden_descuento = [medio_pref] + [m for m in medios if m != medio_pref]
+        for m in orden_descuento:
+            if restante <= 0:
+                break
+            disponible = max(Decimal(pagos_dia.get(m, 0) or 0), Decimal(0))
+            descuento = min(disponible, restante)
+            pagos_dia[m] = disponible - descuento
+            restante -= descuento
+
     try:
         if usar_fact:
             facts_medios_qs = FactLiquidacionEstilistaDia.objects.filter(
@@ -2079,20 +2097,38 @@ def _calcular_datos_bi(request):
                 vigente=True,
             )
             for fact in facts_medios_qs:
-                salidas_por_medio['efectivo'] += Decimal(fact.pago_efectivo or 0)
-                salidas_por_medio['nequi'] += Decimal(fact.pago_nequi or 0)
-                salidas_por_medio['daviplata'] += Decimal(fact.pago_daviplata or 0)
-                salidas_por_medio['otros'] += Decimal(fact.pago_otros or 0)
+                pagos_dia = {
+                    'efectivo': Decimal(fact.pago_efectivo or 0),
+                    'nequi': Decimal(fact.pago_nequi or 0),
+                    'daviplata': Decimal(fact.pago_daviplata or 0),
+                    'otros': Decimal(fact.pago_otros or 0),
+                }
+                _aplicar_abono_sobre_pagos(
+                    pagos_dia,
+                    getattr(fact, 'abono_puesto_dia', 0),
+                    getattr(fact, 'medio_abono_puesto', None),
+                )
+                for medio_key in medios:
+                    salidas_por_medio[medio_key] += pagos_dia.get(medio_key, Decimal(0))
         else:
             estados_pago_qs = EstadoPagoEstilistaDia.objects.filter(
                 fecha__gte=fecha_inicio_dt,
                 fecha__lte=fecha_fin_dt,
             )
             for ep in estados_pago_qs:
-                salidas_por_medio['efectivo'] += Decimal(ep.pago_efectivo or 0)
-                salidas_por_medio['nequi'] += Decimal(ep.pago_nequi or 0)
-                salidas_por_medio['daviplata'] += Decimal(ep.pago_daviplata or 0)
-                salidas_por_medio['otros'] += Decimal(ep.pago_otros or 0)
+                pagos_dia = {
+                    'efectivo': Decimal(ep.pago_efectivo or 0),
+                    'nequi': Decimal(ep.pago_nequi or 0),
+                    'daviplata': Decimal(ep.pago_daviplata or 0),
+                    'otros': Decimal(ep.pago_otros or 0),
+                }
+                _aplicar_abono_sobre_pagos(
+                    pagos_dia,
+                    getattr(ep, 'abono_puesto', 0),
+                    getattr(ep, 'medio_abono_puesto', None),
+                )
+                for medio_key in medios:
+                    salidas_por_medio[medio_key] += pagos_dia.get(medio_key, Decimal(0))
     except (OperationalError, ProgrammingError):
         salidas_por_medio = {m: Decimal(0) for m in medios}
 
@@ -5123,48 +5159,13 @@ def reporte_cierre_caja(request):
     ingresos_espacios_tarjeta = ingresos_espacios
 
     suma_componentes = ingresos_servicios_tarjeta + ingresos_productos_tarjeta + ingresos_espacios_tarjeta
-    ganancia_total = suma_componentes
+    medios_totales = data_bi.get('cierre_medios', {}).get('totales', {}) or {}
+    liquidacion_empleados_resumen = Decimal(str(medios_totales.get('salidas', 0) or 0))
+    if liquidacion_empleados_resumen < 0:
+        liquidacion_empleados_resumen = Decimal(0)
+    ganancia_total = total_ingresos - liquidacion_empleados_resumen
 
-    # En el resumen principal se fuerza coherencia contable entre tarjetas:
-    # Ganancia neta = Total ingresos - Pagado a empleados.
-    liquidacion_empleados_resumen = max(total_ingresos - ganancia_total, Decimal(0))
-
-    # Alinear detalle de medios con los totales del resumen para que la suma
-    # de filas coincida con las tarjetas principales.
-    detalle_medios_crudo = data_bi.get('cierre_medios', {}).get('detalle', []) or []
-    detalle_medios = []
-    for item in detalle_medios_crudo:
-        detalle_medios.append(
-            {
-                'medio_pago': (item.get('medio_pago') or 'otros'),
-                'ingresos': Decimal(str(item.get('ingresos', 0) or 0)),
-                'salidas': Decimal(str(item.get('salidas', 0) or 0)),
-            }
-        )
-
-    suma_ingresos_detalle = sum((it['ingresos'] for it in detalle_medios), Decimal(0))
-    suma_salidas_detalle = sum((it['salidas'] for it in detalle_medios), Decimal(0))
-    ajuste_ingresos = total_ingresos - suma_ingresos_detalle
-    ajuste_salidas = liquidacion_empleados_resumen - suma_salidas_detalle
-
-    if ajuste_ingresos != 0 or ajuste_salidas != 0:
-        detalle_medios.append(
-            {
-                'medio_pago': 'ajuste_cuadre',
-                'ingresos': ajuste_ingresos,
-                'salidas': ajuste_salidas,
-            }
-        )
-
-    detalle_medios_serializado = [
-        {
-            'medio_pago': it['medio_pago'],
-            'ingresos': float(it['ingresos']),
-            'salidas': float(it['salidas']),
-            'saldo': float(it['ingresos'] - it['salidas']),
-        }
-        for it in detalle_medios
-    ]
+    detalle_medios_serializado = data_bi.get('cierre_medios', {}).get('detalle', []) or []
 
     return Response(
         {
