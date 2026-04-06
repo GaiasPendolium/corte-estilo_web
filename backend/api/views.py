@@ -12,6 +12,7 @@ from django.utils.dateparse import parse_datetime
 from django.http import HttpResponse
 from datetime import datetime, timedelta
 from decimal import Decimal
+from collections import defaultdict
 import base64
 import csv
 import io
@@ -2511,6 +2512,7 @@ def abonar_consumo_empleado(request):
     monto = request.data.get('monto')
     medio_pago = (request.data.get('medio_pago') or 'efectivo').strip().lower()
     notas = request.data.get('notas')
+    fecha_raw = (request.data.get('fecha') or '').strip()
 
     if medio_pago not in {'nequi', 'daviplata', 'efectivo', 'otros'}:
         return Response({'error': 'Medio de pago inválido.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -2535,6 +2537,17 @@ def abonar_consumo_empleado(request):
 
     if monto_decimal <= 0:
         return Response({'error': 'El monto debe ser mayor a cero.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    fecha_abono_dt = None
+    if fecha_raw:
+        try:
+            fecha_abono = datetime.strptime(fecha_raw, '%Y-%m-%d').date()
+            # Hora fija para evitar desplazamientos por zona horaria.
+            fecha_abono_dt = datetime.combine(fecha_abono, datetime.min.time()).replace(hour=12)
+            if timezone.is_naive(fecha_abono_dt):
+                fecha_abono_dt = timezone.make_aware(fecha_abono_dt, timezone.get_current_timezone())
+        except Exception:
+            return Response({'error': 'Fecha inválida. Usa YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
 
     if deuda_objetivo is not None:
         if deuda_objetivo.estilista_id != estilista.id:
@@ -2566,13 +2579,17 @@ def abonar_consumo_empleado(request):
             if aplicado <= 0:
                 continue
 
-            AbonoDeudaEmpleado.objects.create(
-                deuda=deuda,
-                monto=aplicado,
-                medio_pago=medio_pago,
-                usuario=request.user,
-                notas=notas,
-            )
+            create_data = {
+                'deuda': deuda,
+                'monto': aplicado,
+                'medio_pago': medio_pago,
+                'usuario': request.user,
+                'notas': notas,
+            }
+            if fecha_abono_dt is not None:
+                create_data['fecha_hora'] = fecha_abono_dt
+
+            AbonoDeudaEmpleado.objects.create(**create_data)
 
             deuda.total_abonado = Decimal(deuda.total_abonado or 0) + aplicado
             _recalcular_estado_deuda(deuda)
@@ -4122,6 +4139,143 @@ def bi_desglose_estilista(request):
             'total_dias': len(dias_trabajados),
         },
     })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def reporte_ajuste_diario_unificado(request):
+    """Tabla unificada por día y empleado para ajustes operativos en una sola vista."""
+    if _es_recepcion(request.user):
+        raise PermissionDenied('Recepción no tiene acceso al módulo unificado de ajustes.')
+
+    fecha_inicio, fecha_fin = _resolver_rango_fechas(request)
+    try:
+        fecha_inicio_dt = datetime.strptime(fecha_inicio, '%Y-%m-%d').date()
+        fecha_fin_dt = datetime.strptime(fecha_fin, '%Y-%m-%d').date()
+    except Exception:
+        return Response({'error': 'Formato de fecha inválido. Usa YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if fecha_inicio_dt > fecha_fin_dt:
+        return Response({'error': 'fecha_inicio no puede ser mayor que fecha_fin.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    estilistas = list(Estilista.objects.filter(activo=True).order_by('nombre'))
+    estilista_ids = [int(e.id) for e in estilistas]
+
+    estados_map = {}
+    try:
+        estados_qs = EstadoPagoEstilistaDia.objects.filter(
+            estilista_id__in=estilista_ids,
+            fecha__gte=fecha_inicio_dt,
+            fecha__lte=fecha_fin_dt,
+        )
+        for ep in estados_qs:
+            estados_map[(int(ep.estilista_id), ep.fecha)] = ep
+    except (OperationalError, ProgrammingError):
+        estados_map = {}
+
+    consumo_por_est_dia = defaultdict(Decimal)
+    try:
+        abonos_qs = AbonoDeudaEmpleado.objects.select_related('deuda').filter(
+            deuda__estilista_id__in=estilista_ids,
+        )
+        for ab in abonos_qs:
+            fecha_op = _fecha_operativa_desde_dt(ab.fecha_hora)
+            if not fecha_op or fecha_op < fecha_inicio_dt or fecha_op > fecha_fin_dt:
+                continue
+            est_id = int(getattr(getattr(ab, 'deuda', None), 'estilista_id', 0) or 0)
+            if not est_id:
+                continue
+            consumo_por_est_dia[(est_id, fecha_op)] += Decimal(ab.monto or 0)
+    except Exception:
+        consumo_por_est_dia = defaultdict(Decimal)
+
+    dias_con_movimiento = defaultdict(set)
+
+    servicios_mov_qs = ServicioRealizado.objects.filter(
+        estado='finalizado',
+        estilista_id__in=estilista_ids,
+        fecha_hora__date__gte=fecha_inicio_dt,
+        fecha_hora__date__lte=fecha_fin_dt,
+    ).values_list('estilista_id', 'fecha_hora')
+    for est_id, dt in servicios_mov_qs:
+        f = _fecha_operativa_desde_dt(dt)
+        if f:
+            dias_con_movimiento[int(est_id)].add(f)
+
+    adic_mov_qs = ServicioRealizadoAdicional.objects.filter(
+        estilista_id__in=estilista_ids,
+        servicio_realizado__estado='finalizado',
+        servicio_realizado__fecha_hora__date__gte=fecha_inicio_dt,
+        servicio_realizado__fecha_hora__date__lte=fecha_fin_dt,
+    ).values_list('estilista_id', 'servicio_realizado__fecha_hora')
+    for est_id, dt in adic_mov_qs:
+        f = _fecha_operativa_desde_dt(dt)
+        if f:
+            dias_con_movimiento[int(est_id)].add(f)
+
+    ventas_mov_qs = VentaProducto.objects.filter(
+        tipo_operacion='venta',
+        estilista_id__in=estilista_ids,
+        fecha_hora__date__gte=fecha_inicio_dt,
+        fecha_hora__date__lte=fecha_fin_dt,
+    ).values_list('estilista_id', 'fecha_hora')
+    for est_id, dt in ventas_mov_qs:
+        f = _fecha_operativa_desde_dt(dt)
+        if f:
+            dias_con_movimiento[int(est_id)].add(f)
+
+    for (est_id, fecha_dia), ep in estados_map.items():
+        dias_con_movimiento[int(est_id)].add(fecha_dia)
+
+    for (est_id, fecha_dia), _monto in consumo_por_est_dia.items():
+        dias_con_movimiento[int(est_id)].add(fecha_dia)
+
+    items = []
+    for est in estilistas:
+        est_id = int(est.id)
+        for dia in sorted(list(dias_con_movimiento.get(est_id, set())), reverse=True):
+            calc = calcular_liquidacion_dia_estilista(est, dia)
+            ep = estados_map.get((est_id, dia))
+
+            pago_efectivo = Decimal(ep.pago_efectivo or 0) if ep else Decimal(0)
+            pago_nequi = Decimal(ep.pago_nequi or 0) if ep else Decimal(0)
+            pago_daviplata = Decimal(ep.pago_daviplata or 0) if ep else Decimal(0)
+            pago_otros = Decimal(ep.pago_otros or 0) if ep else Decimal(0)
+            abono_puesto = Decimal(ep.abono_puesto or 0) if ep else Decimal(0)
+            medio_abono = (getattr(ep, 'medio_abono_puesto', None) or 'efectivo') if ep else 'efectivo'
+            pagado_total = pago_efectivo + pago_nequi + pago_daviplata + pago_otros
+            generado = Decimal(calc.get('total_pagable') or 0)
+
+            items.append(
+                {
+                    'estilista_id': est_id,
+                    'estilista_nombre': est.nombre,
+                    'fecha': dia.strftime('%Y-%m-%d'),
+                    'estado': ep.estado if ep else 'pendiente',
+                    'generado_total': float(generado),
+                    'descuento_puesto': float(Decimal(calc.get('descuento_puesto') or 0)),
+                    'pago_efectivo': float(pago_efectivo),
+                    'pago_nequi': float(pago_nequi),
+                    'pago_daviplata': float(pago_daviplata),
+                    'pago_otros': float(pago_otros),
+                    'pagado_total': float(pagado_total),
+                    'pendiente_pago_empleado': float(max(generado - pagado_total, Decimal(0))),
+                    'abono_puesto': float(abono_puesto),
+                    'medio_abono_puesto': medio_abono,
+                    'cobro_consumo_dia': float(consumo_por_est_dia.get((est_id, dia), Decimal(0))),
+                    'deuda_puesto_pendiente': float(Decimal(getattr(ep, 'saldo_puesto_pendiente', 0) or 0)) if ep else 0.0,
+                }
+            )
+
+    items.sort(key=lambda x: (x.get('fecha') or '', x.get('estilista_nombre') or ''), reverse=True)
+    return Response(
+        {
+            'fecha_inicio': fecha_inicio,
+            'fecha_fin': fecha_fin,
+            'items': items,
+            'total_filas': len(items),
+        }
+    )
 
 
 @api_view(['GET'])

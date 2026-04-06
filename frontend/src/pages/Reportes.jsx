@@ -9,9 +9,10 @@ const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
 
 const MODULOS = [
   { key: 'cierre', label: '1. Cierre de Caja' },
-  { key: 'liquidacion', label: '2. Liquidacion Empleado' },
-  { key: 'cartera', label: '3. Cartera Empleado' },
-  { key: 'agotarse', label: '4. Productos Agotarse' },
+  { key: 'ajuste', label: '2. Ajuste Diario Unificado' },
+  { key: 'liquidacion', label: '3. Liquidacion Empleado' },
+  { key: 'cartera', label: '4. Cartera Empleado' },
+  { key: 'agotarse', label: '5. Productos Agotarse' },
 ];
 
 const MEDIOS_PAGO = [
@@ -141,6 +142,10 @@ const Reportes = () => {
   const [savingFechaEspacioById, setSavingFechaEspacioById] = useState({});
   const [editFechaAbonoConsumoById, setEditFechaAbonoConsumoById] = useState({});
   const [savingFechaAbonoConsumoById, setSavingFechaAbonoConsumoById] = useState({});
+  const [ajusteDiarioRows, setAjusteDiarioRows] = useState([]);
+  const [loadingAjusteDiario, setLoadingAjusteDiario] = useState(false);
+  const [ajusteDiarioEditsByKey, setAjusteDiarioEditsByKey] = useState({});
+  const [savingAjusteDiarioByKey, setSavingAjusteDiarioByKey] = useState({});
 
   const calcularPendientePagoEmpleado = useCallback((fila) => {
     const pendienteConsolidado = Number(fila?.pendiente_pago_empleado ?? fila?.pago_neto_pendiente ?? 0);
@@ -304,6 +309,47 @@ const Reportes = () => {
     }
   }, [esRecepcion]);
 
+  const cargarAjusteDiarioUnificado = useCallback(async () => {
+    if (esRecepcion) {
+      setAjusteDiarioRows([]);
+      setAjusteDiarioEditsByKey({});
+      return;
+    }
+
+    setLoadingAjusteDiario(true);
+    try {
+      const resp = await reportesService.getReporteAjusteDiario({
+        periodo,
+        fecha_inicio: fechaInicio,
+        fecha_fin: fechaFin,
+      });
+      const filas = resp?.items || [];
+      setAjusteDiarioRows(filas);
+
+      const mapaEdits = {};
+      filas.forEach((r) => {
+        const key = `${r.estilista_id}|${r.fecha}`;
+        mapaEdits[key] = {
+          pago_efectivo: String(Number(r.pago_efectivo || 0) || ''),
+          pago_nequi: String(Number(r.pago_nequi || 0) || ''),
+          pago_daviplata: String(Number(r.pago_daviplata || 0) || ''),
+          pago_otros: String(Number(r.pago_otros || 0) || ''),
+          abono_puesto: String(Number(r.abono_puesto || 0) || ''),
+          medio_abono_puesto: r.medio_abono_puesto || 'efectivo',
+          cobro_consumo_objetivo: String(Number(r.cobro_consumo_dia || 0) || ''),
+          medio_cobro_consumo: 'efectivo',
+        };
+      });
+      setAjusteDiarioEditsByKey(mapaEdits);
+    } catch (error) {
+      setAjusteDiarioRows([]);
+      setAjusteDiarioEditsByKey({});
+      toast.error('No se pudo cargar el ajuste diario unificado.');
+    } finally {
+      setLoadingAjusteDiario(false);
+    }
+  }, [esRecepcion, periodo, fechaInicio, fechaFin]);
+
   const cargarTodo = useCallback(async () => {
     try {
       setLoading(true);
@@ -461,6 +507,11 @@ const Reportes = () => {
       cancelado = true;
     };
   }, [moduloActivo, estilistaActivoLiquidacion, fechaInicio, fechaFin]);
+
+  useEffect(() => {
+    if (moduloActivo !== 'ajuste') return;
+    cargarAjusteDiarioUnificado();
+  }, [moduloActivo, cargarAjusteDiarioUnificado]);
 
   useEffect(() => {
     if (moduloActivo !== 'liquidacion') return;
@@ -686,6 +737,7 @@ const Reportes = () => {
           monto: abono,
           medio_pago: medioPago,
           notas: `Cobro consumo integrado en liquidacion ${fecha}`,
+          fecha,
         });
       } catch (error) {
         const msg = String(error?.response?.data?.error || '').toLowerCase();
@@ -700,6 +752,93 @@ const Reportes = () => {
     }
 
     return { cobrado, restante, facturasSinPendiente, sinPendientes: cobrado <= 0 && idsSeleccionados.length > 0 };
+  };
+
+  const actualizarAjusteDiarioCampo = (key, campo, valor) => {
+    setAjusteDiarioEditsByKey((prev) => {
+      const actual = prev[key] || {
+        pago_efectivo: '',
+        pago_nequi: '',
+        pago_daviplata: '',
+        pago_otros: '',
+        abono_puesto: '',
+        medio_abono_puesto: 'efectivo',
+        cobro_consumo_objetivo: '',
+        medio_cobro_consumo: 'efectivo',
+      };
+
+      const nextValue = ['medio_abono_puesto', 'medio_cobro_consumo'].includes(campo)
+        ? valor
+        : String(valor || '').replace(/[^\d.]/g, '');
+
+      return {
+        ...prev,
+        [key]: {
+          ...actual,
+          [campo]: nextValue,
+        },
+      };
+    });
+  };
+
+  const guardarAjusteDiarioFila = async (fila) => {
+    const key = `${fila.estilista_id}|${fila.fecha}`;
+    const edit = ajusteDiarioEditsByKey[key] || {};
+
+    const pago_efectivo = toMontoNoNegativo(edit.pago_efectivo);
+    const pago_nequi = toMontoNoNegativo(edit.pago_nequi);
+    const pago_daviplata = toMontoNoNegativo(edit.pago_daviplata);
+    const pago_otros = toMontoNoNegativo(edit.pago_otros);
+    const abono_puesto = toMontoNoNegativo(edit.abono_puesto);
+    const medio_abono_puesto = edit.medio_abono_puesto || 'efectivo';
+    const consumo_actual = Math.max(Number(fila.cobro_consumo_dia || 0), 0);
+    const consumo_obj = toMontoNoNegativo(edit.cobro_consumo_objetivo);
+    const medio_cobro_consumo = edit.medio_cobro_consumo || 'efectivo';
+
+    const total_pago = pago_efectivo + pago_nequi + pago_daviplata + pago_otros;
+    const tope = Math.max(Number(fila.generado_total || 0), 0);
+    if (total_pago > tope) {
+      toast.warning(`El pago al empleado no puede superar ${formatMoney(tope)} para ${fila.fecha}.`);
+      return;
+    }
+
+    setSavingAjusteDiarioByKey((prev) => ({ ...prev, [key]: true }));
+    try {
+      if (consumo_obj < consumo_actual) {
+        toast.info('Para disminuir cobros de consumo ya registrados, usa la edición de abonos en Cartera.');
+      }
+
+      const extra_consumo = Math.max(consumo_obj - consumo_actual, 0);
+      if (extra_consumo > 0) {
+        await cobrarConsumoEnDeudas({
+          estilistaId: fila.estilista_id,
+          monto: extra_consumo,
+          medioPago: medio_cobro_consumo,
+          fecha: fila.fecha,
+        });
+      }
+
+      await reportesService.liquidarDiaV2({
+        estilista_id: fila.estilista_id,
+        fecha: fila.fecha,
+        pago_efectivo,
+        pago_nequi,
+        pago_daviplata,
+        pago_otros,
+        abono_puesto,
+        medio_abono_puesto,
+        forzar_reemplazo_dia: true,
+        notas: `Ajuste unificado ${fila.fecha}`,
+      });
+
+      toast.success(`Ajuste guardado para ${fila.estilista_nombre} - ${fila.fecha}.`);
+      await Promise.all([cargarTodo(), cargarCarteraLiquidacionGlobal(), cargarAjusteDiarioUnificado()]);
+    } catch (error) {
+      const msg = error?.response?.data?.error || error?.message || 'No se pudo guardar el ajuste diario.';
+      toast.error(String(msg));
+    } finally {
+      setSavingAjusteDiarioByKey((prev) => ({ ...prev, [key]: false }));
+    }
   };
 
   const resumenPorEstilista = useMemo(() => {
@@ -2077,6 +2216,115 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
     </div>
   );
 
+  const renderModuloAjusteDiario = () => (
+    <div className="space-y-6">
+      <section className="rounded-3xl bg-gradient-to-br from-emerald-900 via-teal-800 to-slate-900 p-6 text-white shadow-2xl">
+        <h2 className="text-2xl font-black tracking-tight">Ajuste Diario Unificado</h2>
+        <p className="mt-2 text-sm text-emerald-100">
+          Una sola tabla para ajustar por día y empleado: pagos al empleado, abono de puesto y cobro de consumo.
+        </p>
+      </section>
+
+      <div className="card border border-emerald-200 bg-emerald-50">
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <h3 className="card-header mb-0">Tabla diaria consolidada</h3>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={cargarAjusteDiarioUnificado}
+            disabled={loadingAjusteDiario}
+          >
+            {loadingAjusteDiario ? 'Actualizando...' : 'Actualizar tabla'}
+          </button>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-emerald-200">
+            <thead className="bg-emerald-100 text-emerald-900 text-xs uppercase tracking-wide">
+              <tr>
+                <th className="px-3 py-2 text-left">Fecha</th>
+                <th className="px-3 py-2 text-left">Empleado</th>
+                <th className="px-3 py-2 text-left">Generado</th>
+                <th className="px-3 py-2 text-left">Desc. puesto</th>
+                <th className="px-3 py-2 text-left">Efectivo</th>
+                <th className="px-3 py-2 text-left">Nequi</th>
+                <th className="px-3 py-2 text-left">Daviplata</th>
+                <th className="px-3 py-2 text-left">Otros</th>
+                <th className="px-3 py-2 text-left">Abono puesto</th>
+                <th className="px-3 py-2 text-left">Medio abono</th>
+                <th className="px-3 py-2 text-left">Consumo día</th>
+                <th className="px-3 py-2 text-left">Medio consumo</th>
+                <th className="px-3 py-2 text-left">Pendiente</th>
+                <th className="px-3 py-2 text-left">Acción</th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-emerald-100">
+              {!loadingAjusteDiario && ajusteDiarioRows.length === 0 && (
+                <tr>
+                  <td className="table-cell text-slate-500" colSpan={14}>No hay filas para el rango seleccionado.</td>
+                </tr>
+              )}
+              {loadingAjusteDiario && (
+                <tr>
+                  <td className="table-cell text-slate-500" colSpan={14}>Cargando ajuste diario...</td>
+                </tr>
+              )}
+              {ajusteDiarioRows.map((fila) => {
+                const key = `${fila.estilista_id}|${fila.fecha}`;
+                const edit = ajusteDiarioEditsByKey[key] || {};
+                const totalPago =
+                  toMontoNoNegativo(edit.pago_efectivo) +
+                  toMontoNoNegativo(edit.pago_nequi) +
+                  toMontoNoNegativo(edit.pago_daviplata) +
+                  toMontoNoNegativo(edit.pago_otros);
+                const generado = Number(fila.generado_total || 0);
+                const pendientePreview = Math.max(generado - totalPago, 0);
+                return (
+                  <tr key={`ajuste-${key}`}>
+                    <td className="table-cell font-semibold">{fila.fecha}</td>
+                    <td className="table-cell">{fila.estilista_nombre}</td>
+                    <td className="table-cell font-semibold text-slate-900">{formatMoney(fila.generado_total)}</td>
+                    <td className="table-cell text-amber-700">{formatMoney(fila.descuento_puesto)}</td>
+                    <td className="table-cell"><input className="input-field !py-2 !w-24" value={edit.pago_efectivo || ''} onChange={(e) => actualizarAjusteDiarioCampo(key, 'pago_efectivo', e.target.value)} /></td>
+                    <td className="table-cell"><input className="input-field !py-2 !w-24" value={edit.pago_nequi || ''} onChange={(e) => actualizarAjusteDiarioCampo(key, 'pago_nequi', e.target.value)} /></td>
+                    <td className="table-cell"><input className="input-field !py-2 !w-24" value={edit.pago_daviplata || ''} onChange={(e) => actualizarAjusteDiarioCampo(key, 'pago_daviplata', e.target.value)} /></td>
+                    <td className="table-cell"><input className="input-field !py-2 !w-24" value={edit.pago_otros || ''} onChange={(e) => actualizarAjusteDiarioCampo(key, 'pago_otros', e.target.value)} /></td>
+                    <td className="table-cell"><input className="input-field !py-2 !w-24" value={edit.abono_puesto || ''} onChange={(e) => actualizarAjusteDiarioCampo(key, 'abono_puesto', e.target.value)} /></td>
+                    <td className="table-cell">
+                      <select className="input-field !py-2 !w-28" value={edit.medio_abono_puesto || 'efectivo'} onChange={(e) => actualizarAjusteDiarioCampo(key, 'medio_abono_puesto', e.target.value)}>
+                        {MEDIOS_PAGO_OPERACION.map((m) => (<option key={`aj-ab-${key}-${m.value}`} value={m.value}>{m.label}</option>))}
+                      </select>
+                    </td>
+                    <td className="table-cell">
+                      <input className="input-field !py-2 !w-24" value={edit.cobro_consumo_objetivo || ''} onChange={(e) => actualizarAjusteDiarioCampo(key, 'cobro_consumo_objetivo', e.target.value)} />
+                      <p className="text-[11px] text-slate-500 mt-1">Actual: {formatMoney(fila.cobro_consumo_dia)}</p>
+                    </td>
+                    <td className="table-cell">
+                      <select className="input-field !py-2 !w-28" value={edit.medio_cobro_consumo || 'efectivo'} onChange={(e) => actualizarAjusteDiarioCampo(key, 'medio_cobro_consumo', e.target.value)}>
+                        {MEDIOS_PAGO_OPERACION.map((m) => (<option key={`aj-co-${key}-${m.value}`} value={m.value}>{m.label}</option>))}
+                      </select>
+                    </td>
+                    <td className="table-cell font-semibold text-emerald-700">{formatMoney(pendientePreview)}</td>
+                    <td className="table-cell">
+                      <button
+                        type="button"
+                        className="btn-primary !py-2 !px-3"
+                        onClick={() => guardarAjusteDiarioFila(fila)}
+                        disabled={!!savingAjusteDiarioByKey[key]}
+                      >
+                        {savingAjusteDiarioByKey[key] ? 'Guardando...' : 'Guardar'}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+
   const renderModuloAgotarse = () => (
     <div className="card">
       <h2 className="card-header">Productos por Agotarse</h2>
@@ -2117,7 +2365,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
     <div className="space-y-6 fade-in">
       <section className="rounded-[28px] bg-[radial-gradient(circle_at_top_left,_rgba(59,130,246,0.18),_transparent_34%),linear-gradient(135deg,#0f172a_0%,#111827_35%,#1f2937_100%)] p-6 text-white shadow-2xl">
         <h1 className="text-3xl font-black tracking-tight">Reportes</h1>
-        <p className="text-slate-300 mt-2">Estructura modular para cierre y control operativo.</p>
+        <p className="text-slate-300 mt-2">Panel unificado para cierre, liquidación, cartera y ajustes diarios en una sola experiencia.</p>
       </section>
 
       <div className="card">
@@ -2169,6 +2417,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
       </div>
 
       {moduloActivo === 'cierre' && renderModuloCierreCaja()}
+      {moduloActivo === 'ajuste' && renderModuloAjusteDiario()}
       {moduloActivo === 'liquidacion' && renderModuloLiquidacion()}
       {moduloActivo === 'cartera' && renderModuloCartera()}
       {moduloActivo === 'agotarse' && renderModuloAgotarse()}

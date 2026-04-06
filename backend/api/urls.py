@@ -10,7 +10,8 @@ from .views import (
     bi_export_pdf, bi_resumen_diario, estado_pago_estilista_dia,
     estado_pago_estilista_historial, bi_desglose_estilista, bi_desglose_estilista_debug,
     reporte_consumo_empleado, abonar_consumo_empleado, editar_abono_consumo_empleado, reporte_cierre_caja,
-    liquidar_dia_v2, eliminar_estado_pago_historial, mover_fecha_estado_pago_dia, qz_certificate, qz_sign
+    liquidar_dia_v2, eliminar_estado_pago_historial, mover_fecha_estado_pago_dia, qz_certificate, qz_sign,
+    reporte_ajuste_diario_unificado
 )
 
 # Crear router para los viewsets
@@ -51,6 +52,7 @@ urlpatterns = [
     path('reportes/consumo-empleado/deudas/', reporte_consumo_empleado, name='reporte-consumo-empleado-deudas'),
     path('reportes/consumo-empleado/abonar/', abonar_consumo_empleado, name='reporte-consumo-empleado-abonar'),
     path('reportes/consumo-empleado/abonos/<int:abono_id>/', editar_abono_consumo_empleado, name='reporte-consumo-empleado-abono-editar'),
+    path('reportes/ajuste-diario/', reporte_ajuste_diario_unificado, name='reporte-ajuste-diario-unificado'),
     path('reportes/cierre-caja/', reporte_cierre_caja, name='reporte-cierre-caja'),
     
     # Incluir todas las rutas del router
