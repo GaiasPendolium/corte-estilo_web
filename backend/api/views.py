@@ -35,7 +35,8 @@ from .serializers import (
 
 
 def _es_admin_o_gerente(user):
-    return getattr(user, 'rol', None) in ['administrador', 'gerente']
+    rol_user = (getattr(user, 'rol', '') or '').strip().lower()
+    return rol_user in {'administrador', 'gerente'}
 
 
 def _qz_allowed_origins():
