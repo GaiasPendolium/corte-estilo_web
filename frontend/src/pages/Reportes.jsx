@@ -175,6 +175,8 @@ const Reportes = () => {
   const [loadingAjusteDiario, setLoadingAjusteDiario] = useState(false);
   const [ajusteDiarioEditsByKey, setAjusteDiarioEditsByKey] = useState({});
   const [savingAjusteDiarioByKey, setSavingAjusteDiarioByKey] = useState({});
+  const [filtroAjusteTexto, setFiltroAjusteTexto] = useState('');
+  const [soloPendientesAjuste, setSoloPendientesAjuste] = useState(false);
 
   const calcularPendientePagoEmpleado = useCallback((fila) => {
     const pendienteConsolidado = Number(fila?.pendiente_pago_empleado ?? fila?.pago_neto_pendiente ?? 0);
@@ -267,6 +269,46 @@ const Reportes = () => {
     if (!Number.isFinite(n) || n < 0) return 0;
     return n;
   };
+
+  const ajusteDiarioRowsFiltradas = useMemo(() => {
+    const q = String(filtroAjusteTexto || '').trim().toLowerCase();
+    return (ajusteDiarioRows || []).filter((fila) => {
+      if (soloPendientesAjuste && Number(fila.pendiente_pago_empleado || 0) <= 0) return false;
+      if (!q) return true;
+      return (
+        String(fila.estilista_nombre || '').toLowerCase().includes(q)
+        || String(fila.fecha || '').toLowerCase().includes(q)
+      );
+    });
+  }, [ajusteDiarioRows, filtroAjusteTexto, soloPendientesAjuste]);
+
+  const resumenAjusteDiario = useMemo(() => {
+    let generado = 0;
+    let pendiente = 0;
+    let consumo = 0;
+    let filasModificadas = 0;
+
+    (ajusteDiarioRowsFiltradas || []).forEach((fila) => {
+      const key = `${fila.estilista_id}|${fila.fecha}`;
+      const edit = ajusteDiarioEditsByKey[key] || {};
+      generado += Number(fila.generado_total || 0);
+      pendiente += Number(fila.pendiente_pago_empleado || 0);
+      consumo += Number(fila.cobro_consumo_dia || 0);
+
+      const dif = (
+        toMontoNoNegativo(edit.pago_efectivo) !== toMontoNoNegativo(fila.pago_efectivo)
+        || toMontoNoNegativo(edit.pago_nequi) !== toMontoNoNegativo(fila.pago_nequi)
+        || toMontoNoNegativo(edit.pago_daviplata) !== toMontoNoNegativo(fila.pago_daviplata)
+        || toMontoNoNegativo(edit.pago_otros) !== toMontoNoNegativo(fila.pago_otros)
+        || toMontoNoNegativo(edit.abono_puesto) !== toMontoNoNegativo(fila.abono_puesto)
+        || String(edit.medio_abono_puesto || 'efectivo') !== String(fila.medio_abono_puesto || 'efectivo')
+        || toMontoNoNegativo(edit.cobro_consumo_objetivo) !== toMontoNoNegativo(fila.cobro_consumo_dia)
+      );
+      if (dif) filasModificadas += 1;
+    });
+
+    return { generado, pendiente, consumo, filasModificadas };
+  }, [ajusteDiarioRowsFiltradas, ajusteDiarioEditsByKey]);
 
   const actualizarCuadreDiaCampo = (estilistaId, fecha, campo, valor) => {
     setCuadreDiarioByEstilista((prev) => {
@@ -2261,16 +2303,55 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
       </section>
 
       <div className="card border border-emerald-200 bg-emerald-50">
-        <div className="flex items-center justify-between gap-3 mb-3">
-          <h3 className="card-header mb-0">Tabla diaria consolidada</h3>
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={cargarAjusteDiarioUnificado}
-            disabled={loadingAjusteDiario}
-          >
-            {loadingAjusteDiario ? 'Actualizando...' : 'Actualizar tabla'}
-          </button>
+        <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-3 mb-3">
+          <div>
+            <h3 className="card-header mb-0">Tabla diaria consolidada</h3>
+            <p className="text-xs text-slate-600 mt-1">Filtra por empleado o fecha y visualiza cuántas filas tienen cambios sin guardar.</p>
+          </div>
+          <div className="flex flex-wrap items-end gap-2">
+            <input
+              type="text"
+              className="input-field !py-2 !w-56"
+              placeholder="Buscar empleado o fecha..."
+              value={filtroAjusteTexto}
+              onChange={(e) => setFiltroAjusteTexto(e.target.value)}
+            />
+            <label className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={soloPendientesAjuste}
+                onChange={(e) => setSoloPendientesAjuste(e.target.checked)}
+              />
+              Solo pendientes
+            </label>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={cargarAjusteDiarioUnificado}
+              disabled={loadingAjusteDiario}
+            >
+              {loadingAjusteDiario ? 'Actualizando...' : 'Actualizar tabla'}
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 mb-4">
+          <div className="rounded-xl border border-emerald-200 bg-white p-3">
+            <p className="text-xs text-slate-500">Filas visibles</p>
+            <p className="text-xl font-black text-slate-900">{ajusteDiarioRowsFiltradas.length}</p>
+          </div>
+          <div className="rounded-xl border border-emerald-200 bg-white p-3">
+            <p className="text-xs text-slate-500">Generado (visible)</p>
+            <p className="text-xl font-black text-slate-900">{formatMoney(resumenAjusteDiario.generado)}</p>
+          </div>
+          <div className="rounded-xl border border-emerald-200 bg-white p-3">
+            <p className="text-xs text-slate-500">Consumo cobrado (visible)</p>
+            <p className="text-xl font-black text-indigo-700">{formatMoney(resumenAjusteDiario.consumo)}</p>
+          </div>
+          <div className="rounded-xl border border-emerald-200 bg-white p-3">
+            <p className="text-xs text-slate-500">Filas modificadas</p>
+            <p className="text-xl font-black text-amber-700">{resumenAjusteDiario.filasModificadas}</p>
+          </div>
         </div>
 
         <div className="overflow-x-auto">
@@ -2294,7 +2375,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-emerald-100">
-              {!loadingAjusteDiario && ajusteDiarioRows.length === 0 && (
+              {!loadingAjusteDiario && ajusteDiarioRowsFiltradas.length === 0 && (
                 <tr>
                   <td className="table-cell text-slate-500" colSpan={14}>No hay filas para el rango seleccionado.</td>
                 </tr>
@@ -2304,7 +2385,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                   <td className="table-cell text-slate-500" colSpan={14}>Cargando ajuste diario...</td>
                 </tr>
               )}
-              {ajusteDiarioRows.map((fila) => {
+              {ajusteDiarioRowsFiltradas.map((fila) => {
                 const key = `${fila.estilista_id}|${fila.fecha}`;
                 const edit = ajusteDiarioEditsByKey[key] || {};
                 const totalPago =
@@ -2320,18 +2401,18 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                     <td className="table-cell">{fila.estilista_nombre}</td>
                     <td className="table-cell font-semibold text-slate-900">{formatMoney(fila.generado_total)}</td>
                     <td className="table-cell text-amber-700">{formatMoney(fila.descuento_puesto)}</td>
-                    <td className="table-cell"><input className="input-field !py-2 !w-24" value={edit.pago_efectivo || ''} onChange={(e) => actualizarAjusteDiarioCampo(key, 'pago_efectivo', e.target.value)} /></td>
-                    <td className="table-cell"><input className="input-field !py-2 !w-24" value={edit.pago_nequi || ''} onChange={(e) => actualizarAjusteDiarioCampo(key, 'pago_nequi', e.target.value)} /></td>
-                    <td className="table-cell"><input className="input-field !py-2 !w-24" value={edit.pago_daviplata || ''} onChange={(e) => actualizarAjusteDiarioCampo(key, 'pago_daviplata', e.target.value)} /></td>
-                    <td className="table-cell"><input className="input-field !py-2 !w-24" value={edit.pago_otros || ''} onChange={(e) => actualizarAjusteDiarioCampo(key, 'pago_otros', e.target.value)} /></td>
-                    <td className="table-cell"><input className="input-field !py-2 !w-24" value={edit.abono_puesto || ''} onChange={(e) => actualizarAjusteDiarioCampo(key, 'abono_puesto', e.target.value)} /></td>
+                    <td className="table-cell"><input className="input-field !h-11 !py-2 !w-24 !font-semibold" value={edit.pago_efectivo || ''} onChange={(e) => actualizarAjusteDiarioCampo(key, 'pago_efectivo', e.target.value)} /></td>
+                    <td className="table-cell"><input className="input-field !h-11 !py-2 !w-24 !font-semibold" value={edit.pago_nequi || ''} onChange={(e) => actualizarAjusteDiarioCampo(key, 'pago_nequi', e.target.value)} /></td>
+                    <td className="table-cell"><input className="input-field !h-11 !py-2 !w-24 !font-semibold" value={edit.pago_daviplata || ''} onChange={(e) => actualizarAjusteDiarioCampo(key, 'pago_daviplata', e.target.value)} /></td>
+                    <td className="table-cell"><input className="input-field !h-11 !py-2 !w-24 !font-semibold" value={edit.pago_otros || ''} onChange={(e) => actualizarAjusteDiarioCampo(key, 'pago_otros', e.target.value)} /></td>
+                    <td className="table-cell"><input className="input-field !h-11 !py-2 !w-24 !font-semibold" value={edit.abono_puesto || ''} onChange={(e) => actualizarAjusteDiarioCampo(key, 'abono_puesto', e.target.value)} /></td>
                     <td className="table-cell">
                       <select className="input-field !py-2 !w-28" value={edit.medio_abono_puesto || 'efectivo'} onChange={(e) => actualizarAjusteDiarioCampo(key, 'medio_abono_puesto', e.target.value)}>
                         {MEDIOS_PAGO_OPERACION.map((m) => (<option key={`aj-ab-${key}-${m.value}`} value={m.value}>{m.label}</option>))}
                       </select>
                     </td>
                     <td className="table-cell">
-                      <input className="input-field !py-2 !w-24" value={edit.cobro_consumo_objetivo || ''} onChange={(e) => actualizarAjusteDiarioCampo(key, 'cobro_consumo_objetivo', e.target.value)} />
+                      <input className="input-field !h-11 !py-2 !w-24 !font-semibold" value={edit.cobro_consumo_objetivo || ''} onChange={(e) => actualizarAjusteDiarioCampo(key, 'cobro_consumo_objetivo', e.target.value)} />
                       <p className="text-[11px] text-slate-500 mt-1">Actual: {formatMoney(fila.cobro_consumo_dia)}</p>
                     </td>
                     <td className="table-cell">
