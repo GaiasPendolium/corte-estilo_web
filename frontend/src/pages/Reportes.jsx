@@ -1192,9 +1192,6 @@ const aplicarEstadoLiquidacion = async (fila) => {
                           </div>
                           <p className="text-xs text-slate-500">{h.fecha_cambio || '-'}</p>
                           <p className="text-xs text-sky-700 mt-1">Abono puesto aplicado al día: {formatMoney(h.abono_aplicado_dia)}</p>
-                          {Number(h.abono_arrastre || 0) > 0 && (
-                            <p className="text-xs text-slate-500">Arrastre/ajuste adicional registrado: {formatMoney(h.abono_arrastre)}</p>
-                          )}
                           <p className="text-xs text-amber-700">Saldo puesto al cierre del día: {formatMoney(h.saldo_puesto_cierre)}</p>
                           <p className="text-xs text-slate-500">Usuario: {h.usuario_nombre || 'Sistema'}</p>
                         </div>
