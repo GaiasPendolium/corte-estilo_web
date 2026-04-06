@@ -790,6 +790,7 @@ const Reportes = () => {
   const ingresoEspaciosTarjeta = Number(resumen?.ingresos_espacios ?? espacios?.total_recibido ?? 0);
   const gananciaTotalTarjeta = ingresoServiciosTarjeta + ingresoProductosTarjeta + ingresoEspaciosTarjeta;
   const liquidacionPagadoCaja = Number(resumen?.liquidacion_empleados ?? 0);
+  const pendienteLiquidacionReal = Number(biData?.kpis?.pago_total_estilistas_neto ?? 0);
 
   const liquidacionTotal = (biData?.estilistas || []).reduce((sum, item) => {
     const generadoConsolidado = Number(item?.generado_total_empleado ?? 0);
@@ -805,7 +806,9 @@ const Reportes = () => {
     const comisionesEmpleado = Number(item.comision_ventas_producto || 0);
     return sum + (valorTotalEmpleado + comisionesEmpleado);
   }, 0);
-  const liquidacionPendiente = Math.max(liquidacionTotal - liquidacionPagadoCaja, 0);
+  const liquidacionPendiente = Number.isFinite(pendienteLiquidacionReal)
+    ? Math.max(pendienteLiquidacionReal, 0)
+    : Math.max(liquidacionTotal - liquidacionPagadoCaja, 0);
 
   const actualizarPagoMedio = (estilistaId, medio, valor) => {
     const limpio = String(valor || '').replace(/[^\d.]/g, '');
