@@ -1371,6 +1371,20 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
       { key: 'espacios', label: 'Espacios' },
     ];
 
+    const mediosTotales = cierreCaja?.medios?.totales || {};
+    const totalIngresosMedios = Number(mediosTotales.ingresos || 0);
+    const totalSalidasMedios = Number(mediosTotales.salidas || 0);
+    const saldoNetoMedios = Number(mediosTotales.saldo || (totalIngresosMedios - totalSalidasMedios));
+
+    const totalServiciosDetalle = Number((serviciosEst?.detalle || []).reduce(
+      (acc, item) => acc + Number(item?.valor_servicio || 0),
+      0
+    ));
+    const totalGananciaServicios = Number(serviciosEst?.total_ganancia || 0);
+
+    const totalPagosEspacios = Number(espacios?.total_recibido || 0);
+    const totalRegistrosEspacios = Number((espacios?.detalle || []).length || 0);
+
     return (
       <div className="space-y-6">
         <section className="card border border-slate-200 bg-white">
@@ -1451,35 +1465,52 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
           </div>
 
           {cierreTabActiva === 'medios' && (
-            <div className="mt-4 overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="table-header">
-                  <tr>
-                    <th className="px-4 py-3 text-left">Medio</th>
-                    <th className="px-4 py-3 text-left">Ingresos</th>
-                    <th className="px-4 py-3 text-left">Pagos empleados</th>
-                    <th className="px-4 py-3 text-left">Saldo</th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {medios.length === 0 && (
+            <>
+              <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs text-slate-500">Ingresos por medios</p>
+                  <p className="text-xl font-black text-slate-900">{formatMoney(totalIngresosMedios)}</p>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs text-slate-500">Pagos empleados</p>
+                  <p className="text-xl font-black text-slate-900">{formatMoney(totalSalidasMedios)}</p>
+                </div>
+                <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-3">
+                  <p className="text-xs text-emerald-700">Saldo neto medios</p>
+                  <p className={`text-xl font-black ${saldoNetoMedios >= 0 ? 'text-emerald-900' : 'text-rose-800'}`}>{formatMoney(saldoNetoMedios)}</p>
+                </div>
+              </div>
+
+              <div className="mt-4 overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="table-header">
                     <tr>
-                      <td className="table-cell text-slate-500" colSpan={4}>No hay movimientos para el rango seleccionado.</td>
+                      <th className="px-4 py-3 text-left">Medio</th>
+                      <th className="px-4 py-3 text-left">Ingresos</th>
+                      <th className="px-4 py-3 text-left">Pagos empleados</th>
+                      <th className="px-4 py-3 text-left">Saldo</th>
                     </tr>
-                  )}
-                  {medios.map((m) => (
-                    <tr key={`medio-${m.medio_pago}`}>
-                      <td className="table-cell capitalize font-medium">{m.medio_pago || '-'}</td>
-                      <td className="table-cell">{formatMoney(m.ingresos)}</td>
-                      <td className="table-cell">{formatMoney(m.salidas)}</td>
-                      <td className={`table-cell font-semibold ${Number(m.saldo || 0) >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                        {formatMoney(m.saldo)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {medios.length === 0 && (
+                      <tr>
+                        <td className="table-cell text-slate-500" colSpan={4}>No hay movimientos para el rango seleccionado.</td>
+                      </tr>
+                    )}
+                    {medios.map((m) => (
+                      <tr key={`medio-${m.medio_pago}`}>
+                        <td className="table-cell capitalize font-medium">{m.medio_pago || '-'}</td>
+                        <td className="table-cell">{formatMoney(m.ingresos)}</td>
+                        <td className="table-cell">{formatMoney(m.salidas)}</td>
+                        <td className={`table-cell font-semibold ${Number(m.saldo || 0) >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                          {formatMoney(m.saldo)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
 
           {cierreTabActiva === 'productos' && (
@@ -1567,95 +1598,129 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
           )}
 
           {cierreTabActiva === 'servicios' && (
-            <div className="mt-4 overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="table-header">
-                  <tr>
-                    <th className="px-4 py-3 text-left">Fecha</th>
-                    <th className="px-4 py-3 text-left">Tipo servicio</th>
-                    <th className="px-4 py-3 text-left">Valor servicio</th>
-                    <th className="px-4 py-3 text-left">Ganancia establecimiento</th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {(serviciosEst.detalle || []).length === 0 && (
+            <>
+              <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs text-slate-500">Valor servicios</p>
+                  <p className="text-xl font-black text-slate-900">{formatMoney(totalServiciosDetalle)}</p>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs text-slate-500">Registros</p>
+                  <p className="text-xl font-black text-slate-900">{(serviciosEst.detalle || []).length}</p>
+                </div>
+                <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-3">
+                  <p className="text-xs text-emerald-700">Ganancia establecimiento</p>
+                  <p className="text-xl font-black text-emerald-900">{formatMoney(totalGananciaServicios)}</p>
+                </div>
+              </div>
+
+              <div className="mt-4 overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="table-header">
                     <tr>
-                      <td className="table-cell text-slate-500" colSpan={4}>No hay servicios con ganancia para establecimiento en el rango.</td>
+                      <th className="px-4 py-3 text-left">Fecha</th>
+                      <th className="px-4 py-3 text-left">Tipo servicio</th>
+                      <th className="px-4 py-3 text-left">Valor servicio</th>
+                      <th className="px-4 py-3 text-left">Ganancia establecimiento</th>
                     </tr>
-                  )}
-                  {(serviciosEst.detalle || []).map((item, idx) => (
-                    <tr key={`srv-tab-${item.fecha_hora || item.fecha || 'x'}-${item.numero_factura || idx}-${idx}`}>
-                      <td className="table-cell">{item.fecha_hora || item.fecha || '-'}</td>
-                      <td className="table-cell">{item.tipo_servicio || '-'}</td>
-                      <td className="table-cell">{formatMoney(item.valor_servicio)}</td>
-                      <td className="table-cell font-semibold text-emerald-700">{formatMoney(item.ganancia_establecimiento)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {(serviciosEst.detalle || []).length === 0 && (
+                      <tr>
+                        <td className="table-cell text-slate-500" colSpan={4}>No hay servicios con ganancia para establecimiento en el rango.</td>
+                      </tr>
+                    )}
+                    {(serviciosEst.detalle || []).map((item, idx) => (
+                      <tr key={`srv-tab-${item.fecha_hora || item.fecha || 'x'}-${item.numero_factura || idx}-${idx}`}>
+                        <td className="table-cell">{item.fecha_hora || item.fecha || '-'}</td>
+                        <td className="table-cell">{item.tipo_servicio || '-'}</td>
+                        <td className="table-cell">{formatMoney(item.valor_servicio)}</td>
+                        <td className="table-cell font-semibold text-emerald-700">{formatMoney(item.ganancia_establecimiento)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
 
           {cierreTabActiva === 'espacios' && (
-            <div className="mt-4 overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="table-header">
-                  <tr>
-                    <th className="px-4 py-3 text-left">Fecha</th>
-                    <th className="px-4 py-3 text-left">Empleado</th>
-                    <th className="px-4 py-3 text-left">Valor pagado</th>
-                    {puedeAjustarFechaEspacio && <th className="px-4 py-3 text-left">Ajustar fecha / monto</th>}
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {(espacios.detalle || []).length === 0 && (
+            <>
+              <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs text-slate-500">Total recibido</p>
+                  <p className="text-xl font-black text-slate-900">{formatMoney(totalPagosEspacios)}</p>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs text-slate-500">Registros</p>
+                  <p className="text-xl font-black text-slate-900">{totalRegistrosEspacios}</p>
+                </div>
+                <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-3">
+                  <p className="text-xs text-emerald-700">Promedio por registro</p>
+                  <p className="text-xl font-black text-emerald-900">{formatMoney(totalRegistrosEspacios > 0 ? totalPagosEspacios / totalRegistrosEspacios : 0)}</p>
+                </div>
+              </div>
+
+              <div className="mt-4 overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="table-header">
                     <tr>
-                      <td className="table-cell text-slate-500" colSpan={puedeAjustarFechaEspacio ? 4 : 3}>No hay pagos por espacio registrados en el rango.</td>
+                      <th className="px-4 py-3 text-left">Fecha</th>
+                      <th className="px-4 py-3 text-left">Empleado</th>
+                      <th className="px-4 py-3 text-left">Valor pagado</th>
+                      {puedeAjustarFechaEspacio && <th className="px-4 py-3 text-left">Ajustar fecha / monto</th>}
                     </tr>
-                  )}
-                  {(espacios.detalle || []).map((item, idx) => (
-                    <tr key={`esp-tab-${item.estado_pago_id || 'x'}-${item.fecha || 'x'}-${item.estilista_id || idx}-${idx}`}>
-                      <td className="table-cell">{item.fecha || '-'}</td>
-                      <td className="table-cell">{item.estilista_nombre || '-'}</td>
-                      <td className="table-cell font-semibold text-sky-700">{formatMoney(item.valor_pagado)}</td>
-                      {puedeAjustarFechaEspacio && (
-                        <td className="table-cell">
-                          {item.estado_pago_id ? (
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="number"
-                                min="1"
-                                step="1"
-                                className="input-field !py-1 !w-28"
-                                value={montoMoverEspacioById[item.estado_pago_id] ?? item.valor_pagado}
-                                onChange={(e) => setMontoMoverEspacioById((prev) => ({ ...prev, [item.estado_pago_id]: e.target.value }))}
-                                title="Monto a mover"
-                              />
-                              <input
-                                type="date"
-                                className="input-field !py-1 !w-40"
-                                value={nuevaFechaEspacioById[item.estado_pago_id] || item.fecha || ''}
-                                onChange={(e) => setNuevaFechaEspacioById((prev) => ({ ...prev, [item.estado_pago_id]: e.target.value }))}
-                              />
-                              <button
-                                type="button"
-                                className="btn-secondary !py-1 !px-2 text-xs"
-                                onClick={() => ajustarFechaPagoEspacio(item)}
-                                disabled={!!savingFechaEspacioById[item.estado_pago_id]}
-                              >
-                                {savingFechaEspacioById[item.estado_pago_id] ? 'Guardando...' : 'Guardar'}
-                              </button>
-                            </div>
-                          ) : (
-                            <span className="text-xs text-slate-500">No editable</span>
-                          )}
-                        </td>
-                      )}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {(espacios.detalle || []).length === 0 && (
+                      <tr>
+                        <td className="table-cell text-slate-500" colSpan={puedeAjustarFechaEspacio ? 4 : 3}>No hay pagos por espacio registrados en el rango.</td>
+                      </tr>
+                    )}
+                    {(espacios.detalle || []).map((item, idx) => (
+                      <tr key={`esp-tab-${item.estado_pago_id || 'x'}-${item.fecha || 'x'}-${item.estilista_id || idx}-${idx}`}>
+                        <td className="table-cell">{item.fecha || '-'}</td>
+                        <td className="table-cell">{item.estilista_nombre || '-'}</td>
+                        <td className="table-cell font-semibold text-sky-700">{formatMoney(item.valor_pagado)}</td>
+                        {puedeAjustarFechaEspacio && (
+                          <td className="table-cell">
+                            {item.estado_pago_id ? (
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="number"
+                                  min="1"
+                                  step="1"
+                                  className="input-field !py-1 !w-28"
+                                  value={montoMoverEspacioById[item.estado_pago_id] ?? item.valor_pagado}
+                                  onChange={(e) => setMontoMoverEspacioById((prev) => ({ ...prev, [item.estado_pago_id]: e.target.value }))}
+                                  title="Monto a mover"
+                                />
+                                <input
+                                  type="date"
+                                  className="input-field !py-1 !w-40"
+                                  value={nuevaFechaEspacioById[item.estado_pago_id] || item.fecha || ''}
+                                  onChange={(e) => setNuevaFechaEspacioById((prev) => ({ ...prev, [item.estado_pago_id]: e.target.value }))}
+                                />
+                                <button
+                                  type="button"
+                                  className="btn-secondary !py-1 !px-2 text-xs"
+                                  onClick={() => ajustarFechaPagoEspacio(item)}
+                                  disabled={!!savingFechaEspacioById[item.estado_pago_id]}
+                                >
+                                  {savingFechaEspacioById[item.estado_pago_id] ? 'Guardando...' : 'Guardar'}
+                                </button>
+                              </div>
+                            ) : (
+                              <span className="text-xs text-slate-500">No editable</span>
+                            )}
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
         </section>
       </div>
@@ -1940,9 +2005,27 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                   {pasoLiquidacion === 3 && (
                     <div className="card border border-rose-200 bg-rose-50">
                       <h4 className="card-header mb-2">Paso 3: Aplicar descuentos</h4>
+                      <div className="mb-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div className="rounded-xl border border-amber-300 bg-amber-50 p-3">
+                          <p className="text-xs text-amber-800">Pendiente cobro puesto</p>
+                          <p className="text-2xl font-black text-amber-900">{formatMoney(Math.max(deudaPuestoAcumulada, 0))}</p>
+                        </div>
+                        <div className="rounded-xl border border-rose-300 bg-rose-100 p-3">
+                          <p className="text-xs text-rose-800">Pendiente consumo cartera</p>
+                          <p className="text-2xl font-black text-rose-900">{formatMoney(Math.max(consumoPendiente, 0))}</p>
+                        </div>
+                      </div>
                       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                         <div className="rounded-xl border border-amber-200 bg-white p-3">
                           <p className="text-sm font-semibold text-slate-900">Alquiler del puesto</p>
+                          <p className="text-xs text-slate-600 mt-1">Pendiente actual: <span className="font-semibold text-amber-800">{formatMoney(Math.max(deudaPuestoAcumulada, 0))}</span></p>
+                          <button
+                            type="button"
+                            className="btn-secondary !py-1 !px-2 text-xs mt-2"
+                            onClick={() => setAbonoPuestoPorEstilista((prev) => ({ ...prev, [estId]: String(Math.max(deudaPuestoAcumulada, 0)) }))}
+                          >
+                            Usar pendiente completo
+                          </button>
                           <label className="block text-xs text-slate-600 mt-2 mb-1">Valor a descontar</label>
                           <input
                             className="input-field"
@@ -1977,9 +2060,17 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
 
                         <div className="rounded-xl border border-rose-200 bg-white p-3">
                           <p className="text-sm font-semibold text-slate-900">Consumo de productos</p>
+                          <p className="text-xs text-slate-600 mt-1">Pendiente actual: <span className="font-semibold text-rose-700">{formatMoney(Math.max(consumoPendiente, 0))}</span></p>
                           <div className="mt-2 flex items-center gap-2">
                             <button type="button" className="btn-secondary !py-1 !px-2 text-xs" onClick={() => seleccionarTodasDeudasConsumo(estId, deudasEmpleado)}>Seleccionar todas</button>
                             <button type="button" className="btn-secondary !py-1 !px-2 text-xs" onClick={() => limpiarSeleccionDeudasConsumo(estId)}>Limpiar</button>
+                            <button
+                              type="button"
+                              className="btn-secondary !py-1 !px-2 text-xs"
+                              onClick={() => setCobroConsumoPorEstilista((prev) => ({ ...prev, [estId]: String(Math.max(consumoPendiente, 0)) }))}
+                            >
+                              Usar pendiente consumo
+                            </button>
                           </div>
                           <div className="mt-2 max-h-40 overflow-y-auto space-y-2 pr-1">
                             {deudasEmpleado.length === 0 && <p className="text-xs text-slate-500">No hay facturas pendientes.</p>}
