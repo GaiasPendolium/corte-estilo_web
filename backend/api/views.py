@@ -3010,6 +3010,8 @@ def liquidar_dia_v2(request):
     pago_daviplata = _to_decimal(request.data.get('pago_daviplata'))
     pago_otros = _to_decimal(request.data.get('pago_otros'))
     abono_puesto = _to_decimal(request.data.get('abono_puesto'))
+    # El payload trae el abono de esta operación; luego se acumula con lo ya registrado en el día.
+    abono_operacion_puesto = abono_puesto
     medio_abono_puesto = (request.data.get('medio_abono_puesto') or 'efectivo').strip().lower()
     if medio_abono_puesto not in {'efectivo', 'nequi', 'daviplata', 'otros'}:
         medio_abono_puesto = 'efectivo'
