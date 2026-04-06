@@ -2965,7 +2965,7 @@ def estado_pago_estilista_dia(request):
                 for x in qs.order_by('fecha', 'estilista_id')
             ]
 
-            if _usar_fact_liquidacion_en_reportes() and items:
+            if items:
                 fact_map = {
                     (int(f.estilista_id), f.fecha): f
                     for f in FactLiquidacionEstilistaDia.objects.filter(
@@ -3005,7 +3005,7 @@ def estado_pago_estilista_dia(request):
                 for x in EstadoPagoEstilistaDia.objects.filter(fecha=fecha)
             ]
 
-            if _usar_fact_liquidacion_en_reportes() and items:
+            if items:
                 fact_map = {
                     int(f.estilista_id): f
                     for f in FactLiquidacionEstilistaDia.objects.filter(vigente=True, fecha=fecha)
@@ -4522,6 +4522,19 @@ def reporte_ajuste_diario_unificado(request):
         except Exception:
             facts_map = {}
 
+    facts_map_aplica = {}
+    try:
+        facts_qs_aplica = FactLiquidacionEstilistaDia.objects.filter(
+            estilista_id__in=estilista_ids,
+            fecha__gte=fecha_inicio_dt,
+            fecha__lte=fecha_fin_dt,
+            vigente=True,
+        )
+        for fact in facts_qs_aplica:
+            facts_map_aplica[(int(fact.estilista_id), fact.fecha)] = fact
+    except Exception:
+        facts_map_aplica = {}
+
     consumo_por_est_dia = defaultdict(Decimal)
     try:
         abonos_qs = AbonoDeudaEmpleado.objects.select_related('deuda').filter(
@@ -4586,6 +4599,7 @@ def reporte_ajuste_diario_unificado(request):
             calc = calcular_liquidacion_dia_estilista(est, dia)
             ep = estados_map.get((est_id, dia))
             fact = facts_map.get((est_id, dia)) if usar_fact else None
+            fact_aplica = facts_map_aplica.get((est_id, dia))
 
             pago_efectivo = Decimal((fact.pago_efectivo if fact else (ep.pago_efectivo if ep else 0)) or 0)
             pago_nequi = Decimal((fact.pago_nequi if fact else (ep.pago_nequi if ep else 0)) or 0)
@@ -4593,7 +4607,7 @@ def reporte_ajuste_diario_unificado(request):
             pago_otros = Decimal((fact.pago_otros if fact else (ep.pago_otros if ep else 0)) or 0)
             abono_puesto = Decimal((fact.abono_puesto_dia if fact else (ep.abono_puesto if ep else 0)) or 0)
             medio_abono = (getattr(fact, 'medio_abono_puesto', None) or (getattr(ep, 'medio_abono_puesto', None) if ep else None) or 'efectivo')
-            aplica_comision_ventas = bool(getattr(fact, 'aplica_comision_ventas', True)) if fact else True
+            aplica_comision_ventas = bool(getattr(fact_aplica, 'aplica_comision_ventas', True)) if fact_aplica else True
             pagado_total = pago_efectivo + pago_nequi + pago_daviplata + pago_otros
             generado = Decimal((
                 max(Decimal(fact.ganancias_totales or 0) - Decimal(fact.descuento_puesto_dia or 0), Decimal(0))
