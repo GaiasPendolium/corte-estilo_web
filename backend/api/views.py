@@ -3527,13 +3527,94 @@ def mover_fecha_estado_pago_dia(request, estado_id):
     except Exception:
         return Response({'error': 'Formato de fecha inválido. Usa YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
 
+    monto_mover_raw = request.data.get('monto_mover', None)
+
     estado = EstadoPagoEstilistaDia.objects.select_related('estilista').filter(id=estado_id).first()
     if not estado:
         return Response({'error': 'Registro de pago diario no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
 
+    abono_origen = max(Decimal(estado.abono_puesto or 0), Decimal(0))
+    if abono_origen <= 0:
+        return Response({'error': 'Este registro no tiene abono de espacio para mover.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if monto_mover_raw in (None, ''):
+        monto_mover = abono_origen
+    else:
+        try:
+            monto_mover = Decimal(str(monto_mover_raw))
+        except Exception:
+            return Response({'error': 'monto_mover inválido.'}, status=status.HTTP_400_BAD_REQUEST)
+        if monto_mover <= 0:
+            return Response({'error': 'monto_mover debe ser mayor a 0.'}, status=status.HTTP_400_BAD_REQUEST)
+        if monto_mover > abono_origen:
+            return Response({'error': f'monto_mover no puede superar el abono disponible ({float(abono_origen):.2f}).'}, status=status.HTTP_400_BAD_REQUEST)
+
     fecha_anterior = estado.fecha
     if fecha_anterior == nueva_fecha:
         return Response({'ok': True, 'estado_id': estado.id, 'fecha_anterior': str(fecha_anterior), 'fecha_nueva': str(nueva_fecha)})
+
+    def _recalcular_estados_desde_fecha(estilista_obj, fecha_inicio):
+        deuda_arrastre = Decimal(0)
+        previo = EstadoPagoEstilistaDia.objects.filter(
+            estilista=estilista_obj,
+            fecha__lt=fecha_inicio,
+        ).order_by('-fecha', '-actualizado_en').first()
+        if previo:
+            deuda_arrastre = max(
+                Decimal(getattr(previo, 'saldo_puesto_pendiente', None) or getattr(previo, 'pendiente_puesto', 0) or 0),
+                Decimal(0),
+            )
+
+        diarios = EstadoPagoEstilistaDia.objects.filter(
+            estilista=estilista_obj,
+            fecha__gte=fecha_inicio,
+        ).order_by('fecha', 'id')
+
+        for d in diarios:
+            calc = calcular_liquidacion_dia_estilista(estilista_obj, d.fecha)
+            ganancias = Decimal(calc.get('ganancias_totales') or 0)
+            descuento = max(Decimal(calc.get('descuento_puesto') or 0), Decimal(0))
+            total_pagable = max(Decimal(calc.get('total_pagable') or 0), Decimal(0))
+
+            total_pagado = (
+                Decimal(d.pago_efectivo or 0)
+                + Decimal(d.pago_nequi or 0)
+                + Decimal(d.pago_daviplata or 0)
+                + Decimal(d.pago_otros or 0)
+            )
+            abono_dia = max(Decimal(d.abono_puesto or 0), Decimal(0))
+            deuda_total = max(deuda_arrastre + descuento, Decimal(0))
+            abono_aplicado = min(abono_dia, deuda_total)
+            saldo_puesto = max(deuda_total - abono_aplicado, Decimal(0))
+
+            pendiente_liquidacion = max(total_pagable - total_pagado, Decimal(0))
+            if pendiente_liquidacion > 0:
+                estado_calc = 'pendiente'
+            elif saldo_puesto > 0:
+                estado_calc = 'debe'
+            else:
+                estado_calc = 'cancelado'
+
+            d.ganancias_totales = ganancias
+            d.descuento_puesto = descuento
+            d.total_pagable = total_pagable
+            d.neto_dia = total_pagable
+            d.saldo_puesto_pendiente = saldo_puesto
+            d.pendiente_puesto = saldo_puesto
+            d.estado = estado_calc
+            d.save(
+                update_fields=[
+                    'ganancias_totales',
+                    'descuento_puesto',
+                    'total_pagable',
+                    'neto_dia',
+                    'saldo_puesto_pendiente',
+                    'pendiente_puesto',
+                    'estado',
+                    'actualizado_en',
+                ]
+            )
+            deuda_arrastre = saldo_puesto
 
     with transaction.atomic():
         destino = EstadoPagoEstilistaDia.objects.select_for_update().filter(
@@ -3542,12 +3623,8 @@ def mover_fecha_estado_pago_dia(request, estado_id):
         ).exclude(id=estado.id).first()
 
         if destino:
-            destino.pago_efectivo = Decimal(destino.pago_efectivo or 0) + Decimal(estado.pago_efectivo or 0)
-            destino.pago_nequi = Decimal(destino.pago_nequi or 0) + Decimal(estado.pago_nequi or 0)
-            destino.pago_daviplata = Decimal(destino.pago_daviplata or 0) + Decimal(estado.pago_daviplata or 0)
-            destino.pago_otros = Decimal(destino.pago_otros or 0) + Decimal(estado.pago_otros or 0)
-            destino.abono_puesto = Decimal(destino.abono_puesto or 0) + Decimal(estado.abono_puesto or 0)
-            if Decimal(estado.abono_puesto or 0) > 0:
+            destino.abono_puesto = Decimal(destino.abono_puesto or 0) + monto_mover
+            if monto_mover > 0:
                 destino.medio_abono_puesto = getattr(estado, 'medio_abono_puesto', destino.medio_abono_puesto)
             if estado.notas:
                 notas_prev = (destino.notas or '').strip()
@@ -3555,10 +3632,6 @@ def mover_fecha_estado_pago_dia(request, estado_id):
             destino.usuario_liquida = request.user
             destino.save(
                 update_fields=[
-                    'pago_efectivo',
-                    'pago_nequi',
-                    'pago_daviplata',
-                    'pago_otros',
                     'abono_puesto',
                     'medio_abono_puesto',
                     'notas',
@@ -3566,18 +3639,48 @@ def mover_fecha_estado_pago_dia(request, estado_id):
                     'actualizado_en',
                 ]
             )
-            estado.delete()
+
+            estado.abono_puesto = max(abono_origen - monto_mover, Decimal(0))
+            estado.usuario_liquida = request.user
+            estado.save(update_fields=['abono_puesto', 'usuario_liquida', 'actualizado_en'])
             estado_result_id = destino.id
         else:
-            estado.fecha = nueva_fecha
+            destino = EstadoPagoEstilistaDia.objects.create(
+                estilista_id=estado.estilista_id,
+                fecha=nueva_fecha,
+                estado='debe',
+                pago_efectivo=Decimal(0),
+                pago_nequi=Decimal(0),
+                pago_daviplata=Decimal(0),
+                pago_otros=Decimal(0),
+                abono_puesto=monto_mover,
+                medio_abono_puesto=getattr(estado, 'medio_abono_puesto', 'efectivo') or 'efectivo',
+                notas=f"Ajuste fecha desde {fecha_anterior}",
+                usuario_liquida=request.user,
+            )
+            estado.abono_puesto = max(abono_origen - monto_mover, Decimal(0))
             estado.usuario_liquida = request.user
-            estado.save(update_fields=['fecha', 'usuario_liquida', 'actualizado_en'])
-            estado_result_id = estado.id
+            estado.save(update_fields=['abono_puesto', 'usuario_liquida', 'actualizado_en'])
+            estado_result_id = destino.id
 
-        EstadoPagoEstilistaHistorial.objects.filter(
-            estilista_id=estado.estilista_id,
-            fecha=fecha_anterior,
-        ).update(fecha=nueva_fecha)
+        try:
+            EstadoPagoEstilistaHistorial.objects.create(
+                estilista_id=estado.estilista_id,
+                fecha=nueva_fecha,
+                estado_anterior='debe',
+                estado_nuevo='debe',
+                notas=f'Ajuste de fecha desde {fecha_anterior}',
+                usuario=request.user,
+                monto_liquidado=Decimal(0),
+                abono_puesto=monto_mover,
+                medio_abono_puesto=getattr(estado, 'medio_abono_puesto', 'efectivo') or 'efectivo',
+                pendiente_puesto=Decimal(0),
+            )
+        except Exception:
+            pass
+
+        fecha_recalculo = min(fecha_anterior, nueva_fecha)
+        _recalcular_estados_desde_fecha(estado.estilista, fecha_recalculo)
 
     return Response(
         {
@@ -3587,6 +3690,7 @@ def mover_fecha_estado_pago_dia(request, estado_id):
             'estilista_nombre': estado.estilista.nombre if estado.estilista_id else None,
             'fecha_anterior': str(fecha_anterior),
             'fecha_nueva': str(nueva_fecha),
+            'monto_movido': float(monto_mover),
         }
     )
 

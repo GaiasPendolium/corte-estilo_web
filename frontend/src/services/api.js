@@ -458,9 +458,10 @@ export const reportesService = {
     return response.data;
   },
 
-  moverFechaEstadoPagoDia: async ({ estado_pago_id, nueva_fecha }) => {
+  moverFechaEstadoPagoDia: async ({ estado_pago_id, nueva_fecha, monto_mover = null }) => {
     const response = await api.patch(`/reportes/estilistas/estado-pago-dia/${estado_pago_id}/mover-fecha/`, {
       nueva_fecha,
+      ...(monto_mover !== null && monto_mover !== undefined && monto_mover !== '' ? { monto_mover } : {}),
     });
     return response.data;
   },

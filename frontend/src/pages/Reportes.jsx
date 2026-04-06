@@ -134,6 +134,7 @@ const Reportes = () => {
   const [historialEstados, setHistorialEstados] = useState([]);
   const [loadingHistorial, setLoadingHistorial] = useState(false);
   const [nuevaFechaEspacioById, setNuevaFechaEspacioById] = useState({});
+  const [montoMoverEspacioById, setMontoMoverEspacioById] = useState({});
   const [savingFechaEspacioById, setSavingFechaEspacioById] = useState({});
 
   const calcularPendientePagoEmpleado = useCallback((fila) => {
@@ -149,6 +150,8 @@ const Reportes = () => {
   const ajustarFechaPagoEspacio = async (item) => {
     const estadoId = Number(item?.estado_pago_id || 0);
     const fechaNueva = String(nuevaFechaEspacioById[estadoId] || '').trim();
+    const montoMoverRaw = montoMoverEspacioById[estadoId];
+    const montoMover = Number(montoMoverRaw || item?.valor_pagado || 0);
 
     if (!estadoId) {
       toast.error('No se puede ajustar este registro porque no tiene identificador editable.');
@@ -158,11 +161,19 @@ const Reportes = () => {
       toast.warning('Selecciona una fecha nueva.');
       return;
     }
+    if (!Number.isFinite(montoMover) || montoMover <= 0) {
+      toast.warning('Ingresa un monto a mover mayor a 0.');
+      return;
+    }
 
     setSavingFechaEspacioById((prev) => ({ ...prev, [estadoId]: true }));
     try {
-      await reportesService.moverFechaEstadoPagoDia({ estado_pago_id: estadoId, nueva_fecha: fechaNueva });
-      toast.success('Fecha del pago de espacio actualizada.');
+      await reportesService.moverFechaEstadoPagoDia({
+        estado_pago_id: estadoId,
+        nueva_fecha: fechaNueva,
+        monto_mover: montoMover,
+      });
+      toast.success('Pago de espacio ajustado correctamente.');
       await cargarTodo();
     } catch (error) {
       const msg = error?.response?.data?.error || 'No se pudo ajustar la fecha del pago de espacio.';
@@ -946,7 +957,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
                   <th className="px-4 py-3 text-left">Fecha</th>
                   <th className="px-4 py-3 text-left">Empleado</th>
                   <th className="px-4 py-3 text-left">Valor pagado</th>
-                  {puedeAjustarFechaEspacio && <th className="px-4 py-3 text-left">Ajustar fecha</th>}
+                  {puedeAjustarFechaEspacio && <th className="px-4 py-3 text-left">Ajustar fecha / monto</th>}
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
@@ -965,8 +976,17 @@ const aplicarEstadoLiquidacion = async (fila) => {
                         {item.estado_pago_id ? (
                           <div className="flex items-center gap-2">
                             <input
+                              type="number"
+                              min="1"
+                              step="1"
+                              className="input-field !py-1 !w-28"
+                              value={montoMoverEspacioById[item.estado_pago_id] ?? item.valor_pagado}
+                              onChange={(e) => setMontoMoverEspacioById((prev) => ({ ...prev, [item.estado_pago_id]: e.target.value }))}
+                              title="Monto a mover"
+                            />
+                            <input
                               type="date"
-                              className="input-field !py-1"
+                              className="input-field !py-1 !w-40"
                               value={nuevaFechaEspacioById[item.estado_pago_id] || item.fecha || ''}
                               onChange={(e) => setNuevaFechaEspacioById((prev) => ({ ...prev, [item.estado_pago_id]: e.target.value }))}
                             />
