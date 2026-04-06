@@ -4632,7 +4632,8 @@ def reporte_ajuste_diario_unificado(request):
     for est in estilistas:
         est_id = int(est.id)
         for dia in sorted(list(dias_con_movimiento.get(est_id, set())), reverse=True):
-            calc = calcular_liquidacion_dia_estilista(est, dia)
+            calc_con_comision = calcular_liquidacion_dia_estilista(est, dia, aplica_comision_ventas=True)
+            calc_sin_comision = calcular_liquidacion_dia_estilista(est, dia, aplica_comision_ventas=False)
             ep = estados_map.get((est_id, dia))
             fact = facts_map.get((est_id, dia)) if usar_fact else None
             fact_aplica = facts_map_aplica.get((est_id, dia))
@@ -4645,11 +4646,15 @@ def reporte_ajuste_diario_unificado(request):
             medio_abono = (getattr(fact, 'medio_abono_puesto', None) or (getattr(ep, 'medio_abono_puesto', None) if ep else None) or 'efectivo')
             aplica_comision_ventas = bool(getattr(fact_aplica, 'aplica_comision_ventas', True)) if fact_aplica else True
             pagado_total = pago_efectivo + pago_nequi + pago_daviplata + pago_otros
+            generado_con_comision = Decimal(calc_con_comision.get('total_pagable') or 0)
+            generado_sin_comision = Decimal(calc_sin_comision.get('total_pagable') or 0)
             generado = Decimal((
                 max(Decimal(fact.ganancias_totales or 0) - Decimal(fact.descuento_puesto_dia or 0), Decimal(0))
-                if fact else calc.get('total_pagable')
+                if fact else (generado_con_comision if aplica_comision_ventas else generado_sin_comision)
             ) or 0)
-            descuento_puesto = Decimal((fact.descuento_puesto_dia if fact else calc.get('descuento_puesto')) or 0)
+            descuento_puesto = Decimal((
+                fact.descuento_puesto_dia if fact else (calc_con_comision.get('descuento_puesto') if aplica_comision_ventas else calc_sin_comision.get('descuento_puesto'))
+            ) or 0)
             deuda_puesto = Decimal((fact.deuda_puesto_cierre if fact else (getattr(ep, 'saldo_puesto_pendiente', 0) if ep else 0)) or 0)
             estado_item = (fact.estado_liquidacion if fact else (ep.estado if ep else 'pendiente'))
             cobro_consumo = Decimal((fact.cobro_consumo_dia if fact else consumo_por_est_dia.get((est_id, dia), Decimal(0))) or 0)
@@ -4661,6 +4666,8 @@ def reporte_ajuste_diario_unificado(request):
                     'fecha': dia.strftime('%Y-%m-%d'),
                     'estado': estado_item,
                     'generado_total': float(generado),
+                    'generado_total_con_comision': float(generado_con_comision),
+                    'generado_total_sin_comision': float(generado_sin_comision),
                     'descuento_puesto': float(descuento_puesto),
                     'pago_efectivo': float(pago_efectivo),
                     'pago_nequi': float(pago_nequi),

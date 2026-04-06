@@ -930,12 +930,15 @@ const Reportes = () => {
     const abono_puesto = toMontoNoNegativo(edit.abono_puesto);
     const medio_abono_puesto = edit.medio_abono_puesto || 'efectivo';
     const aplica_comision_ventas = Boolean(edit.aplica_comision_ventas ?? true);
+    const generadoConComision = Number(fila.generado_total_con_comision ?? fila.generado_total ?? 0);
+    const generadoSinComision = Number(fila.generado_total_sin_comision ?? fila.generado_total ?? 0);
+    const generadoObjetivo = Math.max(aplica_comision_ventas ? generadoConComision : generadoSinComision, 0);
     const consumo_actual = Math.max(Number(fila.cobro_consumo_dia || 0), 0);
     const consumo_obj = toMontoNoNegativo(edit.cobro_consumo_objetivo);
     const medio_cobro_consumo = edit.medio_cobro_consumo || 'efectivo';
 
     const total_pago = pago_efectivo + pago_nequi + pago_daviplata + pago_otros;
-    const tope = Math.max(Number(fila.generado_total || 0), 0);
+    const tope = generadoObjetivo;
     if (total_pago > tope) {
       toast.warning(`El pago al empleado no puede superar ${formatMoney(tope)} para ${fila.fecha}.`);
       return;
@@ -3030,18 +3033,21 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
               {ajusteDiarioRowsFiltradas.map((fila) => {
                 const key = `${fila.estilista_id}|${fila.fecha}`;
                 const edit = ajusteDiarioEditsByKey[key] || {};
+                const aplicaComisionRow = Boolean(edit.aplica_comision_ventas ?? true);
                 const totalPago =
                   toMontoNoNegativo(edit.pago_efectivo) +
                   toMontoNoNegativo(edit.pago_nequi) +
                   toMontoNoNegativo(edit.pago_daviplata) +
                   toMontoNoNegativo(edit.pago_otros);
-                const generado = Number(fila.generado_total || 0);
+                const generadoConComision = Number(fila.generado_total_con_comision ?? fila.generado_total || 0);
+                const generadoSinComision = Number(fila.generado_total_sin_comision ?? fila.generado_total || 0);
+                const generado = Math.max(aplicaComisionRow ? generadoConComision : generadoSinComision, 0);
                 const pendientePreview = Math.max(generado - totalPago, 0);
                 return (
                   <tr key={`ajuste-${key}`}>
                     <td className="table-cell font-semibold">{fila.fecha}</td>
                     <td className="table-cell">{fila.estilista_nombre}</td>
-                    <td className="table-cell font-semibold text-slate-900">{formatMoney(fila.generado_total)}</td>
+                    <td className="table-cell font-semibold text-slate-900">{formatMoney(generado)}</td>
                     <td className="table-cell text-amber-700">{formatMoney(fila.descuento_puesto)}</td>
                     <td className="table-cell"><input className="input-field !h-11 !py-2 !w-24 !font-semibold" value={edit.pago_efectivo || ''} onChange={(e) => actualizarAjusteDiarioCampo(key, 'pago_efectivo', e.target.value)} /></td>
                     <td className="table-cell"><input className="input-field !h-11 !py-2 !w-24 !font-semibold" value={edit.pago_nequi || ''} onChange={(e) => actualizarAjusteDiarioCampo(key, 'pago_nequi', e.target.value)} /></td>
