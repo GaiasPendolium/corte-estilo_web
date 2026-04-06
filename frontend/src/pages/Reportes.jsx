@@ -3117,8 +3117,8 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                   toMontoNoNegativo(edit.pago_nequi) +
                   toMontoNoNegativo(edit.pago_daviplata) +
                   toMontoNoNegativo(edit.pago_otros);
-                const generadoConComision = Number(fila.generado_total_con_comision ?? fila.generado_total || 0);
-                const generadoSinComision = Number(fila.generado_total_sin_comision ?? fila.generado_total || 0);
+                const generadoConComision = Number((fila.generado_total_con_comision ?? fila.generado_total) || 0);
+                const generadoSinComision = Number((fila.generado_total_sin_comision ?? fila.generado_total) || 0);
                 const generado = Math.max(aplicaComisionRow ? generadoConComision : generadoSinComision, 0);
                 const pendientePreview = Math.max(generado - totalPago, 0);
                 return (
