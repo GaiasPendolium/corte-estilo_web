@@ -126,6 +126,7 @@ const Reportes = () => {
   const [cobroConsumoPorEstilista, setCobroConsumoPorEstilista] = useState({});
   const [medioCobroConsumoPorEstilista, setMedioCobroConsumoPorEstilista] = useState({});
   const [deudaConsumoSeleccionadasPorEstilista, setDeudaConsumoSeleccionadasPorEstilista] = useState({});
+  const [modoCorreccionPorEstilista, setModoCorreccionPorEstilista] = useState({});
   const [savingEstadoByEstilista, setSavingEstadoByEstilista] = useState({});
   const [numericPadTarget, setNumericPadTarget] = useState(null);
   const [desgloseLiquidacion, setDesgloseLiquidacion] = useState(null);
@@ -619,6 +620,7 @@ const Reportes = () => {
 const aplicarEstadoLiquidacion = async (fila) => {
   const estilistaId = fila.estilista_id;
   const fechaLiquidacion = fechaFin || format(new Date(), 'yyyy-MM-dd');
+  const esCorreccion = Boolean(modoCorreccionPorEstilista[estilistaId]);
   
   const pago_efectivo = Number(pagosPorEstilista[estilistaId]?.efectivo || 0);
   const pago_nequi = Number(pagosPorEstilista[estilistaId]?.nequi || 0);
@@ -633,7 +635,11 @@ const aplicarEstadoLiquidacion = async (fila) => {
     .map((x) => Number(x))
     .filter((x) => Number.isFinite(x) && x > 0);
   const medioCobroConsumo = medioCobroConsumoPorEstilista[estilistaId] || 'efectivo';
-  const topePagoEmpleado = calcularPendientePagoEmpleado(fila);
+  const topePagoEmpleado = (() => {
+    const dia = (desgloseLiquidacion?.desglose_por_dia || []).find((d) => String(d.fecha || '') === String(fechaLiquidacion));
+    if (dia) return Math.max(Number(dia.neto_dia || 0), 0);
+    return calcularPendientePagoEmpleado(fila);
+  })();
 
   if (pago_efectivo + pago_nequi + pago_daviplata + pago_otros > topePagoEmpleado) {
     toast.warning(`El pago al empleado no puede superar ${formatMoney(topePagoEmpleado)} para el día ${fechaLiquidacion}.`);
@@ -669,6 +675,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
       pago_otros,
       abono_puesto,
       medio_abono_puesto,
+      forzar_reemplazo_dia: esCorreccion,
       notas: `Liquidación ${fechaLiquidacion}`,
     });
     const g = resultado.liquidacion.ganancias_totales;
@@ -689,6 +696,10 @@ const aplicarEstadoLiquidacion = async (fila) => {
       ...prev,
       [estilistaId]: resultado.estado,
     }));
+
+    if (esCorreccion) {
+      setModoCorreccionPorEstilista((prev) => ({ ...prev, [estilistaId]: false }));
+    }
     
     await Promise.all([cargarTodo(), cargarCarteraLiquidacionGlobal()]);
   } catch (error) {
@@ -730,6 +741,11 @@ const aplicarEstadoLiquidacion = async (fila) => {
     setMedioAbonoPuestoPorEstilista((prev) => ({
       ...prev,
       [estilistaId]: medioAbono,
+    }));
+
+    setModoCorreccionPorEstilista((prev) => ({
+      ...prev,
+      [estilistaId]: true,
     }));
 
     toast.info(`Valores precargados para corregir ${registroDia.fecha || 'el día seleccionado'}. Ajusta y vuelve a liquidar.`);
@@ -1325,6 +1341,9 @@ const aplicarEstadoLiquidacion = async (fila) => {
                       >
                         {savingEstadoByEstilista[estId] ? 'Procesando...' : 'Liquidar y registrar movimientos'}
                       </button>
+                      {Boolean(modoCorreccionPorEstilista[estId]) && (
+                        <p className="text-xs text-amber-700">Modo corrección activo: al guardar se reemplazan los valores de ese día.</p>
+                      )}
                     </div>
                   </div>
                 </div>

@@ -2994,6 +2994,11 @@ def liquidar_dia_v2(request):
     abono_puesto = _to_decimal(request.data.get('abono_puesto'))
     # El payload trae el abono de esta operación; luego se acumula con lo ya registrado en el día.
     abono_operacion_puesto = abono_puesto
+    forzar_reemplazo_dia_raw = request.data.get('forzar_reemplazo_dia', False)
+    if isinstance(forzar_reemplazo_dia_raw, str):
+        forzar_reemplazo_dia = forzar_reemplazo_dia_raw.strip().lower() in {'1', 'true', 'si', 'sí', 'yes'}
+    else:
+        forzar_reemplazo_dia = bool(forzar_reemplazo_dia_raw)
     medio_abono_puesto = (request.data.get('medio_abono_puesto') or 'efectivo').strip().lower()
     if medio_abono_puesto not in {'efectivo', 'nequi', 'daviplata', 'otros'}:
         medio_abono_puesto = 'efectivo'
@@ -3051,20 +3056,20 @@ def liquidar_dia_v2(request):
     # Si no hay deuda suficiente para aplicarlo en el saldo, el excedente queda
     # como abono registrado del día (sin bloquear la liquidación).
 
-    # Abono acumulado del mismo día: el valor enviado se toma como abono de esta operación,
-    # no como reemplazo del histórico ya registrado ese día.
+    # En operación normal el abono se acumula por día; en modo corrección se reemplaza.
     abono_puesto_previo_dia = Decimal(0)
-    try:
-        estado_existente_dia = EstadoPagoEstilistaDia.objects.filter(
-            estilista=estilista,
-            fecha=fecha,
-        ).first()
-        if estado_existente_dia:
-            abono_puesto_previo_dia = Decimal(estado_existente_dia.abono_puesto or 0)
-    except (OperationalError, ProgrammingError):
-        abono_puesto_previo_dia = Decimal(0)
+    if not forzar_reemplazo_dia:
+        try:
+            estado_existente_dia = EstadoPagoEstilistaDia.objects.filter(
+                estilista=estilista,
+                fecha=fecha,
+            ).first()
+            if estado_existente_dia:
+                abono_puesto_previo_dia = Decimal(estado_existente_dia.abono_puesto or 0)
+        except (OperationalError, ProgrammingError):
+            abono_puesto_previo_dia = Decimal(0)
 
-    abono_puesto = abono_puesto_previo_dia + abono_operacion_puesto
+    abono_puesto = abono_operacion_puesto if forzar_reemplazo_dia else (abono_puesto_previo_dia + abono_operacion_puesto)
     
     # ============ [3] SALDO PENDIENTE ACUMULADO DE PUESTO ============
     deuda_total_puesto = deuda_anterior_puesto + descuento
