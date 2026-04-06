@@ -2505,7 +2505,6 @@ def abonar_consumo_empleado(request):
     monto = request.data.get('monto')
     medio_pago = (request.data.get('medio_pago') or 'efectivo').strip().lower()
     notas = request.data.get('notas')
-    fecha_abono_raw = (request.data.get('fecha') or '').strip()
 
     if medio_pago not in {'nequi', 'daviplata', 'efectivo', 'otros'}:
         return Response({'error': 'Medio de pago inválido.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -2530,18 +2529,6 @@ def abonar_consumo_empleado(request):
 
     if monto_decimal <= 0:
         return Response({'error': 'El monto debe ser mayor a cero.'}, status=status.HTTP_400_BAD_REQUEST)
-
-    fecha_abono_dt = None
-    if fecha_abono_raw:
-        try:
-            fecha_abono = datetime.strptime(fecha_abono_raw, '%Y-%m-%d').date()
-        except Exception:
-            return Response({'error': 'Fecha inválida. Usa YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        hora_ref = timezone.localtime().time().replace(microsecond=0)
-        fecha_abono_dt = datetime.combine(fecha_abono, hora_ref)
-        if timezone.is_naive(fecha_abono_dt):
-            fecha_abono_dt = timezone.make_aware(fecha_abono_dt, timezone.get_current_timezone())
 
     if deuda_objetivo is not None:
         if deuda_objetivo.estilista_id != estilista.id:
@@ -2573,17 +2560,13 @@ def abonar_consumo_empleado(request):
             if aplicado <= 0:
                 continue
 
-            create_data = {
-                'deuda': deuda,
-                'monto': aplicado,
-                'medio_pago': medio_pago,
-                'usuario': request.user,
-                'notas': notas,
-            }
-            if fecha_abono_dt is not None:
-                create_data['fecha_hora'] = fecha_abono_dt
-
-            AbonoDeudaEmpleado.objects.create(**create_data)
+            AbonoDeudaEmpleado.objects.create(
+                deuda=deuda,
+                monto=aplicado,
+                medio_pago=medio_pago,
+                usuario=request.user,
+                notas=notas,
+            )
 
             deuda.total_abonado = Decimal(deuda.total_abonado or 0) + aplicado
             _recalcular_estado_deuda(deuda)
@@ -2631,6 +2614,7 @@ def editar_abono_consumo_empleado(request, abono_id):
     monto_raw = request.data.get('monto', abono.monto)
     medio_pago = (request.data.get('medio_pago') or abono.medio_pago or 'efectivo').strip().lower()
     notas = request.data.get('notas', abono.notas)
+    fecha_raw = (request.data.get('fecha') or '').strip()
 
     if medio_pago not in {'nequi', 'daviplata', 'efectivo', 'otros'}:
         return Response({'error': 'Medio de pago inválido.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -2642,6 +2626,18 @@ def editar_abono_consumo_empleado(request, abono_id):
 
     if monto_nuevo <= 0:
         return Response({'error': 'El monto debe ser mayor a cero.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    fecha_nueva_dt = None
+    if fecha_raw:
+        try:
+            fecha_nueva = datetime.strptime(fecha_raw, '%Y-%m-%d').date()
+        except Exception:
+            return Response({'error': 'Fecha inválida. Usa YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        hora_ref = timezone.localtime(abono.fecha_hora).time() if abono.fecha_hora else timezone.localtime().time()
+        fecha_nueva_dt = datetime.combine(fecha_nueva, hora_ref.replace(microsecond=0))
+        if timezone.is_naive(fecha_nueva_dt):
+            fecha_nueva_dt = timezone.make_aware(fecha_nueva_dt, timezone.get_current_timezone())
 
     with transaction.atomic():
         deuda = DeudaConsumoEmpleado.objects.select_for_update().get(id=abono.deuda_id)
@@ -2663,7 +2659,11 @@ def editar_abono_consumo_empleado(request, abono_id):
         abono.monto = monto_nuevo
         abono.medio_pago = medio_pago
         abono.notas = notas
-        abono.save(update_fields=['monto', 'medio_pago', 'notas'])
+        if fecha_nueva_dt is not None:
+            abono.fecha_hora = fecha_nueva_dt
+            abono.save(update_fields=['monto', 'medio_pago', 'notas', 'fecha_hora'])
+        else:
+            abono.save(update_fields=['monto', 'medio_pago', 'notas'])
 
         deuda.total_abonado = total_abonado_nuevo
         _recalcular_estado_deuda(deuda)
@@ -2679,6 +2679,7 @@ def editar_abono_consumo_empleado(request, abono_id):
                 'monto': float(abono.monto or 0),
                 'medio_pago': abono.medio_pago,
                 'notas': abono.notas,
+                'fecha_hora': timezone.localtime(abono.fecha_hora).strftime('%Y-%m-%d %H:%M:%S') if abono.fecha_hora else None,
             },
             'deuda': {
                 'deuda_id': deuda.id,
