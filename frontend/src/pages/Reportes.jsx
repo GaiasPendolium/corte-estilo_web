@@ -137,6 +137,7 @@ const Reportes = () => {
   const [loading, setLoading] = useState(true);
   const [cierreCaja, setCierreCaja] = useState(null);
   const [biData, setBiData] = useState(null);
+  const [pagadoEmpleadosDesdeAjuste, setPagadoEmpleadosDesdeAjuste] = useState(null);
   const [carteraData, setCarteraData] = useState({ resumen: [], deudas: [], abonos_historial: [] });
   const [carteraDataLiquidacionGlobal, setCarteraDataLiquidacionGlobal] = useState({ resumen: [], deudas: [], abonos_historial: [] });
   const [abonoPorDeuda, setAbonoPorDeuda] = useState({});
@@ -480,12 +481,20 @@ const Reportes = () => {
       ]);
 
       let carteraResp = null;
+      let ajusteResp = null;
       if (!esRecepcion) {
-        carteraResp = await reportesService.getConsumoEmpleadoDeudas({
-          periodo,
-          fecha_inicio: fechaInicio,
-          fecha_fin: fechaFin,
-        });
+        [carteraResp, ajusteResp] = await Promise.all([
+          reportesService.getConsumoEmpleadoDeudas({
+            periodo,
+            fecha_inicio: fechaInicio,
+            fecha_fin: fechaFin,
+          }),
+          reportesService.getReporteAjusteDiario({
+            periodo,
+            fecha_inicio: fechaInicio,
+            fecha_fin: fechaFin,
+          }),
+        ]);
       }
 
       if (reqSeq !== cargarTodoSeqRef.current) return;
@@ -497,6 +506,11 @@ const Reportes = () => {
         deudas: carteraResp?.deudas || [],
         abonos_historial: carteraResp?.abonos_historial || [],
       });
+      const pagadoDesdeAjuste = (ajusteResp?.items || []).reduce(
+        (sum, item) => sum + Number(item?.pagado_total || 0),
+        0,
+      );
+      setPagadoEmpleadosDesdeAjuste(esRecepcion ? null : pagadoDesdeAjuste);
 
       try {
         setLoadingHistorial(true);
@@ -534,6 +548,7 @@ const Reportes = () => {
       toast.error('No se pudieron cargar los reportes');
       setCierreCaja(null);
       setBiData(null);
+      setPagadoEmpleadosDesdeAjuste(null);
       setCarteraData({ resumen: [], deudas: [], abonos_historial: [] });
     } finally {
       if (reqSeq === cargarTodoSeqRef.current) {
@@ -789,7 +804,7 @@ const Reportes = () => {
   const ingresoProductosTarjeta = Number(productos?.ingresos_venta_neto_comision ?? productos?.ingresos_venta ?? 0);
   const ingresoEspaciosTarjeta = Number(resumen?.ingresos_espacios ?? espacios?.total_recibido ?? 0);
   const gananciaTotalTarjeta = ingresoServiciosTarjeta + ingresoProductosTarjeta + ingresoEspaciosTarjeta;
-  const liquidacionPagadoCaja = Number(resumen?.liquidacion_empleados ?? 0);
+  const liquidacionPagadoCaja = Number(pagadoEmpleadosDesdeAjuste ?? resumen?.liquidacion_empleados ?? 0);
   const pendienteLiquidacionReal = Number(biData?.kpis?.pago_total_estilistas_neto ?? 0);
 
   const liquidacionTotal = (biData?.estilistas || []).reduce((sum, item) => {
