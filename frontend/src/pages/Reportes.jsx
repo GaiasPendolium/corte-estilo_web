@@ -2195,6 +2195,58 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                         <p className="text-xs text-slate-500">Consumo {formatMoney(descuentoConsumoAplicado)}. Puesto {formatMoney(descuentoPuestoAplicado)}.</p>
                         <p className="text-4xl font-black text-emerald-800 mt-3">{formatMoney(totalPagarFinalSimple)}</p>
                       </div>
+
+                      <div className="mt-3 rounded-2xl border border-slate-200 bg-white p-4">
+                        <p className="text-sm font-semibold text-slate-800">Medios de pago del total final</p>
+                        <p className="text-xs text-slate-600 mt-1">Si no llenas estos campos, al confirmar se registra todo en efectivo.</p>
+                        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+                          <div>
+                            <label className="block text-xs text-slate-600 mb-1">Efectivo</label>
+                            <input
+                              className="input-field"
+                              type="number"
+                              min="0"
+                              step="1"
+                              value={pagosPorEstilista[estId]?.efectivo || ''}
+                              onChange={(e) => actualizarPagoMedio(estId, 'efectivo', e.target.value)}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-slate-600 mb-1">Nequi</label>
+                            <input
+                              className="input-field"
+                              type="number"
+                              min="0"
+                              step="1"
+                              value={pagosPorEstilista[estId]?.nequi || ''}
+                              onChange={(e) => actualizarPagoMedio(estId, 'nequi', e.target.value)}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-slate-600 mb-1">Daviplata</label>
+                            <input
+                              className="input-field"
+                              type="number"
+                              min="0"
+                              step="1"
+                              value={pagosPorEstilista[estId]?.daviplata || ''}
+                              onChange={(e) => actualizarPagoMedio(estId, 'daviplata', e.target.value)}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-slate-600 mb-1">Otros</label>
+                            <input
+                              className="input-field"
+                              type="number"
+                              min="0"
+                              step="1"
+                              value={pagosPorEstilista[estId]?.otros || ''}
+                              onChange={(e) => actualizarPagoMedio(estId, 'otros', e.target.value)}
+                            />
+                          </div>
+                        </div>
+                      </div>
+
                       <div className="mt-3 flex gap-2">
                         <button className="btn-secondary" onClick={() => setPasoLiquidacion(3)}>Anterior</button>
                         <button
