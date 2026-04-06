@@ -139,6 +139,8 @@ const Reportes = () => {
   const [nuevaFechaEspacioById, setNuevaFechaEspacioById] = useState({});
   const [montoMoverEspacioById, setMontoMoverEspacioById] = useState({});
   const [savingFechaEspacioById, setSavingFechaEspacioById] = useState({});
+  const [editFechaAbonoConsumoById, setEditFechaAbonoConsumoById] = useState({});
+  const [savingFechaAbonoConsumoById, setSavingFechaAbonoConsumoById] = useState({});
 
   const calcularPendientePagoEmpleado = useCallback((fila) => {
     const valorTotalEmpleado = Number((fila?.valor_total_empleado ?? fila?.facturacion_servicios ?? fila?.ganancias_servicios) || 0);
@@ -149,6 +151,7 @@ const Reportes = () => {
   }, []);
 
   const puedeAjustarFechaEspacio = rolUsuario === 'administrador' || rolUsuario === 'gerente';
+  const puedeAjustarFechaAbonoConsumo = !esRecepcion;
 
   const ajustarFechaPagoEspacio = async (item) => {
     const estadoId = Number(item?.estado_pago_id || 0);
@@ -183,6 +186,35 @@ const Reportes = () => {
       toast.error(String(msg));
     } finally {
       setSavingFechaEspacioById((prev) => ({ ...prev, [estadoId]: false }));
+    }
+  };
+
+  const ajustarFechaAbonoConsumo = async (item) => {
+    const abonoId = Number(item?.abono_id || 0);
+    const fechaNueva = String(editFechaAbonoConsumoById[abonoId] || '').trim();
+
+    if (!abonoId) {
+      toast.error('Este registro no tiene identificador de abono editable.');
+      return;
+    }
+    if (!fechaNueva) {
+      toast.warning('Selecciona una fecha para el abono.');
+      return;
+    }
+
+    setSavingFechaAbonoConsumoById((prev) => ({ ...prev, [abonoId]: true }));
+    try {
+      await reportesService.editarAbonoConsumoEmpleado({
+        abono_id: abonoId,
+        fecha: fechaNueva,
+      });
+      toast.success('Fecha de abono actualizada.');
+      await cargarTodo();
+    } catch (error) {
+      const msg = error?.response?.data?.error || 'No se pudo actualizar la fecha del abono.';
+      toast.error(String(msg));
+    } finally {
+      setSavingFechaAbonoConsumoById((prev) => ({ ...prev, [abonoId]: false }));
     }
   };
 
@@ -1032,12 +1064,13 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                 <th className="px-4 py-3 text-left">Valor compra</th>
                 <th className="px-4 py-3 text-left">Comision empleado</th>
                 <th className="px-4 py-3 text-left">Ganancia neta</th>
+                {puedeAjustarFechaAbonoConsumo && <th className="px-4 py-3 text-left">Ajustar fecha abono</th>}
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {(productos.detalle || []).length === 0 && (
                 <tr>
-                  <td className="table-cell text-slate-500" colSpan={8}>No hay detalle de productos en el rango seleccionado.</td>
+                  <td className="table-cell text-slate-500" colSpan={puedeAjustarFechaAbonoConsumo ? 9 : 8}>No hay detalle de productos en el rango seleccionado.</td>
                 </tr>
               )}
               {(productos.detalle || []).map((item, idx) => (
@@ -1064,6 +1097,30 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                   <td className={`table-cell font-semibold ${Number(item.ganancia_neta || 0) >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
                     {formatMoney(item.ganancia_neta)}
                   </td>
+                  {puedeAjustarFechaAbonoConsumo && (
+                    <td className="table-cell">
+                      {item.origen === 'consumo_empleado_abono' && item.abono_id ? (
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="date"
+                            className="input-field !py-2 !w-40"
+                            value={editFechaAbonoConsumoById[item.abono_id] || String(item.fecha || '').slice(0, 10)}
+                            onChange={(e) => setEditFechaAbonoConsumoById((prev) => ({ ...prev, [item.abono_id]: e.target.value }))}
+                          />
+                          <button
+                            type="button"
+                            className="btn-secondary !py-2 !px-3"
+                            onClick={() => ajustarFechaAbonoConsumo(item)}
+                            disabled={!!savingFechaAbonoConsumoById[item.abono_id]}
+                          >
+                            {savingFechaAbonoConsumoById[item.abono_id] ? 'Guardando...' : 'Guardar'}
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-slate-500">No editable</span>
+                      )}
+                    </td>
+                  )}
                 </tr>
               ))}
               {(productos.detalle || []).length > 0 && (
@@ -1074,6 +1131,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                   <td className="table-cell">{formatMoney((productos.detalle || []).reduce((sum, item) => sum + Number(item.valor_compra || 0), 0))}</td>
                   <td className="table-cell">{formatMoney((productos.detalle || []).reduce((sum, item) => sum + Number(item.comision_empleado || 0), 0))}</td>
                   <td className="table-cell">{formatMoney((productos.detalle || []).reduce((sum, item) => sum + Number(item.ganancia_neta || 0), 0))}</td>
+                  {puedeAjustarFechaAbonoConsumo && <td className="table-cell"></td>}
                 </tr>
               )}
             </tbody>

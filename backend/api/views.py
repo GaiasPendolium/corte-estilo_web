@@ -4272,6 +4272,7 @@ def reporte_cierre_caja(request):
 
             detalle_productos.append(
                 {
+                    'abono_id': int(ab.id),
                     'fecha_hora': timezone.localtime(ab.fecha_hora).strftime('%Y-%m-%d %H:%M:%S') if ab.fecha_hora else None,
                     'fecha': _fecha_operativa_desde_dt(ab.fecha_hora).strftime('%Y-%m-%d') if ab.fecha_hora else None,
                     'origen': 'consumo_empleado_abono',
