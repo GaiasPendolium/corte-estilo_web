@@ -242,9 +242,10 @@ const Ventas = () => {
     }
 
     try {
-      const res = await productosService.getAll({ search: busquedaProducto.trim() });
+      const terminoBusqueda = busquedaProducto.trim();
+      const res = await productosService.getAll({ search: terminoBusqueda });
       const encontrados = extractRows(res);
-      const exactoCodigo = encontrados.find((p) => p.codigo_barras === busquedaProducto.trim());
+      const exactoCodigo = encontrados.find((p) => p.codigo_barras === terminoBusqueda);
       const producto = exactoCodigo || encontrados[0] || null;
       setProductoSeleccionado(producto);
       if (!producto) {
@@ -259,7 +260,8 @@ const Ventas = () => {
         setForm((prev) => ({ ...prev, precio_unitario: String(producto.precio_venta || '') }));
       }
       if (producto) {
-        setBusquedaProducto(producto.codigo_barras || formatProductSearchLabel(producto));
+        // Flujo caja: tras escanear/seleccionar, limpiar para siguiente escaneo.
+        setBusquedaProducto('');
       }
       setSugerenciasProducto([]);
       setMostrarSugerenciasProducto(false);
