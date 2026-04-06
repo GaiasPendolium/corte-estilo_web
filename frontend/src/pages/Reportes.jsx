@@ -1005,6 +1005,10 @@ const aplicarEstadoLiquidacion = async (fila) => {
                 };
               })
               .sort((a, b) => String(b.fecha || '').localeCompare(String(a.fecha || '')));
+            const historialDiarioPorFecha = historialDiarioLiquidacion.reduce((acc, h) => {
+              acc[String(h.fecha || '')] = h;
+              return acc;
+            }, {});
             const historialAbonosConsumo = (carteraDataLiquidacionGlobal?.abonos_historial || []).filter((h) => Number(h.estilista_id) === estId);
             const deudasEmpleado = (carteraDataLiquidacionGlobal?.deudas || []).filter((d) => Number(d.estilista_id) === estId && Number(d.saldo_pendiente || 0) > 0);
 
@@ -1056,13 +1060,25 @@ const aplicarEstadoLiquidacion = async (fila) => {
                     )}
                     {!loadingDesgloseLiquidacion && diasPendientes.map((d) => (
                       <div key={`dia-${d.fecha}`} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                        <div className="flex justify-between gap-2">
-                          <p className="text-sm font-semibold text-slate-900">{d.fecha}</p>
-                          <p className="text-sm font-bold text-emerald-700">{formatMoney(d.neto_dia)}</p>
-                        </div>
-                        <p className="text-xs text-slate-600 mt-1">Base servicio: {formatMoney(d.base_servicio)} | Comisión: {formatMoney(d.comision_productos)}</p>
-                        <p className="text-xs text-slate-600">Descuento puesto: {formatMoney(d.descuento_espacio)}</p>
-                        <p className="text-xs text-slate-500">Estado día: {d.estado || 'pendiente'}</p>
+                        {(() => {
+                          const histDia = historialDiarioPorFecha[String(d.fecha || '')] || {};
+                          const pagoEmpleadoDia = Number(histDia.pago_empleado_dia || 0);
+                          const netoDia = Number(d.neto_dia || 0);
+                          const pendienteEmpleadoDia = Math.max(netoDia - pagoEmpleadoDia, 0);
+                          return (
+                            <>
+                              <div className="flex justify-between gap-2">
+                                <p className="text-sm font-semibold text-slate-900">{d.fecha}</p>
+                                <p className="text-sm font-bold text-emerald-700">Pendiente día: {formatMoney(pendienteEmpleadoDia)}</p>
+                              </div>
+                              <p className="text-xs text-slate-600 mt-1">Neto día (antes de pagos): {formatMoney(netoDia)}</p>
+                              <p className="text-xs text-slate-600">Pago registrado en historial: {formatMoney(pagoEmpleadoDia)}</p>
+                              <p className="text-xs text-slate-600">Base servicio: {formatMoney(d.base_servicio)} | Comisión: {formatMoney(d.comision_productos)}</p>
+                              <p className="text-xs text-slate-600">Descuento puesto: {formatMoney(d.descuento_espacio)}</p>
+                              <p className="text-xs text-slate-500">Estado día: {d.estado || 'pendiente'}</p>
+                            </>
+                          );
+                        })()}
                       </div>
                     ))}
                   </div>
