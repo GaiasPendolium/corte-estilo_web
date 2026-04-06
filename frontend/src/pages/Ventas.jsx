@@ -214,6 +214,15 @@ const Ventas = () => {
       setSugerenciasProducto([]);
       return;
     }
+
+    if (productoSeleccionado) {
+      const tokenSeleccionado = productoSeleccionado.codigo_barras || formatProductSearchLabel(productoSeleccionado);
+      if (normalizeSearchText(busquedaProducto) === normalizeSearchText(tokenSeleccionado)) {
+        setSugerenciasProducto([]);
+        return;
+      }
+    }
+
     const q = busquedaProducto.trim().toLowerCase();
     if (!q) {
       setSugerenciasProducto([]);
@@ -224,7 +233,7 @@ const Ventas = () => {
         .filter((p) => productMatchesSearch(p, q))
         .slice(0, 8)
     );
-  }, [busquedaProducto, productos, mostrarSugerenciasProducto]);
+  }, [busquedaProducto, productos, mostrarSugerenciasProducto, productoSeleccionado]);
 
   const buscarProducto = async () => {
     if (!busquedaProducto.trim()) {
@@ -250,7 +259,7 @@ const Ventas = () => {
         setForm((prev) => ({ ...prev, precio_unitario: String(producto.precio_venta || '') }));
       }
       if (producto) {
-        setBusquedaProducto(formatProductSearchLabel(producto));
+        setBusquedaProducto(producto.codigo_barras || formatProductSearchLabel(producto));
       }
       setSugerenciasProducto([]);
       setMostrarSugerenciasProducto(false);
@@ -265,7 +274,7 @@ const Ventas = () => {
       return;
     }
     setProductoSeleccionado(producto);
-    setBusquedaProducto(formatProductSearchLabel(producto));
+    setBusquedaProducto(producto.codigo_barras || formatProductSearchLabel(producto));
     setSugerenciasProducto([]);
     setMostrarSugerenciasProducto(false);
     if (!editandoId) {
@@ -1343,7 +1352,19 @@ const Ventas = () => {
             onFocus={() => setMostrarSugerenciasProducto(true)}
             onBlur={() => setTimeout(() => setMostrarSugerenciasProducto(false), 120)}
             onChange={(e) => {
-              setBusquedaProducto(e.target.value);
+              const nextValue = e.target.value;
+              setBusquedaProducto(nextValue);
+
+              if (productoSeleccionado) {
+                const tokenSeleccionado = productoSeleccionado.codigo_barras || formatProductSearchLabel(productoSeleccionado);
+                if (normalizeSearchText(nextValue) === normalizeSearchText(tokenSeleccionado)) {
+                  setSugerenciasProducto([]);
+                  setMostrarSugerenciasProducto(false);
+                  return;
+                }
+                setProductoSeleccionado(null);
+              }
+
               setMostrarSugerenciasProducto(true);
             }}
             onKeyDown={(e) => {
