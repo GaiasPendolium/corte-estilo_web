@@ -1730,56 +1730,38 @@ def _calcular_datos_bi(request):
         total_pago_estilistas_positivo += total_pagado_empleado
 
         total_dias = len(dias_trabajados)
-        # Deuda acumulada de puesto:
-        # 1) base = último saldo pendiente real guardado por día (evita doble conteo histórico)
-        # 2) adicional = descuentos de días posteriores al último corte que sigan pendientes.
-        deuda_puesto_historial = Decimal(0)
-        ultima_fecha_saldo = None
+        # Deuda acumulada de puesto recalculada secuencialmente por fecha.
+        # Esto evita arrastres incorrectos en datos históricos antiguos.
+        deuda_puesto_inicial = Decimal(0)
         try:
-            ultimo_estado_saldo = EstadoPagoEstilistaDia.objects.filter(
+            ultimo_estado_previo = EstadoPagoEstilistaDia.objects.filter(
                 estilista=estilista,
-                fecha__lte=fecha_fin_dt,
+                fecha__lt=fecha_inicio_dt,
             ).order_by('-fecha', '-actualizado_en').first()
-            if ultimo_estado_saldo:
-                deuda_puesto_historial = max(
+            if ultimo_estado_previo:
+                deuda_puesto_inicial = max(
                     Decimal(
-                        getattr(ultimo_estado_saldo, 'saldo_puesto_pendiente', None)
-                        or getattr(ultimo_estado_saldo, 'pendiente_puesto', 0)
+                        getattr(ultimo_estado_previo, 'saldo_puesto_pendiente', None)
+                        or getattr(ultimo_estado_previo, 'pendiente_puesto', 0)
                         or 0
                     ),
                     Decimal(0),
                 )
-                ultima_fecha_saldo = ultimo_estado_saldo.fecha
         except (OperationalError, ProgrammingError):
-            deuda_puesto_historial = Decimal(0)
-            ultima_fecha_saldo = None
-            try:
-                ultimo_hist = EstadoPagoEstilistaHistorial.objects.filter(
-                    estilista=estilista,
-                    fecha__lte=fecha_fin_dt,
-                ).order_by('-fecha', '-fecha_cambio').first()
-                if ultimo_hist:
-                    deuda_puesto_historial = max(Decimal(ultimo_hist.pendiente_puesto or 0), Decimal(0))
-                    ultima_fecha_saldo = ultimo_hist.fecha
-            except Exception:
-                deuda_puesto_historial = Decimal(0)
-                ultima_fecha_saldo = None
+            deuda_puesto_inicial = Decimal(0)
         except Exception:
-            deuda_puesto_historial = Decimal(0)
-            ultima_fecha_saldo = None
+            deuda_puesto_inicial = Decimal(0)
 
-        deuda_rango_pendiente = Decimal(0)
-        for dia in dias_trabajados:
-            if ultima_fecha_saldo and dia <= ultima_fecha_saldo:
-                continue
-            estado_dia = estados_pago_map.get((estilista.id, dia), 'pendiente')
-            if estado_dia == 'cancelado':
-                continue
+        deuda_puesto_running = deuda_puesto_inicial
+        for dia in sorted(dias_trabajados):
             base_servicio_dia = servicios_por_dia.get(dia, Decimal(0))
-            descuento_dia = _descuento_puesto_dia(estilista, base_servicio_dia)
-            deuda_rango_pendiente += max(descuento_dia, Decimal(0))
+            descuento_dia = max(_descuento_puesto_dia(estilista, base_servicio_dia), Decimal(0))
+            estado_dia_obj = estados_pago_obj_map.get((estilista.id, dia))
+            abono_puesto_dia = Decimal(estado_dia_obj.abono_puesto or 0) if estado_dia_obj else Decimal(0)
+            deuda_puesto_running = max(deuda_puesto_running + descuento_dia - max(abono_puesto_dia, Decimal(0)), Decimal(0))
 
-        deuda_total_acumulada = deuda_puesto_historial + deuda_rango_pendiente
+        deuda_puesto_historial = deuda_puesto_inicial
+        deuda_total_acumulada = deuda_puesto_running
         total_deuda_estilistas += max(deuda_total_acumulada, Decimal(0))
 
         if total_dias == 0:
