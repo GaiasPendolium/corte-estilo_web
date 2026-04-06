@@ -58,11 +58,15 @@ class Command(BaseCommand):
                 pago_otros = Decimal(getattr(estado, 'pago_otros', 0) or 0)
                 pago_total = pago_efectivo + pago_nequi + pago_daviplata + pago_otros
                 abono_puesto = Decimal(getattr(estado, 'abono_puesto', 0) or 0)
+                medio_abono_puesto = (getattr(estado, 'medio_abono_puesto', None) or 'efectivo').strip().lower()
+                if medio_abono_puesto not in {'efectivo', 'nequi', 'daviplata', 'otros'}:
+                    medio_abono_puesto = 'efectivo'
 
                 descuento = Decimal(calc.get('descuento_puesto') or 0)
                 ganancias = Decimal(calc.get('ganancias_totales') or 0)
                 ganancias_servicios = Decimal(calc.get('servicios_base') or 0) + Decimal(calc.get('comisiones_adicionales') or 0)
-                comision_producto_total = Decimal(calc.get('comisiones_ventas') or 0)
+                comision_producto_caja = Decimal(calc.get('comisiones_ventas_caja') or 0)
+                comision_producto_servicios = Decimal(calc.get('comisiones_ventas_servicios') or 0)
 
                 deuda_anterior = deuda_running
                 deuda_running = max(deuda_running + descuento - max(abono_puesto, Decimal(0)), Decimal(0))
@@ -89,12 +93,13 @@ class Command(BaseCommand):
 
                         fact.origen_calculo = 'backfill_v1'
                         fact.ganancias_servicios = ganancias_servicios
-                        fact.comision_producto_caja = comision_producto_total
-                        fact.comision_producto_servicios = Decimal(0)
+                        fact.comision_producto_caja = comision_producto_caja
+                        fact.comision_producto_servicios = comision_producto_servicios
                         fact.ganancias_totales = ganancias
                         fact.descuento_puesto_dia = descuento
                         fact.deuda_puesto_anterior = deuda_anterior
                         fact.abono_puesto_dia = abono_puesto
+                        fact.medio_abono_puesto = medio_abono_puesto
                         fact.deuda_puesto_cierre = deuda_running
                         fact.pago_efectivo = pago_efectivo
                         fact.pago_nequi = pago_nequi

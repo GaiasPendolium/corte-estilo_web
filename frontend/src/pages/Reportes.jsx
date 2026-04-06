@@ -826,56 +826,6 @@ const Reportes = () => {
     setDeudaConsumoSeleccionadasPorEstilista((prev) => ({ ...prev, [estilistaId]: [] }));
   };
 
-  const cobrarConsumoEnDeudas = async ({ estilistaId, deudaIds = [], monto, medioPago, fecha }) => {
-    const deudas = (carteraDataLiquidacionGlobal?.deudas || [])
-      .filter((d) => Number(d.estilista_id) === Number(estilistaId) && Number(d.saldo_pendiente || 0) > 0)
-      .sort((a, b) => String(a.fecha_hora || '').localeCompare(String(b.fecha_hora || '')));
-
-    const idsSeleccionados = Array.isArray(deudaIds)
-      ? deudaIds.map((x) => Number(x)).filter((x) => Number.isFinite(x) && x > 0)
-      : [];
-
-    const deudasObjetivo = idsSeleccionados.length > 0
-      ? deudas.filter((d) => idsSeleccionados.includes(Number(d.deuda_id)))
-      : deudas;
-
-    if (deudasObjetivo.length === 0) {
-      return { cobrado: 0, restante: Number(monto || 0), sinPendientes: idsSeleccionados.length > 0 };
-    }
-
-    let restante = Number(monto || 0);
-    let cobrado = 0;
-    let facturasSinPendiente = 0;
-
-    for (const deuda of deudasObjetivo) {
-      if (restante <= 0) break;
-      const saldo = Number(deuda.saldo_pendiente || 0);
-      if (saldo <= 0) continue;
-      const abono = Math.min(restante, saldo);
-      try {
-        await reportesService.abonarConsumoEmpleado({
-          estilista_id: estilistaId,
-          deuda_id: deuda.deuda_id,
-          monto: abono,
-          medio_pago: medioPago,
-          notas: `Cobro consumo integrado en liquidacion ${fecha}`,
-          fecha,
-        });
-      } catch (error) {
-        const msg = String(error?.response?.data?.error || '').toLowerCase();
-        if (msg.includes('no tiene saldo pendiente')) {
-          facturasSinPendiente += 1;
-          continue;
-        }
-        throw error;
-      }
-      cobrado += abono;
-      restante -= abono;
-    }
-
-    return { cobrado, restante, facturasSinPendiente, sinPendientes: cobrado <= 0 && idsSeleccionados.length > 0 };
-  };
-
   const actualizarAjusteDiarioCampo = (key, campo, valor) => {
     setAjusteDiarioEditsByKey((prev) => {
       const actual = prev[key] || {
@@ -931,16 +881,7 @@ const Reportes = () => {
       }
 
       const extra_consumo = Math.max(consumo_obj - consumo_actual, 0);
-      if (extra_consumo > 0) {
-        await cobrarConsumoEnDeudas({
-          estilistaId: fila.estilista_id,
-          monto: extra_consumo,
-          medioPago: medio_cobro_consumo,
-          fecha: fila.fecha,
-        });
-      }
-
-      await reportesService.liquidarDiaV2({
+      await reportesService.liquidarOperacionIntegral({
         estilista_id: fila.estilista_id,
         fecha: fila.fecha,
         pago_efectivo,
@@ -950,6 +891,9 @@ const Reportes = () => {
         abono_puesto,
         medio_abono_puesto,
         forzar_reemplazo_dia: true,
+        consumo_monto: extra_consumo,
+        deuda_ids: [],
+        medio_cobro_consumo,
         notas: `Ajuste unificado ${fila.fecha}`,
       });
 

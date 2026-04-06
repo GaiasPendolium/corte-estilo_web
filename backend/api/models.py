@@ -736,6 +736,17 @@ class FactLiquidacionEstilistaDia(models.Model):
     descuento_puesto_dia = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     deuda_puesto_anterior = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     abono_puesto_dia = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    medio_abono_puesto = models.CharField(
+        max_length=20,
+        choices=[
+            ('efectivo', 'Efectivo'),
+            ('nequi', 'Nequi'),
+            ('daviplata', 'Daviplata'),
+            ('otros', 'Otros'),
+        ],
+        default='efectivo',
+        verbose_name='Medio abono puesto'
+    )
     deuda_puesto_cierre = models.DecimalField(max_digits=14, decimal_places=2, default=0)
 
     pago_efectivo = models.DecimalField(max_digits=14, decimal_places=2, default=0)

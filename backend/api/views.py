@@ -388,12 +388,12 @@ def calcular_liquidacion_dia_estilista(estilista, fecha_dia):
         tipo_operacion='venta',
         fecha_hora__date=fecha_dia,
     )
-    comisiones_ventas = Decimal(0)
+    comisiones_ventas_caja = Decimal(0)
     for venta in ventas_dia:
         monto_venta = Decimal(venta.total or 0)
         pct_comision = Decimal(venta.producto.comision_estilista or 0)
         pct_comision = max(Decimal(0), min(Decimal(100), pct_comision))  # Clamp 0-100
-        comisiones_ventas += (monto_venta * pct_comision) / Decimal(100)
+        comisiones_ventas_caja += (monto_venta * pct_comision) / Decimal(100)
 
     # ============ [4] COMISIONES POR PRODUCTO ADICIONAL EN SERVICIOS ============
     servicios_con_producto_adicional = ServicioRealizado.objects.select_related('adicional_otro_producto').filter(
@@ -402,13 +402,16 @@ def calcular_liquidacion_dia_estilista(estilista, fecha_dia):
         adicional_otro_producto__isnull=False,
         adicional_otro_estilista=estilista,
     )
+    comisiones_ventas_servicios = Decimal(0)
     for srv in servicios_con_producto_adicional:
         cantidad = Decimal(srv.adicional_otro_cantidad or 1)
         precio_venta = Decimal(srv.adicional_otro_producto.precio_venta or 0)
         monto_venta = precio_venta * cantidad
         pct_comision = Decimal(srv.adicional_otro_producto.comision_estilista or 0)
         pct_comision = max(Decimal(0), min(Decimal(100), pct_comision))
-        comisiones_ventas += (monto_venta * pct_comision) / Decimal(100)
+        comisiones_ventas_servicios += (monto_venta * pct_comision) / Decimal(100)
+
+    comisiones_ventas = comisiones_ventas_caja + comisiones_ventas_servicios
     
     # [1] GANANCIAS TOTALES = BASE + TODAS LAS COMISIONES
     ganancias_totales = servicios_base + comisiones_adicionales + comisiones_ventas
@@ -427,6 +430,8 @@ def calcular_liquidacion_dia_estilista(estilista, fecha_dia):
         'ganancias_totales': ganancias_totales,
         'servicios_base': servicios_base,
         'comisiones_adicionales': comisiones_adicionales,
+        'comisiones_ventas_caja': comisiones_ventas_caja,
+        'comisiones_ventas_servicios': comisiones_ventas_servicios,
         'comisiones_ventas': comisiones_ventas,
         'descuento_puesto': descuento_puesto,
         'total_pagable': total_pagable,
@@ -473,6 +478,7 @@ def _upsert_fact_liquidacion_dia(
     pago_daviplata,
     pago_otros,
     abono_puesto,
+    medio_abono_puesto,
     deuda_anterior,
     deuda_cierre,
     pendiente_pago,
@@ -498,16 +504,21 @@ def _upsert_fact_liquidacion_dia(
                 defaults={'vigente': True},
             )
 
-            comisiones_totales = Decimal(calc.get('comisiones_ventas') or 0)
+            comision_caja = Decimal(calc.get('comisiones_ventas_caja') or 0)
+            comision_servicios = Decimal(calc.get('comisiones_ventas_servicios') or 0)
+            comisiones_totales = comision_caja + comision_servicios
             fact.vigente = True
             fact.origen_calculo = origen
             fact.ganancias_servicios = Decimal(calc.get('servicios_base') or 0) + Decimal(calc.get('comisiones_adicionales') or 0)
-            fact.comision_producto_caja = comisiones_totales
-            fact.comision_producto_servicios = Decimal(0)
+            fact.comision_producto_caja = comision_caja
+            fact.comision_producto_servicios = comision_servicios
             fact.ganancias_totales = Decimal(calc.get('ganancias_totales') or 0)
             fact.descuento_puesto_dia = Decimal(calc.get('descuento_puesto') or 0)
             fact.deuda_puesto_anterior = Decimal(deuda_anterior or 0)
             fact.abono_puesto_dia = Decimal(abono_puesto or 0)
+            fact.medio_abono_puesto = (medio_abono_puesto or 'efectivo').strip().lower()
+            if fact.medio_abono_puesto not in {'efectivo', 'nequi', 'daviplata', 'otros'}:
+                fact.medio_abono_puesto = 'efectivo'
             fact.deuda_puesto_cierre = Decimal(deuda_cierre or 0)
             fact.pago_efectivo = Decimal(pago_efectivo or 0)
             fact.pago_nequi = Decimal(pago_nequi or 0)
@@ -529,6 +540,9 @@ def _upsert_fact_liquidacion_dia(
                 'ganancias_totales': float(Decimal(calc.get('ganancias_totales') or 0)),
                 'descuento_puesto': float(Decimal(calc.get('descuento_puesto') or 0)),
                 'total_pagable': float(Decimal(calc.get('total_pagable') or 0)),
+                'comisiones_ventas_caja': float(comision_caja),
+                'comisiones_ventas_servicios': float(comision_servicios),
+                'comisiones_ventas': float(comisiones_totales),
             }
             fact.save()
     except Exception:
@@ -1712,6 +1726,19 @@ def _calcular_datos_bi(request):
         except Exception:
             estados_pago_map = {}
 
+    usar_fact = _usar_fact_liquidacion_en_reportes()
+    facts_map = {}
+    if usar_fact:
+        try:
+            facts_qs = FactLiquidacionEstilistaDia.objects.filter(
+                fecha__gte=fecha_inicio_dt,
+                fecha__lte=fecha_fin_dt,
+                vigente=True,
+            )
+            facts_map = {(fact.estilista_id, fact.fecha): fact for fact in facts_qs}
+        except Exception:
+            facts_map = {}
+
     for estilista in Estilista.objects.filter(activo=True):
         servicios_est = servicios_qs.filter(estilista=estilista)
         ventas_est = ventas_pagadas_qs.filter(estilista=estilista)
@@ -1798,9 +1825,14 @@ def _calcular_datos_bi(request):
             ganancias_dia = base_servicio_dia + comision_dia
             descuento_dia = _descuento_puesto_dia(estilista, base_servicio_dia)
             estado_dia_obj = estados_pago_obj_map.get((estilista.id, dia))
+            fact_dia = facts_map.get((estilista.id, dia)) if usar_fact else None
             pago_empleado_dia = Decimal(0)
             abono_puesto_dia = Decimal(0)
-            if estado_dia_obj:
+            if fact_dia:
+                pago_empleado_dia = Decimal(fact_dia.pago_total_empleado or 0)
+                abono_puesto_dia = Decimal(fact_dia.abono_puesto_dia or 0)
+                estado_dia = fact_dia.estado_liquidacion
+            elif estado_dia_obj:
                 pago_empleado_dia = (
                     Decimal(estado_dia_obj.pago_efectivo or 0)
                     + Decimal(estado_dia_obj.pago_nequi or 0)
@@ -1808,6 +1840,9 @@ def _calcular_datos_bi(request):
                     + Decimal(estado_dia_obj.pago_otros or 0)
                 )
                 abono_puesto_dia = Decimal(estado_dia_obj.abono_puesto or 0)
+                estado_dia = estado_dia_obj.estado
+            else:
+                estado_dia = estados_pago_map.get((estilista.id, dia), 'pendiente')
 
             neto_dia = max(ganancias_dia - descuento_dia, Decimal(0))
 
@@ -1858,7 +1893,11 @@ def _calcular_datos_bi(request):
             base_servicio_dia = servicios_por_dia.get(dia, Decimal(0))
             descuento_dia = max(_descuento_puesto_dia(estilista, base_servicio_dia), Decimal(0))
             estado_dia_obj = estados_pago_obj_map.get((estilista.id, dia))
-            abono_puesto_dia = Decimal(estado_dia_obj.abono_puesto or 0) if estado_dia_obj else Decimal(0)
+            fact_dia = facts_map.get((estilista.id, dia)) if usar_fact else None
+            if fact_dia:
+                abono_puesto_dia = Decimal(fact_dia.abono_puesto_dia or 0)
+            else:
+                abono_puesto_dia = Decimal(estado_dia_obj.abono_puesto or 0) if estado_dia_obj else Decimal(0)
             deuda_puesto_running = max(deuda_puesto_running + descuento_dia - max(abono_puesto_dia, Decimal(0)), Decimal(0))
 
         deuda_puesto_historial = deuda_puesto_inicial
@@ -1987,20 +2026,37 @@ def _calcular_datos_bi(request):
         ingresos_por_medio[medio_srv] += Decimal(srv.precio_cobrado or 0) + Decimal(srv.valor_adicionales or 0)
 
     try:
-        estados_pago_qs = EstadoPagoEstilistaDia.objects.filter(
-            fecha__gte=fecha_inicio_dt,
-            fecha__lte=fecha_fin_dt,
-        )
-        for ep in estados_pago_qs:
-            salidas_por_medio['efectivo'] += Decimal(ep.pago_efectivo or 0)
-            salidas_por_medio['nequi'] += Decimal(ep.pago_nequi or 0)
-            salidas_por_medio['daviplata'] += Decimal(ep.pago_daviplata or 0)
-            salidas_por_medio['otros'] += Decimal(ep.pago_otros or 0)
+        if usar_fact:
+            facts_medios_qs = FactLiquidacionEstilistaDia.objects.filter(
+                fecha__gte=fecha_inicio_dt,
+                fecha__lte=fecha_fin_dt,
+                vigente=True,
+            )
+            for fact in facts_medios_qs:
+                salidas_por_medio['efectivo'] += Decimal(fact.pago_efectivo or 0)
+                salidas_por_medio['nequi'] += Decimal(fact.pago_nequi or 0)
+                salidas_por_medio['daviplata'] += Decimal(fact.pago_daviplata or 0)
+                salidas_por_medio['otros'] += Decimal(fact.pago_otros or 0)
 
-            medio_abono = (getattr(ep, 'medio_abono_puesto', None) or 'efectivo').strip().lower()
-            if medio_abono not in ingresos_por_medio:
-                medio_abono = 'otros'
-            ingresos_por_medio[medio_abono] += Decimal(ep.abono_puesto or 0)
+                medio_abono = (getattr(fact, 'medio_abono_puesto', None) or 'efectivo').strip().lower()
+                if medio_abono not in ingresos_por_medio:
+                    medio_abono = 'otros'
+                ingresos_por_medio[medio_abono] += Decimal(fact.abono_puesto_dia or 0)
+        else:
+            estados_pago_qs = EstadoPagoEstilistaDia.objects.filter(
+                fecha__gte=fecha_inicio_dt,
+                fecha__lte=fecha_fin_dt,
+            )
+            for ep in estados_pago_qs:
+                salidas_por_medio['efectivo'] += Decimal(ep.pago_efectivo or 0)
+                salidas_por_medio['nequi'] += Decimal(ep.pago_nequi or 0)
+                salidas_por_medio['daviplata'] += Decimal(ep.pago_daviplata or 0)
+                salidas_por_medio['otros'] += Decimal(ep.pago_otros or 0)
+
+                medio_abono = (getattr(ep, 'medio_abono_puesto', None) or 'efectivo').strip().lower()
+                if medio_abono not in ingresos_por_medio:
+                    medio_abono = 'otros'
+                ingresos_por_medio[medio_abono] += Decimal(ep.abono_puesto or 0)
     except (OperationalError, ProgrammingError):
         salidas_por_medio = {m: Decimal(0) for m in medios}
 
@@ -3513,6 +3569,7 @@ def liquidar_dia_v2(request):
         pago_daviplata=pago_daviplata,
         pago_otros=pago_otros,
         abono_puesto=abono_puesto,
+        medio_abono_puesto=medio_abono_puesto,
         deuda_anterior=deuda_anterior_puesto,
         deuda_cierre=saldo_puesto,
         pendiente_pago=pendiente_liquidacion,
@@ -4477,9 +4534,12 @@ def reporte_ajuste_diario_unificado(request):
             pago_daviplata = Decimal((fact.pago_daviplata if fact else (ep.pago_daviplata if ep else 0)) or 0)
             pago_otros = Decimal((fact.pago_otros if fact else (ep.pago_otros if ep else 0)) or 0)
             abono_puesto = Decimal((fact.abono_puesto_dia if fact else (ep.abono_puesto if ep else 0)) or 0)
-            medio_abono = (getattr(ep, 'medio_abono_puesto', None) or 'efectivo') if ep else 'efectivo'
+            medio_abono = (getattr(fact, 'medio_abono_puesto', None) or (getattr(ep, 'medio_abono_puesto', None) if ep else None) or 'efectivo')
             pagado_total = pago_efectivo + pago_nequi + pago_daviplata + pago_otros
-            generado = Decimal((fact.ganancias_totales if fact else calc.get('total_pagable')) or 0)
+            generado = Decimal((
+                max(Decimal(fact.ganancias_totales or 0) - Decimal(fact.descuento_puesto_dia or 0), Decimal(0))
+                if fact else calc.get('total_pagable')
+            ) or 0)
             descuento_puesto = Decimal((fact.descuento_puesto_dia if fact else calc.get('descuento_puesto')) or 0)
             deuda_puesto = Decimal((fact.deuda_puesto_cierre if fact else (getattr(ep, 'saldo_puesto_pendiente', 0) if ep else 0)) or 0)
             estado_item = (fact.estado_liquidacion if fact else (ep.estado if ep else 'pendiente'))
