@@ -692,6 +692,46 @@ const Reportes = () => {
     };
   }, [moduloActivo, estilistaActivoLiquidacion, fechaInicio, fechaFin]);
 
+  useEffect(() => {
+    if (moduloActivo !== 'liquidacion') return;
+    if (!vistaSimpleLiquidacion) return;
+    if (Number(pasoLiquidacion) !== 3) return;
+
+    const estId = Number(estilistaActivoLiquidacion || 0);
+    if (!estId) return;
+
+    const empleado = (biData?.estilistas || []).find((x) => Number(x.estilista_id) === estId);
+    if (!empleado) return;
+
+    const sugeridoPuesto = Math.max(Number(empleado.deuda_total_acumulada || 0), 0);
+    const sugeridoConsumo = Math.max(Number(resumenPorEstilistaLiquidacion[estId]?.saldo_pendiente || 0), 0);
+
+    setAbonoPuestoPorEstilista((prev) => {
+      const actual = String(prev?.[estId] ?? '').trim();
+      if (actual !== '') return prev;
+      return {
+        ...prev,
+        [estId]: String(sugeridoPuesto),
+      };
+    });
+
+    setCobroConsumoPorEstilista((prev) => {
+      const actual = String(prev?.[estId] ?? '').trim();
+      if (actual !== '') return prev;
+      return {
+        ...prev,
+        [estId]: String(sugeridoConsumo),
+      };
+    });
+  }, [
+    moduloActivo,
+    vistaSimpleLiquidacion,
+    pasoLiquidacion,
+    estilistaActivoLiquidacion,
+    biData,
+    resumenPorEstilistaLiquidacion,
+  ]);
+
   const aplicarRangoRapido = (tipo) => {
     const base = new Date();
     if (tipo === 'hoy') {
