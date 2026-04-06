@@ -46,16 +46,34 @@ def _qz_allowed_origins():
     return [item.strip().rstrip('/') for item in raw.split(',') if item.strip()]
 
 
+def _qz_origin_is_local(origin):
+    if not origin:
+        return False
+
+    local_prefixes = (
+        'http://localhost',
+        'https://localhost',
+        'http://127.0.0.1',
+        'https://127.0.0.1',
+    )
+    return origin.startswith(local_prefixes)
+
+
 def _qz_check_origin(request):
     allowed = _qz_allowed_origins()
     if not allowed:
         return None
 
     origin = (request.headers.get('Origin') or '').strip().rstrip('/')
-    if origin in allowed:
+    if origin in allowed or _qz_origin_is_local(origin):
         return None
 
-    return HttpResponse('Origin no autorizado para firma QZ', status=403, content_type='text/plain; charset=utf-8')
+    detail = origin or 'sin Origin'
+    return HttpResponse(
+        f'Origin no autorizado para firma QZ: {detail}. Agrega este dominio a QZ_ALLOWED_ORIGINS en Railway.',
+        status=403,
+        content_type='text/plain; charset=utf-8'
+    )
 
 
 @api_view(['GET'])

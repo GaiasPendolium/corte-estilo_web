@@ -39,8 +39,12 @@ const buildDrawerBase64 = ({ pin, onMs, offMs }) => {
 };
 
 const normalizeError = (error, fallbackMessage) => {
-  const message = String(error?.message || error || '').toLowerCase();
+  const rawMessage = String(error?.message || error || '');
+  const message = rawMessage.toLowerCase();
 
+  if (message.includes('origin no autorizado') || message.includes('qz_allowed_origins')) {
+    return 'QZ fue bloqueado por Railway para este dominio. Agrega la URL actual a QZ_ALLOWED_ORIGINS.';
+  }
   if (message.includes('unable to establish connection') || message.includes('websocket')) {
     return 'No se pudo conectar con QZ Tray. Verifica que este ejecutandose en Windows.';
   }
@@ -48,7 +52,21 @@ const normalizeError = (error, fallbackMessage) => {
     return 'No se encontro la impresora seleccionada. Revisa el nombre configurado.';
   }
 
-  return fallbackMessage || 'No se pudo completar la operacion de impresion';
+  return rawMessage || fallbackMessage || 'No se pudo completar la operacion de impresion';
+};
+
+const fetchQzText = async (url, options = {}, defaultMessage) => {
+  const response = await fetch(url, { cache: 'no-store', ...options });
+  const text = await response.text().catch(() => '');
+
+  if (!response.ok) {
+    if (response.status === 403) {
+      throw new Error(text || 'Origin no autorizado para firma QZ. Revisa QZ_ALLOWED_ORIGINS en Railway.');
+    }
+    throw new Error(text || defaultMessage || 'No se pudo completar la operacion con QZ');
+  }
+
+  return text;
 };
 
 const configureSecurity = () => {
@@ -69,11 +87,11 @@ const configureSecurity = () => {
       return;
     }
 
-    fetch(`${QZ_SIGN_ENDPOINT}/certificate/`, { cache: 'no-store' })
-      .then((response) => {
-        if (!response.ok) throw new Error('No se pudo obtener certificado de firma de QZ');
-        return response.text();
-      })
+    fetchQzText(
+      `${QZ_SIGN_ENDPOINT}/certificate/`,
+      { method: 'GET' },
+      'No se pudo obtener certificado de firma de QZ'
+    )
       .then(resolve)
       .catch(reject);
   });
@@ -85,15 +103,15 @@ const configureSecurity = () => {
       return;
     }
 
-    fetch(`${QZ_SIGN_ENDPOINT}/sign/`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ toSign }),
-    })
-      .then((response) => {
-        if (!response.ok) throw new Error('No se pudo firmar la solicitud para QZ Tray');
-        return response.text();
-      })
+    fetchQzText(
+      `${QZ_SIGN_ENDPOINT}/sign/`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ toSign }),
+      },
+      'No se pudo firmar la solicitud para QZ Tray'
+    )
       .then(resolve)
       .catch(reject);
   });
