@@ -920,6 +920,11 @@ const aplicarEstadoLiquidacion = async (fila) => {
             const pagoDigitado = totalPagoMedios(estId);
             const saldoPorPagar = Math.max(netoEstimado - pagoDigitado, 0);
             const historialPagosEmpleado = (historialEstados || []).filter((h) => Number(h.estilista_id) === estId);
+            const diasPendientes = desgloseLiquidacion?.desglose_por_dia?.filter((d) => String(d.incluido_en || d.estado || '').toLowerCase() !== 'cancelado') || [];
+            const descuentoPorFecha = diasPendientes.reduce((acc, d) => {
+              acc[String(d.fecha || '')] = Number(d.descuento_espacio || 0);
+              return acc;
+            }, {});
             const historialDiarioLiquidacion = Object.values(
               historialPagosEmpleado.reduce((acc, h) => {
                 const fecha = h.fecha || '-';
@@ -950,10 +955,22 @@ const aplicarEstadoLiquidacion = async (fila) => {
 
                 return acc;
               }, {})
-            ).sort((a, b) => String(b.fecha || '').localeCompare(String(a.fecha || '')));
+            )
+              .map((h) => {
+                const descuentoDia = Number(descuentoPorFecha[String(h.fecha || '')] || 0);
+                const abonoRegistrado = Number(h.abono_puesto_dia || 0);
+                const abonoAplicadoDia = descuentoDia > 0 ? Math.min(abonoRegistrado, descuentoDia) : abonoRegistrado;
+                const abonoArrastre = Math.max(abonoRegistrado - abonoAplicadoDia, 0);
+                return {
+                  ...h,
+                  descuento_dia: descuentoDia,
+                  abono_aplicado_dia: abonoAplicadoDia,
+                  abono_arrastre: abonoArrastre,
+                };
+              })
+              .sort((a, b) => String(b.fecha || '').localeCompare(String(a.fecha || '')));
             const historialAbonosConsumo = (carteraData?.abonos_historial || []).filter((h) => Number(h.estilista_id) === estId);
             const deudasEmpleado = (carteraData?.deudas || []).filter((d) => Number(d.estilista_id) === estId && Number(d.saldo_pendiente || 0) > 0);
-            const diasPendientes = desgloseLiquidacion?.desglose_por_dia?.filter((d) => String(d.incluido_en || d.estado || '').toLowerCase() !== 'cancelado') || [];
 
             return (
               <>
@@ -1174,7 +1191,10 @@ const aplicarEstadoLiquidacion = async (fila) => {
                             <p className="text-sm font-bold text-emerald-700">Pago empleado: {formatMoney(h.pago_empleado_dia)}</p>
                           </div>
                           <p className="text-xs text-slate-500">{h.fecha_cambio || '-'}</p>
-                          <p className="text-xs text-sky-700 mt-1">Abono puesto (última operación del día): {formatMoney(h.abono_puesto_dia)}</p>
+                          <p className="text-xs text-sky-700 mt-1">Abono puesto aplicado al día: {formatMoney(h.abono_aplicado_dia)}</p>
+                          {Number(h.abono_arrastre || 0) > 0 && (
+                            <p className="text-xs text-slate-500">Arrastre/ajuste adicional registrado: {formatMoney(h.abono_arrastre)}</p>
+                          )}
                           <p className="text-xs text-amber-700">Saldo puesto al cierre del día: {formatMoney(h.saldo_puesto_cierre)}</p>
                           <p className="text-xs text-slate-500">Usuario: {h.usuario_nombre || 'Sistema'}</p>
                         </div>
