@@ -1408,12 +1408,17 @@ def _calcular_datos_bi(request):
     if medio_pago and medio_pago != 'todos':
         adicionales_asignados_qs = adicionales_asignados_qs.filter(servicio_realizado__medio_pago=medio_pago)
 
-    abonos_consumo_qs = AbonoDeudaEmpleado.objects.select_related('deuda', 'deuda__estilista').filter(
-        fecha_hora__date__gte=fecha_inicio_dt,
-        fecha_hora__date__lte=fecha_fin_dt,
-    )
+    abonos_consumo_qs = AbonoDeudaEmpleado.objects.select_related('deuda', 'deuda__estilista')
     if medio_pago and medio_pago != 'todos':
         abonos_consumo_qs = abonos_consumo_qs.filter(medio_pago=medio_pago)
+
+    abonos_consumo_lista = []
+    for ab in abonos_consumo_qs:
+        fecha_operativa_ab = _fecha_operativa_desde_dt(ab.fecha_hora)
+        if not fecha_operativa_ab:
+            continue
+        if fecha_inicio_dt <= fecha_operativa_ab <= fecha_fin_dt:
+            abonos_consumo_lista.append(ab)
 
     ingresos_abonos_consumo = Decimal(abonos_consumo_qs.aggregate(total=Sum('monto'))['total'] or 0)
     deuda_consumo_empleado_total = Decimal(
@@ -2632,8 +2637,8 @@ def editar_abono_consumo_empleado(request, abono_id):
         except Exception:
             return Response({'error': 'Fecha inválida. Usa YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        hora_ref = timezone.localtime(abono.fecha_hora).time() if abono.fecha_hora else timezone.localtime().time()
-        fecha_nueva_dt = datetime.combine(fecha_nueva, hora_ref.replace(microsecond=0))
+        # Usar una hora fija evita que el __date en BD cambie por conversión UTC.
+        fecha_nueva_dt = datetime.combine(fecha_nueva, datetime.min.time()).replace(hour=12)
         if timezone.is_naive(fecha_nueva_dt):
             fecha_nueva_dt = timezone.make_aware(fecha_nueva_dt, timezone.get_current_timezone())
 
@@ -4173,7 +4178,7 @@ def reporte_cierre_caja(request):
         abonos_consumo_qs = abonos_consumo_qs.filter(medio_pago=medio_pago)
 
     abonos_por_deuda = {}
-    for ab in abonos_consumo_qs:
+    for ab in abonos_consumo_lista:
         did = int(ab.deuda_id)
         abonos_por_deuda[did] = abonos_por_deuda.get(did, Decimal(0)) + Decimal(ab.monto or 0)
 
@@ -4227,7 +4232,7 @@ def reporte_cierre_caja(request):
 
     # Consumo empleado: en cierre de caja se reconoce por fecha de ABONO,
     # no por fecha de creación de la factura de consumo.
-    for ab in abonos_consumo_qs.order_by('-fecha_hora', '-id'):
+    for ab in sorted(abonos_consumo_lista, key=lambda x: (x.fecha_hora or datetime.min, x.id or 0), reverse=True):
         deuda = getattr(ab, 'deuda', None)
         if not deuda:
             continue
