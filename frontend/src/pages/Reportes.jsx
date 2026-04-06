@@ -106,6 +106,7 @@ const Reportes = () => {
   const [cierreCaja, setCierreCaja] = useState(null);
   const [biData, setBiData] = useState(null);
   const [carteraData, setCarteraData] = useState({ resumen: [], deudas: [], abonos_historial: [] });
+  const [carteraDataLiquidacionGlobal, setCarteraDataLiquidacionGlobal] = useState({ resumen: [], deudas: [], abonos_historial: [] });
   const [abonoPorDeuda, setAbonoPorDeuda] = useState({});
   const [medioAbonoPorDeuda, setMedioAbonoPorDeuda] = useState({});
   const [savingAbonoByDeuda, setSavingAbonoByDeuda] = useState({});
@@ -149,6 +150,28 @@ const Reportes = () => {
     }),
     [periodo, fechaInicio, fechaFin, medioPago]
   );
+
+  const cargarCarteraLiquidacionGlobal = useCallback(async () => {
+    if (esRecepcion) {
+      setCarteraDataLiquidacionGlobal({ resumen: [], deudas: [], abonos_historial: [] });
+      return;
+    }
+
+    try {
+      const carteraGlobalResp = await reportesService.getConsumoEmpleadoDeudas({
+        periodo: 'personalizado',
+        fecha_inicio: '2020-01-01',
+        fecha_fin: format(new Date(), 'yyyy-MM-dd'),
+      });
+      setCarteraDataLiquidacionGlobal({
+        resumen: carteraGlobalResp?.resumen || [],
+        deudas: carteraGlobalResp?.deudas || [],
+        abonos_historial: carteraGlobalResp?.abonos_historial || [],
+      });
+    } catch (err) {
+      setCarteraDataLiquidacionGlobal({ resumen: [], deudas: [], abonos_historial: [] });
+    }
+  }, [esRecepcion]);
 
   const cargarTodo = useCallback(async () => {
     try {
@@ -210,6 +233,11 @@ const Reportes = () => {
   useEffect(() => {
     cargarTodo();
   }, [cargarTodo]);
+
+  useEffect(() => {
+    if (moduloActivo !== 'liquidacion') return;
+    cargarCarteraLiquidacionGlobal();
+  }, [moduloActivo, cargarCarteraLiquidacionGlobal]);
 
   useEffect(() => {
     const lista = biData?.estilistas || [];
@@ -420,7 +448,7 @@ const Reportes = () => {
   };
 
   const cobrarConsumoEnDeudas = async ({ estilistaId, deudaId, monto, medioPago, fecha }) => {
-    const deudas = (carteraData?.deudas || [])
+    const deudas = (carteraDataLiquidacionGlobal?.deudas || [])
       .filter((d) => Number(d.estilista_id) === Number(estilistaId) && Number(d.saldo_pendiente || 0) > 0)
       .sort((a, b) => String(a.fecha_hora || '').localeCompare(String(b.fecha_hora || '')));
 
@@ -474,6 +502,14 @@ const Reportes = () => {
     });
     return mapa;
   }, [carteraData]);
+
+  const resumenPorEstilistaLiquidacion = useMemo(() => {
+    const mapa = {};
+    (carteraDataLiquidacionGlobal?.resumen || []).forEach((item) => {
+      mapa[item.estilista_id] = item;
+    });
+    return mapa;
+  }, [carteraDataLiquidacionGlobal]);
 
   const deudaSeleccionada = useMemo(
     () => (carteraData?.deudas || []).find((d) => Number(d.deuda_id) === Number(deudaActivaHistorial)) || null,
@@ -616,7 +652,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
       [estilistaId]: resultado.estado,
     }));
     
-    await cargarTodo();
+    await Promise.all([cargarTodo(), cargarCarteraLiquidacionGlobal()]);
   } catch (error) {
     const msg = error?.response?.data?.error || error?.message || 'No se pudo procesar la liquidación.';
     toast.error(`❌ ${msg}`);
@@ -878,7 +914,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
               const estId = Number(item.estilista_id);
               const activo = estId === Number(estilistaActivoLiquidacion);
               const totalPendiente = Math.max(Number(item.pago_neto_pendiente || 0), 0);
-              const consumoPendiente = Number(resumenPorEstilista[estId]?.saldo_pendiente || 0);
+              const consumoPendiente = Number(resumenPorEstilistaLiquidacion[estId]?.saldo_pendiente || 0);
               const deudaPuesto = Number(item.deuda_total_acumulada || 0);
               return (
                 <button
@@ -911,7 +947,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
             const comisionesEmpleado = Number(empleado.comision_ventas_producto || 0);
             const generadoEmpleado = valorTotalEmpleado + comisionesEmpleado;
             const pendientePagoEmpleado = Math.max(Number(desgloseLiquidacion?.resumen?.pago_neto_pendiente ?? empleado.pago_neto_pendiente ?? generadoEmpleado), 0);
-            const consumoPendiente = Number(resumenPorEstilista[estId]?.saldo_pendiente || 0);
+            const consumoPendiente = Number(resumenPorEstilistaLiquidacion[estId]?.saldo_pendiente || 0);
             const cobroConsumoDigitado = Number(cobroConsumoPorEstilista[estId] || 0);
             const cobroConsumoAplicado = Math.min(Math.max(cobroConsumoDigitado, 0), Math.max(consumoPendiente, 0));
             const abonoPuestoDigitado = Math.max(Number(abonoPuestoPorEstilista[estId] || 0), 0);
@@ -969,8 +1005,8 @@ const aplicarEstadoLiquidacion = async (fila) => {
                 };
               })
               .sort((a, b) => String(b.fecha || '').localeCompare(String(a.fecha || '')));
-            const historialAbonosConsumo = (carteraData?.abonos_historial || []).filter((h) => Number(h.estilista_id) === estId);
-            const deudasEmpleado = (carteraData?.deudas || []).filter((d) => Number(d.estilista_id) === estId && Number(d.saldo_pendiente || 0) > 0);
+            const historialAbonosConsumo = (carteraDataLiquidacionGlobal?.abonos_historial || []).filter((h) => Number(h.estilista_id) === estId);
+            const deudasEmpleado = (carteraDataLiquidacionGlobal?.deudas || []).filter((d) => Number(d.estilista_id) === estId && Number(d.saldo_pendiente || 0) > 0);
 
             return (
               <>
