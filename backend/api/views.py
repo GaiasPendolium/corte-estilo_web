@@ -5129,6 +5129,16 @@ def reporte_cierre_caja(request):
 
     suma_componentes = ingresos_servicios_tarjeta + ingresos_productos_tarjeta + ingresos_espacios_tarjeta
     liquidacion_empleados_resumen = Decimal(str(kpis.get('pago_total_estilistas', 0) or 0))
+    try:
+        ajuste_resp = reporte_ajuste_diario_unificado(request)
+        ajuste_items = (getattr(ajuste_resp, 'data', {}) or {}).get('items', []) or []
+        if ajuste_items:
+            liquidacion_empleados_resumen = sum(
+                (Decimal(str(item.get('pagado_total', 0) or 0)) for item in ajuste_items),
+                Decimal(0),
+            )
+    except Exception:
+        pass
     if liquidacion_empleados_resumen < 0:
         liquidacion_empleados_resumen = Decimal(0)
     ganancia_total = total_ingresos - liquidacion_empleados_resumen
