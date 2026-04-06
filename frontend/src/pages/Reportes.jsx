@@ -328,6 +328,7 @@ const Reportes = () => {
     let generado = 0;
     let pendiente = 0;
     let consumo = 0;
+    let abonoPuesto = 0;
     let filasModificadas = 0;
 
     (ajusteDiarioRowsFiltradas || []).forEach((fila) => {
@@ -336,6 +337,7 @@ const Reportes = () => {
       generado += Number(fila.generado_total || 0);
       pendiente += Number(fila.pendiente_pago_empleado || 0);
       consumo += Number(fila.cobro_consumo_dia || 0);
+      abonoPuesto += toMontoNoNegativo(edit.abono_puesto ?? fila.abono_puesto);
 
       const dif = (
         toMontoNoNegativo(edit.pago_efectivo) !== toMontoNoNegativo(fila.pago_efectivo)
@@ -350,7 +352,7 @@ const Reportes = () => {
       if (dif) filasModificadas += 1;
     });
 
-    return { generado, pendiente, consumo, filasModificadas };
+    return { generado, pendiente, consumo, abonoPuesto, filasModificadas };
   }, [ajusteDiarioRowsFiltradas, ajusteDiarioEditsByKey]);
 
   const actualizarCuadreDiaCampo = (estilistaId, fecha, campo, valor) => {
@@ -3057,7 +3059,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 mb-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3 mb-4">
           <div className="rounded-xl border border-emerald-200 bg-white p-3">
             <p className="text-xs text-slate-500">Filas visibles</p>
             <p className="text-xl font-black text-slate-900">{ajusteDiarioRowsFiltradas.length}</p>
@@ -3069,6 +3071,10 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
           <div className="rounded-xl border border-emerald-200 bg-white p-3">
             <p className="text-xs text-slate-500">Consumo cobrado (visible)</p>
             <p className="text-xl font-black text-indigo-700">{formatMoney(resumenAjusteDiario.consumo)}</p>
+          </div>
+          <div className="rounded-xl border border-emerald-200 bg-white p-3">
+            <p className="text-xs text-slate-500">Abono puesto (visible)</p>
+            <p className="text-xl font-black text-emerald-700">{formatMoney(resumenAjusteDiario.abonoPuesto)}</p>
           </div>
           <div className="rounded-xl border border-emerald-200 bg-white p-3">
             <p className="text-xs text-slate-500">Filas modificadas</p>
