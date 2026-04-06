@@ -2083,11 +2083,6 @@ def _calcular_datos_bi(request):
                 salidas_por_medio['nequi'] += Decimal(fact.pago_nequi or 0)
                 salidas_por_medio['daviplata'] += Decimal(fact.pago_daviplata or 0)
                 salidas_por_medio['otros'] += Decimal(fact.pago_otros or 0)
-
-                medio_abono = (getattr(fact, 'medio_abono_puesto', None) or 'efectivo').strip().lower()
-                if medio_abono not in ingresos_por_medio:
-                    medio_abono = 'otros'
-                ingresos_por_medio[medio_abono] += Decimal(fact.abono_puesto_dia or 0)
         else:
             estados_pago_qs = EstadoPagoEstilistaDia.objects.filter(
                 fecha__gte=fecha_inicio_dt,
@@ -2098,11 +2093,6 @@ def _calcular_datos_bi(request):
                 salidas_por_medio['nequi'] += Decimal(ep.pago_nequi or 0)
                 salidas_por_medio['daviplata'] += Decimal(ep.pago_daviplata or 0)
                 salidas_por_medio['otros'] += Decimal(ep.pago_otros or 0)
-
-                medio_abono = (getattr(ep, 'medio_abono_puesto', None) or 'efectivo').strip().lower()
-                if medio_abono not in ingresos_por_medio:
-                    medio_abono = 'otros'
-                ingresos_por_medio[medio_abono] += Decimal(ep.abono_puesto or 0)
     except (OperationalError, ProgrammingError):
         salidas_por_medio = {m: Decimal(0) for m in medios}
 
@@ -5124,8 +5114,9 @@ def reporte_cierre_caja(request):
         + consumo_empleado_abonado_total
     )
 
-    # Ganancia Total = servicios establecimiento + productos + espacios.
     medios_totales = data_bi.get('cierre_medios', {}).get('totales', {})
+
+    # Ganancia Total = servicios establecimiento + productos + espacios.
     liquidacion_empleados = Decimal(str(medios_totales.get('salidas', 0) or 0))
 
     # Mantener coherencia semántica: esta tarjeta debe ser la misma ganancia
@@ -5156,7 +5147,11 @@ def reporte_cierre_caja(request):
             },
             'medios': {
                 'detalle': data_bi.get('cierre_medios', {}).get('detalle', []),
-                'totales': data_bi.get('cierre_medios', {}).get('totales', {}),
+                'totales': {
+                    'ingresos': float(total_ingresos),
+                    'salidas': float(liquidacion_empleados),
+                    'saldo': float(total_ingresos - liquidacion_empleados),
+                },
             },
             'productos': {
                 'ingresos_venta': float(ventas_productos_total),
