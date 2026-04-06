@@ -25,7 +25,7 @@ from .models import (
     Usuario, Estilista, Servicio, Cliente, Producto,
     ServicioRealizado, VentaProducto, MovimientoInventario, EstadoPagoEstilistaDia,
     DeudaConsumoEmpleado, AbonoDeudaEmpleado, ServicioRealizadoAdicional,
-    EstadoPagoEstilistaHistorial
+    EstadoPagoEstilistaHistorial, FactLiquidacionEstilistaDia
 )
 from .serializers import (
     UsuarioSerializer, EstilistaSerializer, ServicioSerializer, ClienteSerializer,
@@ -443,6 +443,97 @@ def _calcular_neto_dia_estilista(estilista, fecha_dia):
     """LEGACY: Para compatibilidad"""
     calc = calcular_liquidacion_dia_estilista(estilista, fecha_dia)
     return calc['total_pagable']
+
+
+def _usar_fact_liquidacion_en_reportes():
+    raw = (os.environ.get('USE_FACT_LIQUIDACION_REPORTES') or '').strip().lower()
+    return raw in {'1', 'true', 'si', 'sí', 'yes'}
+
+
+def _cobro_consumo_dia_estilista(estilista_id, fecha_dia):
+    total = Decimal(0)
+    try:
+        abonos_qs = AbonoDeudaEmpleado.objects.select_related('deuda').filter(deuda__estilista_id=estilista_id)
+        for ab in abonos_qs:
+            fecha_op = _fecha_operativa_desde_dt(ab.fecha_hora)
+            if fecha_op == fecha_dia:
+                total += Decimal(ab.monto or 0)
+    except Exception:
+        return Decimal(0)
+    return total
+
+
+def _upsert_fact_liquidacion_dia(
+    *,
+    estilista,
+    fecha,
+    calc,
+    pago_efectivo,
+    pago_nequi,
+    pago_daviplata,
+    pago_otros,
+    abono_puesto,
+    deuda_anterior,
+    deuda_cierre,
+    pendiente_pago,
+    estado_liquidacion,
+    forzar_reemplazo_dia,
+    usuario,
+    notas,
+    origen='liquidar_dia_v2',
+):
+    """Sincroniza la versión vigente de fact diaria por estilista y fecha."""
+    try:
+        with transaction.atomic():
+            FactLiquidacionEstilistaDia.objects.filter(
+                estilista=estilista,
+                fecha=fecha,
+                vigente=True,
+            ).exclude(version=1).update(vigente=False)
+
+            fact, _ = FactLiquidacionEstilistaDia.objects.get_or_create(
+                estilista=estilista,
+                fecha=fecha,
+                version=1,
+                defaults={'vigente': True},
+            )
+
+            comisiones_totales = Decimal(calc.get('comisiones_ventas') or 0)
+            fact.vigente = True
+            fact.origen_calculo = origen
+            fact.ganancias_servicios = Decimal(calc.get('servicios_base') or 0) + Decimal(calc.get('comisiones_adicionales') or 0)
+            fact.comision_producto_caja = comisiones_totales
+            fact.comision_producto_servicios = Decimal(0)
+            fact.ganancias_totales = Decimal(calc.get('ganancias_totales') or 0)
+            fact.descuento_puesto_dia = Decimal(calc.get('descuento_puesto') or 0)
+            fact.deuda_puesto_anterior = Decimal(deuda_anterior or 0)
+            fact.abono_puesto_dia = Decimal(abono_puesto or 0)
+            fact.deuda_puesto_cierre = Decimal(deuda_cierre or 0)
+            fact.pago_efectivo = Decimal(pago_efectivo or 0)
+            fact.pago_nequi = Decimal(pago_nequi or 0)
+            fact.pago_daviplata = Decimal(pago_daviplata or 0)
+            fact.pago_otros = Decimal(pago_otros or 0)
+            fact.pago_total_empleado = (
+                Decimal(pago_efectivo or 0)
+                + Decimal(pago_nequi or 0)
+                + Decimal(pago_daviplata or 0)
+                + Decimal(pago_otros or 0)
+            )
+            fact.pendiente_pago_empleado = Decimal(pendiente_pago or 0)
+            fact.cobro_consumo_dia = _cobro_consumo_dia_estilista(estilista.id, fecha)
+            fact.estado_liquidacion = estado_liquidacion
+            fact.forzar_reemplazo_dia = bool(forzar_reemplazo_dia)
+            fact.usuario_liquida = usuario if getattr(usuario, 'is_authenticated', False) else None
+            fact.notas = notas
+            fact.payload_fuente = {
+                'ganancias_totales': float(Decimal(calc.get('ganancias_totales') or 0)),
+                'descuento_puesto': float(Decimal(calc.get('descuento_puesto') or 0)),
+                'total_pagable': float(Decimal(calc.get('total_pagable') or 0)),
+            }
+            fact.save()
+    except Exception:
+        # No bloquear operaciones críticas de liquidación por falla de tabla fact.
+        return
 
 
 class UsuarioViewSet(viewsets.ModelViewSet):
@@ -3382,6 +3473,25 @@ def liquidar_dia_v2(request):
             pass
     except Exception:
         pass  # No bloquear
+
+    _upsert_fact_liquidacion_dia(
+        estilista=estilista,
+        fecha=fecha,
+        calc=calc,
+        pago_efectivo=pago_efectivo,
+        pago_nequi=pago_nequi,
+        pago_daviplata=pago_daviplata,
+        pago_otros=pago_otros,
+        abono_puesto=abono_puesto,
+        deuda_anterior=deuda_anterior_puesto,
+        deuda_cierre=saldo_puesto,
+        pendiente_pago=pendiente_liquidacion,
+        estado_liquidacion=estado_resultante,
+        forzar_reemplazo_dia=forzar_reemplazo_dia,
+        usuario=request.user,
+        notas=notas,
+        origen='liquidar_dia_v2',
+    )
     
     # ============ [6] RESPUESTA ============
     return Response({
@@ -4173,6 +4283,21 @@ def reporte_ajuste_diario_unificado(request):
     except (OperationalError, ProgrammingError):
         estados_map = {}
 
+    usar_fact = _usar_fact_liquidacion_en_reportes()
+    facts_map = {}
+    if usar_fact:
+        try:
+            facts_qs = FactLiquidacionEstilistaDia.objects.filter(
+                estilista_id__in=estilista_ids,
+                fecha__gte=fecha_inicio_dt,
+                fecha__lte=fecha_fin_dt,
+                vigente=True,
+            )
+            for fact in facts_qs:
+                facts_map[(int(fact.estilista_id), fact.fecha)] = fact
+        except Exception:
+            facts_map = {}
+
     consumo_por_est_dia = defaultdict(Decimal)
     try:
         abonos_qs = AbonoDeudaEmpleado.objects.select_related('deuda').filter(
@@ -4236,24 +4361,29 @@ def reporte_ajuste_diario_unificado(request):
         for dia in sorted(list(dias_con_movimiento.get(est_id, set())), reverse=True):
             calc = calcular_liquidacion_dia_estilista(est, dia)
             ep = estados_map.get((est_id, dia))
+            fact = facts_map.get((est_id, dia)) if usar_fact else None
 
-            pago_efectivo = Decimal(ep.pago_efectivo or 0) if ep else Decimal(0)
-            pago_nequi = Decimal(ep.pago_nequi or 0) if ep else Decimal(0)
-            pago_daviplata = Decimal(ep.pago_daviplata or 0) if ep else Decimal(0)
-            pago_otros = Decimal(ep.pago_otros or 0) if ep else Decimal(0)
-            abono_puesto = Decimal(ep.abono_puesto or 0) if ep else Decimal(0)
+            pago_efectivo = Decimal((fact.pago_efectivo if fact else (ep.pago_efectivo if ep else 0)) or 0)
+            pago_nequi = Decimal((fact.pago_nequi if fact else (ep.pago_nequi if ep else 0)) or 0)
+            pago_daviplata = Decimal((fact.pago_daviplata if fact else (ep.pago_daviplata if ep else 0)) or 0)
+            pago_otros = Decimal((fact.pago_otros if fact else (ep.pago_otros if ep else 0)) or 0)
+            abono_puesto = Decimal((fact.abono_puesto_dia if fact else (ep.abono_puesto if ep else 0)) or 0)
             medio_abono = (getattr(ep, 'medio_abono_puesto', None) or 'efectivo') if ep else 'efectivo'
             pagado_total = pago_efectivo + pago_nequi + pago_daviplata + pago_otros
-            generado = Decimal(calc.get('total_pagable') or 0)
+            generado = Decimal((fact.ganancias_totales if fact else calc.get('total_pagable')) or 0)
+            descuento_puesto = Decimal((fact.descuento_puesto_dia if fact else calc.get('descuento_puesto')) or 0)
+            deuda_puesto = Decimal((fact.deuda_puesto_cierre if fact else (getattr(ep, 'saldo_puesto_pendiente', 0) if ep else 0)) or 0)
+            estado_item = (fact.estado_liquidacion if fact else (ep.estado if ep else 'pendiente'))
+            cobro_consumo = Decimal((fact.cobro_consumo_dia if fact else consumo_por_est_dia.get((est_id, dia), Decimal(0))) or 0)
 
             items.append(
                 {
                     'estilista_id': est_id,
                     'estilista_nombre': est.nombre,
                     'fecha': dia.strftime('%Y-%m-%d'),
-                    'estado': ep.estado if ep else 'pendiente',
+                    'estado': estado_item,
                     'generado_total': float(generado),
-                    'descuento_puesto': float(Decimal(calc.get('descuento_puesto') or 0)),
+                    'descuento_puesto': float(descuento_puesto),
                     'pago_efectivo': float(pago_efectivo),
                     'pago_nequi': float(pago_nequi),
                     'pago_daviplata': float(pago_daviplata),
@@ -4262,8 +4392,8 @@ def reporte_ajuste_diario_unificado(request):
                     'pendiente_pago_empleado': float(max(generado - pagado_total, Decimal(0))),
                     'abono_puesto': float(abono_puesto),
                     'medio_abono_puesto': medio_abono,
-                    'cobro_consumo_dia': float(consumo_por_est_dia.get((est_id, dia), Decimal(0))),
-                    'deuda_puesto_pendiente': float(Decimal(getattr(ep, 'saldo_puesto_pendiente', 0) or 0)) if ep else 0.0,
+                    'cobro_consumo_dia': float(cobro_consumo),
+                    'deuda_puesto_pendiente': float(deuda_puesto),
                 }
             )
 

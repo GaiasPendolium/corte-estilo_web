@@ -706,3 +706,83 @@ class EstadoPagoEstilistaHistorial(models.Model):
 
     def __str__(self):
         return f"{self.estilista.nombre} {self.fecha}: {self.estado_anterior} -> {self.estado_nuevo}"
+
+
+class FactLiquidacionEstilistaDia(models.Model):
+    """Hecho diario consolidado de liquidación por empleado con versionado."""
+
+    ESTADOS = [
+        ('pendiente', 'Pendiente'),
+        ('debe', 'Debe'),
+        ('cancelado', 'Cancelado'),
+    ]
+
+    estilista = models.ForeignKey(
+        Estilista,
+        on_delete=models.PROTECT,
+        related_name='facts_liquidacion_diaria',
+        verbose_name='Empleado'
+    )
+    fecha = models.DateField(verbose_name='Fecha operativa')
+    version = models.PositiveIntegerField(default=1, verbose_name='Version de calculo')
+    vigente = models.BooleanField(default=True, verbose_name='Version vigente')
+    origen_calculo = models.CharField(max_length=40, default='engine_v2', verbose_name='Origen calculo')
+
+    ganancias_servicios = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    comision_producto_caja = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    comision_producto_servicios = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    ganancias_totales = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+
+    descuento_puesto_dia = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    deuda_puesto_anterior = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    abono_puesto_dia = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    deuda_puesto_cierre = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+
+    pago_efectivo = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    pago_nequi = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    pago_daviplata = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    pago_otros = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    pago_total_empleado = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    pendiente_pago_empleado = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+
+    cobro_consumo_dia = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    estado_liquidacion = models.CharField(max_length=20, choices=ESTADOS, default='pendiente')
+    forzar_reemplazo_dia = models.BooleanField(default=False)
+
+    usuario_liquida = models.ForeignKey(
+        Usuario,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='facts_liquidacion_generados',
+    )
+    notas = models.TextField(blank=True, null=True)
+    payload_fuente = models.JSONField(default=dict, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'fact_liquidacion_estilista_dia'
+        verbose_name = 'Fact Liquidacion Estilista Dia'
+        verbose_name_plural = 'Facts Liquidacion Estilista Dia'
+        ordering = ['-fecha', 'estilista__nombre', '-version']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['estilista', 'fecha', 'version'],
+                name='uq_fact_liq_est_fecha_ver',
+            ),
+            models.UniqueConstraint(
+                fields=['estilista', 'fecha'],
+                condition=models.Q(vigente=True),
+                name='uq_fact_liq_est_fecha_vigente',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['fecha'], name='ix_fact_liq_fecha'),
+            models.Index(fields=['estilista', '-fecha'], name='ix_fact_liq_est_fecha'),
+            models.Index(fields=['estado_liquidacion', '-fecha'], name='ix_fact_liq_estado_fecha'),
+        ]
+
+    def __str__(self):
+        return f"{self.estilista.nombre} {self.fecha} v{self.version} ({'vigente' if self.vigente else 'historico'})"
