@@ -8,13 +8,41 @@ const today = new Date();
 const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
 
 const MODULOS = [
-  { key: 'cierre', label: '1. Cierre de Caja' },
-  { key: 'ajuste', label: '2. Ajuste Diario Unificado' },
-  { key: 'liquidacion', label: '3. Liquidacion Empleado' },
-  { key: 'cartera', label: '4. Cartera Empleado' },
-  { key: 'agotarse', label: '5. Productos Agotarse' },
+  { key: 'cierre', label: 'Cierre de Caja' },
+  { key: 'ajuste', label: 'Ajuste Diario' },
+  { key: 'liquidacion', label: 'Liquidacion Empleado' },
+  { key: 'cartera', label: 'Cartera Empleado' },
+  { key: 'agotarse', label: 'Productos por Agotarse' },
 ];
 const REPORTES_UI_VERSION = '2026-04-05 v3';
+
+const MODULO_META = {
+  cierre: {
+    subtitle: 'Ingresos, egresos y cuadre diario por medios',
+    accent: 'from-sky-500/20 to-cyan-500/10',
+    border: 'border-sky-300/60',
+  },
+  ajuste: {
+    subtitle: 'Ajustes centralizados por empleado y fecha',
+    accent: 'from-emerald-500/20 to-teal-500/10',
+    border: 'border-emerald-300/60',
+  },
+  liquidacion: {
+    subtitle: 'Pago empleado, puesto y consumo en una sola vista',
+    accent: 'from-indigo-500/20 to-blue-500/10',
+    border: 'border-indigo-300/60',
+  },
+  cartera: {
+    subtitle: 'Control de facturas, abonos y saldos pendientes',
+    accent: 'from-amber-500/20 to-orange-500/10',
+    border: 'border-amber-300/60',
+  },
+  agotarse: {
+    subtitle: 'Productos críticos con stock bajo',
+    accent: 'from-rose-500/20 to-red-500/10',
+    border: 'border-rose-300/60',
+  },
+};
 
 const MEDIOS_PAGO = [
   { value: 'todos', label: 'Todos los medios' },
@@ -2370,65 +2398,85 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
 
   return (
     <div className="space-y-6 fade-in">
-      <section className="rounded-[28px] bg-[radial-gradient(circle_at_top_left,_rgba(59,130,246,0.18),_transparent_34%),linear-gradient(135deg,#0f172a_0%,#111827_35%,#1f2937_100%)] p-6 text-white shadow-2xl">
-        <h1 className="text-3xl font-black tracking-tight">Reportes</h1>
-        <p className="text-slate-300 mt-2">Panel unificado para cierre, liquidación, cartera y ajustes diarios en una sola experiencia.</p>
-        <span className="inline-flex mt-3 rounded-full bg-white/15 border border-white/30 px-3 py-1 text-xs font-semibold tracking-wide">UI {REPORTES_UI_VERSION}</span>
+      <section className="relative overflow-hidden rounded-[30px] border border-slate-800 bg-[radial-gradient(circle_at_15%_20%,rgba(14,165,233,0.22),transparent_30%),radial-gradient(circle_at_85%_15%,rgba(16,185,129,0.22),transparent_34%),linear-gradient(120deg,#020617_0%,#0f172a_45%,#111827_100%)] p-7 text-white shadow-2xl">
+        <div className="absolute -right-14 -top-14 h-44 w-44 rounded-full bg-white/5 blur-3xl" />
+        <div className="absolute -left-12 bottom-0 h-40 w-40 rounded-full bg-cyan-300/10 blur-3xl" />
+        <div className="relative z-10">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h1 className="text-3xl md:text-4xl font-black tracking-tight">Centro de Reportes</h1>
+              <p className="text-slate-300 mt-2 max-w-3xl">Todo el control diario en un solo lugar: cierre, ajustes, liquidación y cartera con una interfaz más clara para operación real.</p>
+            </div>
+            <span className="inline-flex rounded-full bg-white/15 border border-white/30 px-3 py-1 text-xs font-semibold tracking-wide">UI {REPORTES_UI_VERSION}</span>
+          </div>
+          <div className="mt-4 flex flex-wrap gap-2 text-xs">
+            <span className="rounded-full border border-white/25 bg-white/10 px-3 py-1">Rango: {fechaInicio} a {fechaFin}</span>
+            <span className="rounded-full border border-white/25 bg-white/10 px-3 py-1">Medio: {MEDIOS_PAGO.find((m) => m.value === medioPago)?.label || 'Todos'}</span>
+            <span className="rounded-full border border-emerald-200/40 bg-emerald-300/10 px-3 py-1">Vista activa: {(MODULOS.find((m) => m.key === moduloActivo)?.label || moduloActivo)}</span>
+          </div>
+        </div>
       </section>
 
-      <div className="card">
-        <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
-          <div>
-            <label className="block text-sm text-gray-600 mb-1">Periodo</label>
+      <div className="rounded-3xl border border-slate-200 bg-white/95 p-5 shadow-xl backdrop-blur-sm">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
+          <div className="lg:col-span-2">
+            <label className="block text-xs font-semibold tracking-wide text-slate-500 mb-1 uppercase">Periodo</label>
             <select className="input-field" value={periodo} onChange={(e) => setPeriodo(e.target.value)}>
               <option value="semana">Semana</option>
               <option value="mes">Mes</option>
               <option value="personalizado">Personalizado</option>
             </select>
           </div>
-          <div>
-            <label className="block text-sm text-gray-600 mb-1">Fecha inicio</label>
+          <div className="lg:col-span-2">
+            <label className="block text-xs font-semibold tracking-wide text-slate-500 mb-1 uppercase">Fecha inicio</label>
             <input type="date" className="input-field" value={fechaInicio} onChange={(e) => setFechaInicio(e.target.value)} />
           </div>
-          <div>
-            <label className="block text-sm text-gray-600 mb-1">Fecha fin</label>
+          <div className="lg:col-span-2">
+            <label className="block text-xs font-semibold tracking-wide text-slate-500 mb-1 uppercase">Fecha fin</label>
             <input type="date" className="input-field" value={fechaFin} onChange={(e) => setFechaFin(e.target.value)} />
           </div>
-          <div>
-            <label className="block text-sm text-gray-600 mb-1">Medio de pago</label>
+          <div className="lg:col-span-2">
+            <label className="block text-xs font-semibold tracking-wide text-slate-500 mb-1 uppercase">Medio de pago</label>
             <select className="input-field" value={medioPago} onChange={(e) => setMedioPago(e.target.value)}>
               {MEDIOS_PAGO.map((m) => (
                 <option key={m.value} value={m.value}>{m.label}</option>
               ))}
             </select>
           </div>
-          <div className="flex items-end gap-2 md:col-span-2">
+          <div className="lg:col-span-4 flex flex-wrap items-end gap-2">
             <button className="btn-secondary" onClick={() => aplicarRangoRapido('ayer')}>Ayer</button>
             <button className="btn-secondary" onClick={() => aplicarRangoRapido('hoy')}>Hoy</button>
             <button className="btn-secondary" onClick={() => aplicarRangoRapido('7dias')}>7 dias</button>
             <button className="btn-secondary" onClick={() => aplicarRangoRapido('mes')}>Mes</button>
-            <button className="btn-primary" onClick={cargarTodo} disabled={loading}>{loading ? 'Consultando...' : 'Consultar'}</button>
+            <button className="btn-primary" onClick={cargarTodo} disabled={loading}>{loading ? 'Consultando...' : 'Actualizar Datos'}</button>
           </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
-        {modulosVisibles.map((mod) => (
-          <button
-            key={mod.key}
-            className={`${moduloActivo === mod.key ? 'btn-primary' : 'btn-secondary'} text-left`}
-            onClick={() => setModuloActivo(mod.key)}
-          >
-            {mod.label}
-          </button>
-        ))}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
+        {modulosVisibles.map((mod) => {
+          const meta = MODULO_META[mod.key] || {};
+          const activo = moduloActivo === mod.key;
+          return (
+            <button
+              key={mod.key}
+              className={`rounded-2xl border p-4 text-left transition-all duration-200 ${activo ? `${meta.border || 'border-slate-300'} bg-gradient-to-br ${meta.accent || 'from-slate-200 to-slate-100'} shadow-lg scale-[1.01]` : 'border-slate-200 bg-white hover:border-slate-300 hover:shadow-md'}`}
+              onClick={() => setModuloActivo(mod.key)}
+            >
+              <p className={`text-sm font-black ${activo ? 'text-slate-900' : 'text-slate-800'}`}>{mod.label}</p>
+              <p className="text-xs text-slate-600 mt-1 leading-relaxed">{meta.subtitle || 'Módulo operativo'}</p>
+            </button>
+          );
+        })}
       </div>
 
-      {moduloActivo === 'cierre' && renderModuloCierreCaja()}
-      {moduloActivo === 'ajuste' && renderModuloAjusteDiario()}
-      {moduloActivo === 'liquidacion' && renderModuloLiquidacion()}
-      {moduloActivo === 'cartera' && renderModuloCartera()}
-      {moduloActivo === 'agotarse' && renderModuloAgotarse()}
+      <div className="rounded-3xl border border-slate-200 bg-white p-4 md:p-5 shadow-xl">
+        {moduloActivo === 'cierre' && renderModuloCierreCaja()}
+        {moduloActivo === 'ajuste' && renderModuloAjusteDiario()}
+        {moduloActivo === 'liquidacion' && renderModuloLiquidacion()}
+        {moduloActivo === 'cartera' && renderModuloCartera()}
+        {moduloActivo === 'agotarse' && renderModuloAgotarse()}
+      </div>
     </div>
   );
 };
