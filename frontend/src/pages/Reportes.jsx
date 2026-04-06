@@ -152,6 +152,8 @@ const Reportes = () => {
   const [pagosPorEstilista, setPagosPorEstilista] = useState({});
   const [estadoDiaPorEstilista, setEstadoDiaPorEstilista] = useState({});
   const [abonoPuestoPorEstilista, setAbonoPuestoPorEstilista] = useState({});
+  const [modoCobroPuestoPorEstilista, setModoCobroPuestoPorEstilista] = useState({});
+  const [porcentajePuestoPorEstilista, setPorcentajePuestoPorEstilista] = useState({});
   const [abonoPuestoAcumuladoPorEstilista, setAbonoPuestoAcumuladoPorEstilista] = useState({});
   const [medioAbonoPuestoPorEstilista, setMedioAbonoPuestoPorEstilista] = useState({});
   const [aplicaComisionVentasPorEstilista, setAplicaComisionVentasPorEstilista] = useState({});
@@ -518,6 +520,8 @@ const Reportes = () => {
         setPagosPorEstilista({});
         setEstadoDiaPorEstilista({});
         setAbonoPuestoPorEstilista({});
+        setModoCobroPuestoPorEstilista({});
+        setPorcentajePuestoPorEstilista({});
         setMedioAbonoPuestoPorEstilista({});
         setAplicaComisionVentasPorEstilista({});
         setCobroConsumoPorEstilista({});
@@ -1848,6 +1852,8 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
             const cobroConsumoDigitado = Number(cobroConsumoPorEstilista[estId] || 0);
             const cobroConsumoAplicado = Math.min(Math.max(cobroConsumoDigitado, 0), Math.max(consumoPendiente, 0));
             const abonoPuestoDigitado = Math.max(Number(abonoPuestoPorEstilista[estId] || 0), 0);
+            const modoCobroPuesto = modoCobroPuestoPorEstilista[estId] || 'fijo';
+            const porcentajePuestoDigitado = Math.max(Number(porcentajePuestoPorEstilista[estId] || 0), 0);
             const deudaPuestoAcumulada = Number(empleado.deuda_total_acumulada || 0);
             const netoEstimado = Math.max(pendientePagoEmpleado, 0);
             const pagoDigitado = totalPagoMedios(estId);
@@ -1932,7 +1938,10 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
             const pendientePagoEmpleadoSimple = diaSeleccionadoSimple
               ? Math.max(generadoEmpleadoSimple - pagoRegistradoDiaSimple, 0)
               : pendientePagoEmpleado;
-            const descuentoPuestoAplicado = Math.min(abonoPuestoDigitado, Math.max(deudaPuestoAcumulada, 0));
+            const abonoPuestoCalculado = modoCobroPuesto === 'porcentaje'
+              ? Math.round((Math.max(generadoEmpleadoSimple, 0) * porcentajePuestoDigitado) / 100)
+              : abonoPuestoDigitado;
+            const descuentoPuestoAplicado = Math.min(abonoPuestoCalculado, Math.max(deudaPuestoAcumulada, 0));
             const descuentoConsumoAplicado = cobroConsumoAplicado;
             const totalDescuentosSimple = descuentoPuestoAplicado + descuentoConsumoAplicado;
             const totalPagarFinalSimple = Math.max(pendientePagoEmpleadoSimple - totalDescuentosSimple, 0);
@@ -2059,22 +2068,50 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                         <div className="rounded-xl border border-amber-200 bg-white p-3">
                           <p className="text-sm font-semibold text-slate-900">Alquiler del puesto</p>
                           <p className="text-xs text-slate-600 mt-1">Pendiente actual: <span className="font-semibold text-amber-800">{formatMoney(Math.max(deudaPuestoAcumulada, 0))}</span></p>
-                          <button
-                            type="button"
-                            className="btn-secondary !py-1 !px-2 text-xs mt-2"
-                            onClick={() => setAbonoPuestoPorEstilista((prev) => ({ ...prev, [estId]: String(Math.max(deudaPuestoAcumulada, 0)) }))}
-                          >
-                            Usar pendiente completo
-                          </button>
-                          <label className="block text-xs text-slate-600 mt-2 mb-1">Valor a descontar</label>
-                          <input
+                          <label className="block text-xs text-slate-600 mt-2 mb-1">Tipo de cobro del puesto</label>
+                          <select
                             className="input-field"
-                            type="number"
-                            min="0"
-                            step="1"
-                            value={abonoPuestoPorEstilista[estId] || ''}
-                            onChange={(e) => setAbonoPuestoPorEstilista((prev) => ({ ...prev, [estId]: String(e.target.value || '').replace(/[^\d.]/g, '') }))}
-                          />
+                            value={modoCobroPuesto}
+                            onChange={(e) => setModoCobroPuestoPorEstilista((prev) => ({ ...prev, [estId]: e.target.value }))}
+                          >
+                            <option value="fijo">Valor fijo</option>
+                            <option value="porcentaje">Porcentaje del generado del día</option>
+                          </select>
+
+                          {modoCobroPuesto === 'fijo' ? (
+                            <>
+                              <button
+                                type="button"
+                                className="btn-secondary !py-1 !px-2 text-xs mt-2"
+                                onClick={() => setAbonoPuestoPorEstilista((prev) => ({ ...prev, [estId]: String(Math.max(deudaPuestoAcumulada, 0)) }))}
+                              >
+                                Usar pendiente completo
+                              </button>
+                              <label className="block text-xs text-slate-600 mt-2 mb-1">Valor a descontar</label>
+                              <input
+                                className="input-field"
+                                type="number"
+                                min="0"
+                                step="1"
+                                value={abonoPuestoPorEstilista[estId] || ''}
+                                onChange={(e) => setAbonoPuestoPorEstilista((prev) => ({ ...prev, [estId]: String(e.target.value || '').replace(/[^\d.]/g, '') }))}
+                              />
+                            </>
+                          ) : (
+                            <>
+                              <label className="block text-xs text-slate-600 mt-2 mb-1">Porcentaje (%)</label>
+                              <input
+                                className="input-field"
+                                type="number"
+                                min="0"
+                                step="0.1"
+                                value={porcentajePuestoPorEstilista[estId] || ''}
+                                onChange={(e) => setPorcentajePuestoPorEstilista((prev) => ({ ...prev, [estId]: String(e.target.value || '').replace(/[^\d.]/g, '') }))}
+                              />
+                              <p className="text-[11px] text-slate-600 mt-1">Base: generado del día {formatMoney(Math.max(generadoEmpleadoSimple, 0))}</p>
+                              <p className="text-[11px] text-amber-700 mt-1">Calculado hoy: {formatMoney(abonoPuestoCalculado)}</p>
+                            </>
+                          )}
                           <label className="block text-xs text-slate-600 mt-2 mb-1">Medio del abono</label>
                           <select
                             className="input-field"
