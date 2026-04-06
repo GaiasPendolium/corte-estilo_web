@@ -143,6 +143,11 @@ const Reportes = () => {
   const [savingFechaAbonoConsumoById, setSavingFechaAbonoConsumoById] = useState({});
 
   const calcularPendientePagoEmpleado = useCallback((fila) => {
+    const pendienteConsolidado = Number(fila?.pendiente_pago_empleado ?? fila?.pago_neto_pendiente ?? 0);
+    if (Number.isFinite(pendienteConsolidado) && pendienteConsolidado >= 0) {
+      return pendienteConsolidado;
+    }
+
     const pendienteBackend = Number(fila?.pago_neto_pendiente ?? 0);
     if (Number.isFinite(pendienteBackend) && pendienteBackend >= 0) {
       return pendienteBackend;
@@ -549,6 +554,11 @@ const Reportes = () => {
   const liquidacionPagadoCaja = Number(resumen?.liquidacion_empleados ?? 0);
 
   const liquidacionTotal = (biData?.estilistas || []).reduce((sum, item) => {
+    const generadoConsolidado = Number(item?.generado_total_empleado ?? 0);
+    if (Number.isFinite(generadoConsolidado) && generadoConsolidado >= 0) {
+      return sum + generadoConsolidado;
+    }
+
     const generadoPeriodo = Number(item?.pago_neto_periodo ?? 0);
     if (Number.isFinite(generadoPeriodo) && generadoPeriodo >= 0) {
       return sum + generadoPeriodo;
@@ -1313,7 +1323,10 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
             const valorTotalEmpleado = Number((empleado.valor_total_empleado ?? empleado.facturacion_servicios ?? empleado.ganancias_servicios) || 0);
             const comisionesEmpleado = Number(empleado.comision_ventas_producto || 0);
             const generadoEmpleadoCalculado = valorTotalEmpleado + comisionesEmpleado;
-            const generadoEmpleado = Math.max(Number(empleado?.pago_neto_periodo ?? generadoEmpleadoCalculado), 0);
+            const generadoEmpleado = Math.max(
+              Number(empleado?.generado_total_empleado ?? empleado?.pago_neto_periodo ?? generadoEmpleadoCalculado),
+              0
+            );
             const pendientePagoEmpleado = calcularPendientePagoEmpleado(empleado);
             const consumoPendiente = Number(resumenPorEstilistaLiquidacion[estId]?.saldo_pendiente || 0);
             const cobroConsumoDigitado = Number(cobroConsumoPorEstilista[estId] || 0);
@@ -1418,7 +1431,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                     <div className="rounded-xl border border-white bg-white p-3">
                       <p className="text-xs text-slate-500">Pendiente por pagar</p>
                       <p className="text-xl font-black text-emerald-700 mt-1">{formatMoney(pendientePagoEmpleado)}</p>
-                      <p className="text-[11px] text-slate-500 mt-1">Generado empleado menos deuda de puesto acumulada.</p>
+                      <p className="text-[11px] text-slate-500 mt-1">Generado del periodo menos lo ya pagado al empleado.</p>
                     </div>
                     <div className="rounded-xl border border-white bg-white p-3">
                       <p className="text-xs text-slate-500">Consumo pendiente</p>
