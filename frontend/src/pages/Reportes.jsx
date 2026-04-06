@@ -1069,9 +1069,14 @@ const aplicarEstadoLiquidacion = async (fila) => {
   const pago_nequi = Number(pagosPorEstilista[estilistaId]?.nequi || 0);
   const pago_daviplata = Number(pagosPorEstilista[estilistaId]?.daviplata || 0);
   const pago_otros = Number(pagosPorEstilista[estilistaId]?.otros || 0);
-  const abono_puesto = Number(abonoPuestoPorEstilista[estilistaId] || 0);
+  const abono_puesto_digitado = Number(abonoPuestoPorEstilista[estilistaId] || 0);
   const puesto_modo = modoCobroPuestoPorEstilista[estilistaId] || 'fijo';
-  const puesto_porcentaje = Number(porcentajePuestoPorEstilista[estilistaId] || 0);
+  const puesto_porcentaje = Math.max(Number(porcentajePuestoPorEstilista[estilistaId] || 0), 0);
+  const diaBase = (desgloseLiquidacion?.desglose_por_dia || []).find((d) => String(d.fecha || '') === String(fechaLiquidacion));
+  const basePorcentajeDia = Math.max(Number(diaBase?.neto_dia || 0), 0);
+  const abono_puesto = puesto_modo === 'porcentaje'
+    ? Math.max(Math.round((basePorcentajeDia * puesto_porcentaje) / 100), 0)
+    : abono_puesto_digitado;
   const medio_abono_puesto = medioAbonoPuestoPorEstilista[estilistaId] || 'efectivo';
   const aplica_comision_ventas = Boolean(aplicaComisionVentasPorEstilista[estilistaId] ?? true);
   const saldoConsumoEmpleado = Number(resumenPorEstilistaLiquidacion[estilistaId]?.saldo_pendiente || 0);
@@ -1873,6 +1878,10 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
               acc[String(d.fecha || '')] = Number(d.descuento_espacio || 0);
               return acc;
             }, {});
+            const generadoPorFecha = diasPendientes.reduce((acc, d) => {
+              acc[String(d.fecha || '')] = Math.max(Number(d.neto_dia || 0), 0);
+              return acc;
+            }, {});
             const historialDiarioLiquidacion = Object.values(
               historialPagosEmpleado.reduce((acc, h) => {
                 const fecha = h.fecha || '-';
@@ -1953,6 +1962,9 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
             const descuentoConsumoAplicado = cobroConsumoAplicado;
             const totalDescuentosSimple = descuentoPuestoAplicado + descuentoConsumoAplicado;
             const totalPagarFinalSimple = Math.max(pendientePagoEmpleadoSimple - totalDescuentosSimple, 0);
+            const abonoPuestoAvanzadoCalculado = modoCobroPuesto === 'porcentaje'
+              ? Math.max(Math.round((Math.max(generadoEmpleadoSimple, 0) * porcentajePuestoDigitado) / 100), 0)
+              : abonoPuestoDigitado;
 
             if (vistaSimpleLiquidacion) {
               return (
@@ -2550,16 +2562,43 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                       </div>
 
                       <div>
-                        <label className="block text-xs text-slate-600 mb-1">Abono puesto (esta operación)</label>
-                        <input
+                        <label className="block text-xs text-slate-600 mb-1">Tipo de cobro puesto</label>
+                        <select
                           className="input-field"
-                          type="number"
-                          min="0"
-                          step="1"
-                          value={abonoPuestoPorEstilista[estId] || ''}
-                          onFocus={() => setNumericPadTarget({ estilistaId: estId, field: 'abono_puesto' })}
-                          onChange={(e) => setAbonoPuestoPorEstilista((prev) => ({ ...prev, [estId]: String(e.target.value || '').replace(/[^\d.]/g, '') }))}
-                        />
+                          value={modoCobroPuesto}
+                          onChange={(e) => setModoCobroPuestoPorEstilista((prev) => ({ ...prev, [estId]: e.target.value }))}
+                        >
+                          <option value="fijo">Valor fijo</option>
+                          <option value="porcentaje">Porcentaje del generado del día</option>
+                        </select>
+                        {modoCobroPuesto === 'porcentaje' ? (
+                          <>
+                            <label className="block text-xs text-slate-600 mt-2 mb-1">Porcentaje (%)</label>
+                            <input
+                              className="input-field"
+                              type="number"
+                              min="0"
+                              step="0.1"
+                              value={porcentajePuestoPorEstilista[estId] || ''}
+                              onChange={(e) => setPorcentajePuestoPorEstilista((prev) => ({ ...prev, [estId]: String(e.target.value || '').replace(/[^\d.]/g, '') }))}
+                            />
+                            <p className="text-xs text-slate-500 mt-1">Base del día: {formatMoney(Math.max(generadoEmpleadoSimple, 0))}</p>
+                            <p className="text-xs text-amber-700 mt-1">Abono calculado por porcentaje: {formatMoney(abonoPuestoAvanzadoCalculado)}</p>
+                          </>
+                        ) : (
+                          <>
+                            <label className="block text-xs text-slate-600 mt-2 mb-1">Abono puesto (esta operación)</label>
+                            <input
+                              className="input-field"
+                              type="number"
+                              min="0"
+                              step="1"
+                              value={abonoPuestoPorEstilista[estId] || ''}
+                              onFocus={() => setNumericPadTarget({ estilistaId: estId, field: 'abono_puesto' })}
+                              onChange={(e) => setAbonoPuestoPorEstilista((prev) => ({ ...prev, [estId]: String(e.target.value || '').replace(/[^\d.]/g, '') }))}
+                            />
+                          </>
+                        )}
                         <p className="text-xs text-slate-500 mt-1">Acumulado del día antes de guardar: {formatMoney(abonoPuestoAcumuladoPorEstilista[estId] || 0)}</p>
                       </div>
 
@@ -2601,7 +2640,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                           <p>Total a pagar al empleado (día): <b>{formatMoney(pendientePagoEmpleado)}</b></p>
                           <p>(-) Pagado digitado por medios: <b>{formatMoney(pagoDigitado)}</b></p>
                           <p className="pt-1 text-amber-800">(=) Saldo pendiente de pago al empleado: <b>{formatMoney(saldoPorPagar)}</b></p>
-                          <p className="pt-2 text-slate-600">Abono a puesto (se registra aparte, no descuenta el pago al empleado): <b>{formatMoney(abonoPuestoDigitado)}</b></p>
+                          <p className="pt-2 text-slate-600">Abono a puesto (se registra aparte, no descuenta el pago al empleado): <b>{formatMoney(abonoPuestoAvanzadoCalculado)}</b></p>
                           <p className="text-slate-600">Cobro consumo aplicado (se registra aparte): <b>{formatMoney(cobroConsumoAplicado)}</b></p>
                         </div>
                       </div>
@@ -2670,12 +2709,9 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                       {historialDiarioLiquidacion.length === 0 && <p className="text-sm text-slate-500">Sin movimientos registrados.</p>}
                       {historialDiarioLiquidacion.map((h) => {
                         const porcentajePuestoActual = Math.max(Number(porcentajePuestoPorEstilista[estId] || 0), 0);
-                        const cobroPuestoDiaPorcentaje = Math.max(
-                          Math.round((Math.max(Number(generadoEmpleadoSimple || 0), 0) * porcentajePuestoActual) / 100),
-                          0
-                        );
-                        const cobroPuestoDia = (modoCobroPuestoPorEstilista[estId] === 'porcentaje' && String(h.fecha || '') === fechaOperacionSimple)
-                          ? cobroPuestoDiaPorcentaje
+                        const baseDiaHist = Math.max(Number(generadoPorFecha[String(h.fecha || '')] || 0), 0);
+                        const cobroPuestoDia = modoCobroPuestoPorEstilista[estId] === 'porcentaje'
+                          ? Math.max(Math.round((baseDiaHist * porcentajePuestoActual) / 100), 0)
                           : Math.max(Number(h.descuento_dia || 0), 0);
                         const abonadoPuestoDia = Math.max(Number(h.abono_aplicado_dia || 0), 0);
                         const saldoPuestoCierre = Math.max(Number(h.saldo_puesto_cierre || 0), 0);
