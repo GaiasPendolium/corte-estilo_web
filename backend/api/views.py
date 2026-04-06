@@ -16,11 +16,11 @@ from collections import defaultdict
 import base64
 import csv
 import io
+import json
 import os
 import uuid
+import inspect
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import padding
-
 from .models import (
     Usuario, Estilista, Servicio, Cliente, Producto,
     ServicioRealizado, VentaProducto, MovimientoInventario, EstadoPagoEstilistaDia,
@@ -3725,10 +3725,15 @@ def liquidar_operacion_integral(request):
                     deuda_ids=deuda_ids,
                 )
 
-            # Evita reingresar al wrapper de @api_view (espera HttpRequest).
-            # Aqui ya tenemos un DRF Request valido dentro del mismo flujo.
-            liq_callable = getattr(liquidar_dia_v2, '__wrapped__', liquidar_dia_v2)
-            response_liq = liq_callable(request)
+            # Flujo robusto: el endpoint decorado puede requerir HttpRequest
+            # y convertirlo internamente a DRF Request.
+            django_request = getattr(request, '_request', None)
+            try:
+                response_liq = liquidar_dia_v2(django_request or request)
+            except Exception:
+                # Fallback defensivo por si cambia el apilado de decoradores.
+                liq_callable = inspect.unwrap(liquidar_dia_v2)
+                response_liq = liq_callable(request)
             status_liq = int(getattr(response_liq, 'status_code', 500) or 500)
             if status_liq >= 400:
                 data_liq = getattr(response_liq, 'data', None) or {}
