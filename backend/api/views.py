@@ -2328,7 +2328,7 @@ def reporte_consumo_empleado(request):
     qs = DeudaConsumoEmpleado.objects.select_related('estilista').filter(
         Q(fecha_hora__date__gte=fecha_inicio, fecha_hora__date__lte=fecha_fin)
         | Q(abonos__isnull=False)
-    ).distinct()
+    ).annotate(abonos_count=Count('abonos', distinct=True)).distinct()
 
     if estilista_id:
         qs = qs.filter(estilista_id=int(estilista_id))
@@ -2340,22 +2340,16 @@ def reporte_consumo_empleado(request):
     qs = DeudaConsumoEmpleado.objects.select_related('estilista').filter(
         Q(fecha_hora__date__gte=fecha_inicio, fecha_hora__date__lte=fecha_fin)
         | Q(abonos__isnull=False)
-    ).distinct()
+    ).annotate(abonos_count=Count('abonos', distinct=True)).distinct()
     if estilista_id:
         qs = qs.filter(estilista_id=int(estilista_id))
-
-    deuda_ids_con_abono = set(
-        AbonoDeudaEmpleado.objects.filter(
-            deuda_id__in=[int(d.id) for d in qs],
-        ).values_list('deuda_id', flat=True)
-    )
 
     # Cartera principal: mantener pendientes y también facturas con abonos
     # para que el usuario vea inmediatamente los pagos registrados en liquidación.
     qs_pendientes = []
     for deuda in qs:
         saldo = Decimal(deuda.saldo_pendiente or 0)
-        tiene_abono = int(deuda.id) in deuda_ids_con_abono
+        tiene_abono = int(getattr(deuda, 'abonos_count', 0) or 0) > 0
 
         if saldo <= Decimal('0.5') and not tiene_abono:
             continue
