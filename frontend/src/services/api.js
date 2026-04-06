@@ -440,7 +440,7 @@ export const reportesService = {
     return response.data;
   },
 
-  liquidarDiaV2: async ({ estilista_id, fecha, pago_efectivo, pago_nequi, pago_daviplata, pago_otros, abono_puesto, medio_abono_puesto, notas }) => {
+  liquidarDiaV2: async ({ estilista_id, fecha, pago_efectivo, pago_nequi, pago_daviplata, pago_otros, abono_puesto, medio_abono_puesto, notas, forzar_reemplazo_dia = false }) => {
     const payload = {
       estilista_id,
       fecha,
@@ -451,9 +451,17 @@ export const reportesService = {
       abono_puesto,
       medio_abono_puesto,
       notas,
+      forzar_reemplazo_dia,
     };
 
     const response = await api.post('/reportes/estilistas/liquidar-dia-v2/', payload);
+    return response.data;
+  },
+
+  moverFechaEstadoPagoDia: async ({ estado_pago_id, nueva_fecha }) => {
+    const response = await api.patch(`/reportes/estilistas/estado-pago-dia/${estado_pago_id}/mover-fecha/`, {
+      nueva_fecha,
+    });
     return response.data;
   },
 

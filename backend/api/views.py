@@ -3509,6 +3509,88 @@ def eliminar_estado_pago_historial(request, historial_id):
         )
 
 
+@api_view(['PATCH'])
+@permission_classes([IsAuthenticated])
+def mover_fecha_estado_pago_dia(request, estado_id):
+    if not _es_admin_o_gerente(request.user):
+        return Response(
+            {'error': 'Solo administrador o gerente pueden ajustar la fecha del pago de espacio.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    nueva_fecha_raw = (request.data.get('nueva_fecha') or '').strip()
+    if not nueva_fecha_raw:
+        return Response({'error': 'Debes enviar nueva_fecha (YYYY-MM-DD).'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        nueva_fecha = datetime.strptime(nueva_fecha_raw, '%Y-%m-%d').date()
+    except Exception:
+        return Response({'error': 'Formato de fecha inválido. Usa YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    estado = EstadoPagoEstilistaDia.objects.select_related('estilista').filter(id=estado_id).first()
+    if not estado:
+        return Response({'error': 'Registro de pago diario no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+
+    fecha_anterior = estado.fecha
+    if fecha_anterior == nueva_fecha:
+        return Response({'ok': True, 'estado_id': estado.id, 'fecha_anterior': str(fecha_anterior), 'fecha_nueva': str(nueva_fecha)})
+
+    with transaction.atomic():
+        destino = EstadoPagoEstilistaDia.objects.select_for_update().filter(
+            estilista_id=estado.estilista_id,
+            fecha=nueva_fecha,
+        ).exclude(id=estado.id).first()
+
+        if destino:
+            destino.pago_efectivo = Decimal(destino.pago_efectivo or 0) + Decimal(estado.pago_efectivo or 0)
+            destino.pago_nequi = Decimal(destino.pago_nequi or 0) + Decimal(estado.pago_nequi or 0)
+            destino.pago_daviplata = Decimal(destino.pago_daviplata or 0) + Decimal(estado.pago_daviplata or 0)
+            destino.pago_otros = Decimal(destino.pago_otros or 0) + Decimal(estado.pago_otros or 0)
+            destino.abono_puesto = Decimal(destino.abono_puesto or 0) + Decimal(estado.abono_puesto or 0)
+            if Decimal(estado.abono_puesto or 0) > 0:
+                destino.medio_abono_puesto = getattr(estado, 'medio_abono_puesto', destino.medio_abono_puesto)
+            if estado.notas:
+                notas_prev = (destino.notas or '').strip()
+                destino.notas = f"{notas_prev} | ajuste fecha desde {fecha_anterior}: {estado.notas}" if notas_prev else f"ajuste fecha desde {fecha_anterior}: {estado.notas}"
+            destino.usuario_liquida = request.user
+            destino.save(
+                update_fields=[
+                    'pago_efectivo',
+                    'pago_nequi',
+                    'pago_daviplata',
+                    'pago_otros',
+                    'abono_puesto',
+                    'medio_abono_puesto',
+                    'notas',
+                    'usuario_liquida',
+                    'actualizado_en',
+                ]
+            )
+            estado.delete()
+            estado_result_id = destino.id
+        else:
+            estado.fecha = nueva_fecha
+            estado.usuario_liquida = request.user
+            estado.save(update_fields=['fecha', 'usuario_liquida', 'actualizado_en'])
+            estado_result_id = estado.id
+
+        EstadoPagoEstilistaHistorial.objects.filter(
+            estilista_id=estado.estilista_id,
+            fecha=fecha_anterior,
+        ).update(fecha=nueva_fecha)
+
+    return Response(
+        {
+            'ok': True,
+            'estado_id': estado_result_id,
+            'estilista_id': estado.estilista_id,
+            'estilista_nombre': estado.estilista.nombre if estado.estilista_id else None,
+            'fecha_anterior': str(fecha_anterior),
+            'fecha_nueva': str(nueva_fecha),
+        }
+    )
+
+
 @api_view(['GET'])
 def bi_desglose_estilista_debug(request):
     """
@@ -4059,6 +4141,7 @@ def reporte_cierre_caja(request):
             ingresos_espacios += valor_recibido
             detalle_espacio.append(
                 {
+                    'estado_pago_id': ep.id,
                     'fecha': ep.fecha.strftime('%Y-%m-%d'),
                     'estilista_id': ep.estilista_id,
                     'estilista_nombre': ep.estilista.nombre if ep.estilista_id else '',

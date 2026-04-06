@@ -133,6 +133,8 @@ const Reportes = () => {
   const [loadingDesgloseLiquidacion, setLoadingDesgloseLiquidacion] = useState(false);
   const [historialEstados, setHistorialEstados] = useState([]);
   const [loadingHistorial, setLoadingHistorial] = useState(false);
+  const [nuevaFechaEspacioById, setNuevaFechaEspacioById] = useState({});
+  const [savingFechaEspacioById, setSavingFechaEspacioById] = useState({});
 
   const calcularPendientePagoEmpleado = useCallback((fila) => {
     const pendiente = Number(fila?.pago_neto_pendiente ?? 0);
@@ -141,6 +143,34 @@ const Reportes = () => {
     const comisionesEmpleado = Number(fila?.comision_ventas_producto || 0);
     return Math.max(valorTotalEmpleado + comisionesEmpleado, 0);
   }, []);
+
+  const puedeAjustarFechaEspacio = rolUsuario === 'administrador' || rolUsuario === 'gerente';
+
+  const ajustarFechaPagoEspacio = async (item) => {
+    const estadoId = Number(item?.estado_pago_id || 0);
+    const fechaNueva = String(nuevaFechaEspacioById[estadoId] || '').trim();
+
+    if (!estadoId) {
+      toast.error('No se puede ajustar este registro porque no tiene identificador editable.');
+      return;
+    }
+    if (!fechaNueva) {
+      toast.warning('Selecciona una fecha nueva.');
+      return;
+    }
+
+    setSavingFechaEspacioById((prev) => ({ ...prev, [estadoId]: true }));
+    try {
+      await reportesService.moverFechaEstadoPagoDia({ estado_pago_id: estadoId, nueva_fecha: fechaNueva });
+      toast.success('Fecha del pago de espacio actualizada.');
+      await cargarTodo();
+    } catch (error) {
+      const msg = error?.response?.data?.error || 'No se pudo ajustar la fecha del pago de espacio.';
+      toast.error(String(msg));
+    } finally {
+      setSavingFechaEspacioById((prev) => ({ ...prev, [estadoId]: false }));
+    }
+  };
 
   const modulosVisibles = useMemo(() => {
     if (!esRecepcion) return MODULOS;
@@ -916,25 +946,51 @@ const aplicarEstadoLiquidacion = async (fila) => {
                   <th className="px-4 py-3 text-left">Fecha</th>
                   <th className="px-4 py-3 text-left">Empleado</th>
                   <th className="px-4 py-3 text-left">Valor pagado</th>
+                  {puedeAjustarFechaEspacio && <th className="px-4 py-3 text-left">Ajustar fecha</th>}
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {(espacios.detalle || []).length === 0 && (
                   <tr>
-                    <td className="table-cell text-slate-500" colSpan={3}>No hay pagos por espacio registrados en el rango.</td>
+                    <td className="table-cell text-slate-500" colSpan={puedeAjustarFechaEspacio ? 4 : 3}>No hay pagos por espacio registrados en el rango.</td>
                   </tr>
                 )}
                 {(espacios.detalle || []).map((item, idx) => (
-                  <tr key={`${item.fecha || 'x'}-${item.estilista_id || idx}-${idx}`}>
+                  <tr key={`${item.estado_pago_id || 'x'}-${item.fecha || 'x'}-${item.estilista_id || idx}-${idx}`}>
                     <td className="table-cell">{item.fecha || '-'}</td>
                     <td className="table-cell">{item.estilista_nombre || '-'}</td>
                     <td className="table-cell font-semibold text-cyan-700">{formatMoney(item.valor_pagado)}</td>
+                    {puedeAjustarFechaEspacio && (
+                      <td className="table-cell">
+                        {item.estado_pago_id ? (
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="date"
+                              className="input-field !py-1"
+                              value={nuevaFechaEspacioById[item.estado_pago_id] || item.fecha || ''}
+                              onChange={(e) => setNuevaFechaEspacioById((prev) => ({ ...prev, [item.estado_pago_id]: e.target.value }))}
+                            />
+                            <button
+                              type="button"
+                              className="btn-secondary !py-1 !px-2 text-xs"
+                              onClick={() => ajustarFechaPagoEspacio(item)}
+                              disabled={!!savingFechaEspacioById[item.estado_pago_id]}
+                            >
+                              {savingFechaEspacioById[item.estado_pago_id] ? 'Guardando...' : 'Guardar'}
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-slate-500">No editable</span>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 ))}
                 {(espacios.detalle || []).length > 0 && (
                   <tr className="bg-cyan-100 font-semibold">
                     <td className="table-cell" colSpan={2}>TOTAL</td>
                     <td className="table-cell text-cyan-800">{formatMoney((espacios.detalle || []).reduce((sum, item) => sum + Number(item.valor_pagado || 0), 0))}</td>
+                    {puedeAjustarFechaEspacio && <td className="table-cell"></td>}
                   </tr>
                 )}
               </tbody>
