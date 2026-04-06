@@ -1154,9 +1154,8 @@ const aplicarLiquidacionSimple = async ({
     toast.warning('La liquidación simple opera por día. Usa el mismo valor en fecha inicio y fecha fin.');
     return;
   }
-  // El pendiente del empleado ya viene neteado con descuento de puesto.
-  // Solo se descuenta aquí el consumo que se cobra en esta liquidación.
-  const pagoFinalEmpleado = Math.max(Number(pendientePagoEmpleado || 0) - Number(cobroConsumoAplicado || 0), 0);
+  const totalDescuentos = Math.max(Number(abonoPuestoAplicado || 0), 0) + Math.max(Number(cobroConsumoAplicado || 0), 0);
+  const pagoFinalEmpleado = Math.max(Number(pendientePagoEmpleado || 0) - totalDescuentos, 0);
   const medio_abono_puesto = medioAbonoPuestoPorEstilista[estilistaId] || 'efectivo';
   const aplica_comision_ventas = Boolean(aplicaComisionVentasPorEstilista[estilistaId] ?? true);
   const medioCobroConsumo = medioCobroConsumoPorEstilista[estilistaId] || 'efectivo';
@@ -1934,8 +1933,8 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
               : pendientePagoEmpleado;
             const descuentoPuestoAplicado = Math.min(abonoPuestoDigitado, Math.max(deudaPuestoAcumulada, 0));
             const descuentoConsumoAplicado = cobroConsumoAplicado;
-            const totalDescuentosSimple = descuentoConsumoAplicado;
-            const totalPagarFinalSimple = Math.max(pendientePagoEmpleadoSimple - descuentoConsumoAplicado, 0);
+            const totalDescuentosSimple = descuentoPuestoAplicado + descuentoConsumoAplicado;
+            const totalPagarFinalSimple = Math.max(pendientePagoEmpleadoSimple - totalDescuentosSimple, 0);
 
             if (vistaSimpleLiquidacion) {
               return (
@@ -1955,7 +1954,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                       <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4">
                         <p className="text-xs uppercase tracking-wide text-rose-700 font-semibold">Total descuentos</p>
                         <p className="text-2xl font-black text-rose-900 mt-1">{formatMoney(totalDescuentosSimple)}</p>
-                        <p className="text-[11px] text-rose-700 mt-1">Consumo aplicado en esta liquidación.</p>
+                        <p className="text-[11px] text-rose-700 mt-1">Incluye descuento de puesto y consumo aplicado.</p>
                       </div>
                       <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
                         <p className="text-xs uppercase tracking-wide text-emerald-700 font-semibold">Total a pagar final</p>
@@ -2166,7 +2165,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                         <p className="text-sm text-slate-700">Pendiente por pagar</p>
                         <p className="text-lg font-bold text-slate-900">{formatMoney(pendientePagoEmpleadoSimple)}</p>
                         <p className="text-sm text-rose-700 mt-2">(-) Descuentos: {formatMoney(totalDescuentosSimple)}</p>
-                        <p className="text-xs text-slate-500">Consumo {formatMoney(descuentoConsumoAplicado)}. Puesto registrado: {formatMoney(descuentoPuestoAplicado)} (ya incluido en pendiente).</p>
+                        <p className="text-xs text-slate-500">Consumo {formatMoney(descuentoConsumoAplicado)}. Puesto {formatMoney(descuentoPuestoAplicado)}.</p>
                         <p className="text-4xl font-black text-emerald-800 mt-3">{formatMoney(totalPagarFinalSimple)}</p>
                       </div>
                       <div className="mt-3 flex gap-2">
