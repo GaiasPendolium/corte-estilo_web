@@ -507,7 +507,13 @@ const Reportes = () => {
         abonos_historial: carteraResp?.abonos_historial || [],
       });
       const pagadoDesdeAjuste = (ajusteResp?.items || []).reduce(
-        (sum, item) => sum + Number(item?.pagado_total || 0),
+        (sum, item) => (
+          sum
+          + Number(item?.pago_efectivo || 0)
+          + Number(item?.pago_nequi || 0)
+          + Number(item?.pago_daviplata || 0)
+          + Number(item?.pago_otros || 0)
+        ),
         0,
       );
       setPagadoEmpleadosDesdeAjuste(esRecepcion ? null : pagadoDesdeAjuste);
