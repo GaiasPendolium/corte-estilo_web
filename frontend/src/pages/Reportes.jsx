@@ -179,6 +179,7 @@ const Reportes = () => {
   const [soloPendientesAjuste, setSoloPendientesAjuste] = useState(false);
   const [vistaSimpleLiquidacion, setVistaSimpleLiquidacion] = useState(true);
   const [pasoLiquidacion, setPasoLiquidacion] = useState(1);
+  const [cierreTabActiva, setCierreTabActiva] = useState('medios');
   const [reabastecerByProductoId, setReabastecerByProductoId] = useState({});
   const [savingStockByProductoId, setSavingStockByProductoId] = useState({});
 
@@ -1298,283 +1299,402 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
     }
   };
 
-  const renderModuloCierreCaja = () => (
-    <div className="space-y-6">
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        <KpiCard title="Ingresos Totales" value={formatMoney(resumen.total_ingresos)} hint="Total ingresos recibidos del periodo" tone="slate" />
-        <div className="rounded-2xl bg-gradient-to-br from-sky-600 to-blue-600 text-white p-5 shadow-lg">
-          <p className="text-sm opacity-85">Liquidacion Empleado</p>
-          <p className="mt-2 text-lg font-black">Total: {formatMoney(liquidacionTotal)}</p>
-          <p className="mt-1 text-sm opacity-90">Pagado en caja: {formatMoney(liquidacionPagadoCaja)}</p>
-          <p className="mt-1 text-sm opacity-90">Pendiente: {formatMoney(liquidacionPendiente)}</p>
-        </div>
-        <KpiCard title="Ganancia Total" value={formatMoney(gananciaTotalTarjeta)} hint="Ingreso por Servicios + Ingreso por Productos + Ingreso por Espacios" tone="emerald" />
-        <KpiCard title="Ingreso por Servicios" value={formatMoney(ingresoServiciosTarjeta)} hint="Ganancia del establecimiento en servicios y adicionales" tone="slate" />
-        <KpiCard title="Ingreso por Productos" value={formatMoney(ingresoProductosTarjeta)} hint="Valor de productos menos comision de empleado" tone="amber" />
-        <KpiCard title="Ingreso por Espacios" value={formatMoney(resumen.ingresos_espacios)} hint="Pagos recibidos por espacio" tone="sky" />
-      </div>
+  const exportarCierreCsv = () => {
+    try {
+      const csvEscape = (value) => {
+        const raw = String(value ?? '');
+        if (raw.includes(',') || raw.includes('"') || raw.includes('\n')) {
+          return `"${raw.replace(/"/g, '""')}"`;
+        }
+        return raw;
+      };
 
-      <div className="card border border-indigo-200 bg-indigo-50">
-        <h2 className="card-header">Cuadre por medio de pago</h2>
-        <p className="text-sm text-slate-600">Saldo por medio = ingresos del medio - liquidaciones del medio.</p>
-        <div className="mt-4 overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="table-header">
-              <tr>
-                <th className="px-4 py-3 text-left">Medio</th>
-                <th className="px-4 py-3 text-left">Ingresos</th>
-                <th className="px-4 py-3 text-left">Liquidacion</th>
-                <th className="px-4 py-3 text-left">Ganancia</th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {medios.length === 0 && (
-                <tr>
-                  <td className="table-cell text-slate-500" colSpan={4}>No hay movimientos para el rango seleccionado.</td>
-                </tr>
-              )}
-              {medios.map((m) => (
-                <tr key={m.medio_pago}>
-                  <td className="table-cell capitalize font-medium">{m.medio_pago || '-'}</td>
-                  <td className="table-cell">{formatMoney(m.ingresos)}</td>
-                  <td className="table-cell">{formatMoney(m.salidas)}</td>
-                  <td className={`table-cell font-semibold ${Number(m.saldo || 0) >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                    {formatMoney(m.saldo)}
-                  </td>
-                </tr>
-              ))}
-              {medios.length > 0 && (
-                <tr className="bg-indigo-100 font-semibold">
-                  <td className="table-cell">TOTAL</td>
-                  <td className="table-cell">{formatMoney(medios.reduce((sum, m) => sum + Number(m.ingresos || 0), 0))}</td>
-                  <td className="table-cell">{formatMoney(medios.reduce((sum, m) => sum + Number(m.salidas || 0), 0))}</td>
-                  <td className="table-cell text-indigo-900">{formatMoney(medios.reduce((sum, m) => sum + Number(m.saldo || 0), 0))}</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      const ingresosTotales = Number(resumen?.total_ingresos || (ingresoServiciosTarjeta + ingresoProductosTarjeta + ingresoEspaciosTarjeta));
+      const pagosEmpleados = Number(liquidacionPagadoCaja || 0);
+      const gananciaNeta = ingresosTotales - pagosEmpleados;
 
-      <div className="card border border-emerald-200 bg-emerald-50">
-        <h2 className="card-header">Detalle de productos vendidos</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="rounded-xl border border-emerald-200 bg-white p-4">
-            <p className="text-sm text-slate-500">Ingresos de productos</p>
-            <p className="text-2xl font-bold text-slate-900 mt-1">{formatMoney(productos.ingresos_venta)}</p>
-          </div>
-          <div className="rounded-xl border border-emerald-200 bg-white p-4">
-            <p className="text-sm text-slate-500">Abonos consumo empleado (día)</p>
-            <p className="text-2xl font-bold text-indigo-700 mt-1">{formatMoney(productos.total_abonos_consumo_dia || 0)}</p>
-          </div>
-          <div className="rounded-xl border border-emerald-200 bg-white p-4">
-            <p className="text-sm text-slate-500">Valor de compra</p>
-            <p className="text-2xl font-bold text-slate-900 mt-1">{formatMoney(productos.valor_compra)}</p>
-          </div>
-          <div className="rounded-xl border border-emerald-200 bg-white p-4">
-            <p className="text-sm text-slate-500">Ganancia neta</p>
-            <p className="text-2xl font-bold text-emerald-700 mt-1">{formatMoney(productos.ganancia_neta)}</p>
-          </div>
-        </div>
+      const rows = [
+        ['Cierre de Caja'],
+        ['Rango', `${fechaInicio} a ${fechaFin}`],
+        [],
+        ['Resumen General'],
+        ['Ingresos Totales', ingresosTotales],
+        ['Pagos a Empleados', pagosEmpleados],
+        ['Ganancia Neta', gananciaNeta],
+        [],
+      ];
 
-        <div className="mt-4 overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="table-header">
-              <tr>
-                <th className="px-4 py-3 text-left">Fecha</th>
-                <th className="px-4 py-3 text-left">Origen</th>
-                <th className="px-4 py-3 text-left">Descripcion</th>
-                <th className="px-4 py-3 text-left">Cantidad</th>
-                <th className="px-4 py-3 text-left">Valor venta</th>
-                <th className="px-4 py-3 text-left">Valor compra</th>
-                <th className="px-4 py-3 text-left">Comision empleado</th>
-                <th className="px-4 py-3 text-left">Ganancia neta</th>
-                {puedeAjustarFechaAbonoConsumo && <th className="px-4 py-3 text-left">Ajustar fecha abono</th>}
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {(productos.detalle || []).length === 0 && (
-                <tr>
-                  <td className="table-cell text-slate-500" colSpan={puedeAjustarFechaAbonoConsumo ? 9 : 8}>No hay detalle de productos en el rango seleccionado.</td>
-                </tr>
-              )}
-              {(productos.detalle || []).map((item, idx) => (
-                <tr key={`${item.fecha_hora || item.fecha || 'x'}-${idx}`}>
-                  <td className="table-cell">{item.fecha_hora || item.fecha || '-'}</td>
-                  <td className="table-cell">
-                    {item.origen === 'adicional_producto_servicio'
-                      ? 'Servicio adicional producto'
-                      : item.origen === 'consumo_empleado_abono'
-                        ? 'Abono consumo empleado'
-                      : item.origen === 'consumo_empleado'
-                        ? 'Consumo empleado'
-                        : 'Venta producto'}
-                  </td>
-                  <td className="table-cell">{item.descripcion || '-'}</td>
-                  <td className="table-cell">{item.cantidad || 0}</td>
-                  <td className="table-cell">{formatMoney(item.valor_venta)}</td>
-                  <td className="table-cell">{formatMoney(item.valor_compra)}</td>
-                  <td className="table-cell">
-                    {Number(item.comision_empleado || 0) > 0
-                      ? `Si (${formatMoney(item.comision_empleado)})`
-                      : 'No ($0)'}
-                  </td>
-                  <td className={`table-cell font-semibold ${Number(item.ganancia_neta || 0) >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                    {formatMoney(item.ganancia_neta)}
-                  </td>
-                  {puedeAjustarFechaAbonoConsumo && (
-                    <td className="table-cell">
-                      {item.origen === 'consumo_empleado_abono' && item.abono_id ? (
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="date"
-                            className="input-field !py-2 !w-40"
-                            value={editFechaAbonoConsumoById[item.abono_id] || String(item.fecha || '').slice(0, 10)}
-                            onChange={(e) => setEditFechaAbonoConsumoById((prev) => ({ ...prev, [item.abono_id]: e.target.value }))}
-                          />
-                          <button
-                            type="button"
-                            className="btn-secondary !py-2 !px-3"
-                            onClick={() => ajustarFechaAbonoConsumo(item)}
-                            disabled={!!savingFechaAbonoConsumoById[item.abono_id]}
-                          >
-                            {savingFechaAbonoConsumoById[item.abono_id] ? 'Guardando...' : 'Guardar'}
-                          </button>
-                        </div>
-                      ) : (
-                        <span className="text-xs text-slate-500">No editable</span>
-                      )}
-                    </td>
+      if (cierreTabActiva === 'medios') {
+        rows.push(['Detalle: Medios de Pago']);
+        rows.push(['Medio', 'Ingresos', 'Liquidacion', 'Saldo']);
+        medios.forEach((m) => rows.push([m.medio_pago || '-', Number(m.ingresos || 0), Number(m.salidas || 0), Number(m.saldo || 0)]));
+      }
+
+      if (cierreTabActiva === 'productos') {
+        rows.push(['Detalle: Productos']);
+        rows.push(['Fecha', 'Origen', 'Descripcion', 'Cantidad', 'Venta', 'Compra', 'Comision', 'Ganancia Neta']);
+        (productos?.detalle || []).forEach((item) => {
+          rows.push([
+            item.fecha_hora || item.fecha || '-',
+            item.origen || '-',
+            item.descripcion || '-',
+            Number(item.cantidad || 0),
+            Number(item.valor_venta || 0),
+            Number(item.valor_compra || 0),
+            Number(item.comision_empleado || 0),
+            Number(item.ganancia_neta || 0),
+          ]);
+        });
+      }
+
+      if (cierreTabActiva === 'servicios') {
+        rows.push(['Detalle: Servicios']);
+        rows.push(['Fecha', 'Tipo servicio', 'Valor servicio', 'Ganancia establecimiento']);
+        (serviciosEst?.detalle || []).forEach((item) => {
+          rows.push([
+            item.fecha_hora || item.fecha || '-',
+            item.tipo_servicio || '-',
+            Number(item.valor_servicio || 0),
+            Number(item.ganancia_establecimiento || 0),
+          ]);
+        });
+      }
+
+      if (cierreTabActiva === 'espacios') {
+        rows.push(['Detalle: Espacios']);
+        rows.push(['Fecha', 'Empleado', 'Valor pagado']);
+        (espacios?.detalle || []).forEach((item) => {
+          rows.push([
+            item.fecha || '-',
+            item.estilista_nombre || '-',
+            Number(item.valor_pagado || 0),
+          ]);
+        });
+      }
+
+      const csv = `\uFEFF${rows.map((r) => r.map(csvEscape).join(',')).join('\n')}`;
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = `cierre_caja_${fechaInicio}_${fechaFin}_${cierreTabActiva}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(link.href);
+      toast.success('CSV de cierre exportado correctamente.');
+    } catch (error) {
+      toast.error('No se pudo exportar el CSV del cierre.');
+    }
+  };
+
+  const renderModuloCierreCaja = () => {
+    const ingresosTotales = Number(resumen?.total_ingresos || (ingresoServiciosTarjeta + ingresoProductosTarjeta + ingresoEspaciosTarjeta));
+    const pagosEmpleados = Number(liquidacionPagadoCaja || 0);
+    const gananciaNeta = ingresosTotales - pagosEmpleados;
+    const totalIngresosCategorias = ingresoServiciosTarjeta + ingresoProductosTarjeta + ingresoEspaciosTarjeta;
+    const desgloseCategorias = [
+      { key: 'servicios', label: 'Servicios', valor: ingresoServiciosTarjeta },
+      { key: 'productos', label: 'Productos', valor: ingresoProductosTarjeta },
+      { key: 'espacios', label: 'Espacios', valor: ingresoEspaciosTarjeta },
+    ];
+
+    const tabsDetalles = [
+      { key: 'medios', label: 'Medios de pago' },
+      { key: 'productos', label: 'Productos vendidos' },
+      { key: 'servicios', label: 'Servicios' },
+      { key: 'espacios', label: 'Espacios' },
+    ];
+
+    return (
+      <div className="space-y-6">
+        <section className="card border border-slate-200 bg-white">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-2xl font-black text-slate-900">Cierre de Caja</h2>
+              <p className="text-sm text-slate-600 mt-1">Resumen financiero del negocio para el rango seleccionado.</p>
+            </div>
+            <button type="button" className="btn-secondary" onClick={exportarCierreCsv}>Exportar CSV</button>
+          </div>
+        </section>
+
+        <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div className="rounded-2xl border border-sky-200 bg-sky-50 p-5">
+            <p className="text-xs uppercase tracking-wide text-sky-700 font-semibold">Total ingresos</p>
+            <p className="text-3xl font-black text-sky-900 mt-2">{formatMoney(ingresosTotales)}</p>
+          </div>
+          <div className="rounded-2xl border border-rose-200 bg-rose-50 p-5">
+            <p className="text-xs uppercase tracking-wide text-rose-700 font-semibold">Pagado a empleados</p>
+            <p className="text-3xl font-black text-rose-900 mt-2">{formatMoney(pagosEmpleados)}</p>
+            <p className="text-xs text-rose-700 mt-1">Pendiente de liquidacion: {formatMoney(liquidacionPendiente)}</p>
+          </div>
+          <div className="rounded-2xl border border-emerald-300 bg-emerald-50 p-5 shadow-sm">
+            <p className="text-xs uppercase tracking-wide text-emerald-700 font-semibold">Ganancia neta</p>
+            <p className="text-4xl font-black text-emerald-900 mt-2">{formatMoney(gananciaNeta)}</p>
+            <p className="text-xs text-emerald-700 mt-1">Ingresos - pagos a empleados</p>
+          </div>
+        </section>
+
+        <section className="card border border-slate-200 bg-white">
+          <h3 className="card-header mb-3">Desglose de ingresos</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {desgloseCategorias.map((item) => {
+              const porcentaje = totalIngresosCategorias > 0 ? (Number(item.valor || 0) / totalIngresosCategorias) * 100 : 0;
+              return (
+                <div key={`desglose-${item.key}`} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-xs text-slate-500">{item.label}</p>
+                  <p className="text-2xl font-black text-slate-900 mt-1">{formatMoney(item.valor)}</p>
+                  <p className="text-xs text-slate-600 mt-1">{porcentaje.toFixed(1)}% del total de categorias</p>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="card border border-slate-200 bg-white">
+          <h3 className="card-header mb-3">Visualizacion rapida</h3>
+          <div className="space-y-3">
+            {desgloseCategorias.map((item) => {
+              const porcentaje = totalIngresosCategorias > 0 ? (Number(item.valor || 0) / totalIngresosCategorias) * 100 : 0;
+              return (
+                <div key={`bar-${item.key}`}>
+                  <div className="flex items-center justify-between text-sm text-slate-700 mb-1">
+                    <span>{item.label}</span>
+                    <span>{formatMoney(item.valor)}</span>
+                  </div>
+                  <div className="h-3 w-full rounded-full bg-slate-100 overflow-hidden">
+                    <div className={`h-full rounded-full ${item.key === 'servicios' ? 'bg-sky-500' : item.key === 'productos' ? 'bg-slate-500' : 'bg-emerald-500'}`} style={{ width: `${Math.min(Math.max(porcentaje, 0), 100)}%` }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="card border border-slate-200 bg-white">
+          <div className="flex flex-wrap gap-2">
+            {tabsDetalles.map((tab) => (
+              <button
+                key={`tab-cierre-${tab.key}`}
+                type="button"
+                className={`px-3 py-2 rounded-xl border text-sm font-semibold ${cierreTabActiva === tab.key ? 'border-sky-300 bg-sky-50 text-sky-900' : 'border-slate-200 bg-slate-50 text-slate-700'}`}
+                onClick={() => setCierreTabActiva(tab.key)}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          {cierreTabActiva === 'medios' && (
+            <div className="mt-4 overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="table-header">
+                  <tr>
+                    <th className="px-4 py-3 text-left">Medio</th>
+                    <th className="px-4 py-3 text-left">Ingresos</th>
+                    <th className="px-4 py-3 text-left">Pagos empleados</th>
+                    <th className="px-4 py-3 text-left">Saldo</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {medios.length === 0 && (
+                    <tr>
+                      <td className="table-cell text-slate-500" colSpan={4}>No hay movimientos para el rango seleccionado.</td>
+                    </tr>
                   )}
-                </tr>
-              ))}
-              {(productos.detalle || []).length > 0 && (
-                <tr className="bg-emerald-100 font-semibold">
-                  <td className="table-cell" colSpan={3}>TOTAL</td>
-                  <td className="table-cell">{(productos.detalle || []).reduce((sum, item) => sum + Number(item.cantidad || 0), 0)}</td>
-                  <td className="table-cell">{formatMoney((productos.detalle || []).reduce((sum, item) => sum + Number(item.valor_venta || 0), 0))}</td>
-                  <td className="table-cell">{formatMoney((productos.detalle || []).reduce((sum, item) => sum + Number(item.valor_compra || 0), 0))}</td>
-                  <td className="table-cell">{formatMoney((productos.detalle || []).reduce((sum, item) => sum + Number(item.comision_empleado || 0), 0))}</td>
-                  <td className="table-cell">{formatMoney((productos.detalle || []).reduce((sum, item) => sum + Number(item.ganancia_neta || 0), 0))}</td>
-                  {puedeAjustarFechaAbonoConsumo && <td className="table-cell"></td>}
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-        <div className="card border border-cyan-200 bg-cyan-50">
-          <h2 className="card-header">Detalle valor recibido por espacio</h2>
-          <div className="mt-4 overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="table-header">
-                <tr>
-                  <th className="px-4 py-3 text-left">Fecha</th>
-                  <th className="px-4 py-3 text-left">Empleado</th>
-                  <th className="px-4 py-3 text-left">Valor pagado</th>
-                  {puedeAjustarFechaEspacio && <th className="px-4 py-3 text-left">Ajustar fecha / monto</th>}
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {(espacios.detalle || []).length === 0 && (
-                  <tr>
-                    <td className="table-cell text-slate-500" colSpan={puedeAjustarFechaEspacio ? 4 : 3}>No hay pagos por espacio registrados en el rango.</td>
-                  </tr>
-                )}
-                {(espacios.detalle || []).map((item, idx) => (
-                  <tr key={`${item.estado_pago_id || 'x'}-${item.fecha || 'x'}-${item.estilista_id || idx}-${idx}`}>
-                    <td className="table-cell">{item.fecha || '-'}</td>
-                    <td className="table-cell">{item.estilista_nombre || '-'}</td>
-                    <td className="table-cell font-semibold text-cyan-700">{formatMoney(item.valor_pagado)}</td>
-                    {puedeAjustarFechaEspacio && (
-                      <td className="table-cell">
-                        {item.estado_pago_id ? (
-                          <div className="flex items-center gap-2">
-                            <input
-                              type="number"
-                              min="1"
-                              step="1"
-                              className="input-field !py-1 !w-28"
-                              value={montoMoverEspacioById[item.estado_pago_id] ?? item.valor_pagado}
-                              onChange={(e) => setMontoMoverEspacioById((prev) => ({ ...prev, [item.estado_pago_id]: e.target.value }))}
-                              title="Monto a mover"
-                            />
-                            <input
-                              type="date"
-                              className="input-field !py-1 !w-40"
-                              value={nuevaFechaEspacioById[item.estado_pago_id] || item.fecha || ''}
-                              onChange={(e) => setNuevaFechaEspacioById((prev) => ({ ...prev, [item.estado_pago_id]: e.target.value }))}
-                            />
-                            <button
-                              type="button"
-                              className="btn-secondary !py-1 !px-2 text-xs"
-                              onClick={() => ajustarFechaPagoEspacio(item)}
-                              disabled={!!savingFechaEspacioById[item.estado_pago_id]}
-                            >
-                              {savingFechaEspacioById[item.estado_pago_id] ? 'Guardando...' : 'Guardar'}
-                            </button>
-                          </div>
-                        ) : (
-                          <span className="text-xs text-slate-500">No editable</span>
-                        )}
+                  {medios.map((m) => (
+                    <tr key={`medio-${m.medio_pago}`}>
+                      <td className="table-cell capitalize font-medium">{m.medio_pago || '-'}</td>
+                      <td className="table-cell">{formatMoney(m.ingresos)}</td>
+                      <td className="table-cell">{formatMoney(m.salidas)}</td>
+                      <td className={`table-cell font-semibold ${Number(m.saldo || 0) >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                        {formatMoney(m.saldo)}
                       </td>
-                    )}
-                  </tr>
-                ))}
-                {(espacios.detalle || []).length > 0 && (
-                  <tr className="bg-cyan-100 font-semibold">
-                    <td className="table-cell" colSpan={2}>TOTAL</td>
-                    <td className="table-cell text-cyan-800">{formatMoney((espacios.detalle || []).reduce((sum, item) => sum + Number(item.valor_pagado || 0), 0))}</td>
-                    {puedeAjustarFechaEspacio && <td className="table-cell"></td>}
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
 
-        <div className="card border border-violet-200 bg-violet-50">
-          <h2 className="card-header">Detalle servicios (ganancia establecimiento)</h2>
-          <div className="mt-4 overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="table-header">
-                <tr>
-                  <th className="px-4 py-3 text-left">Fecha</th>
-                  <th className="px-4 py-3 text-left">Tipo servicio</th>
-                  <th className="px-4 py-3 text-left">Valor servicio</th>
-                  <th className="px-4 py-3 text-left">Ganancia establecimiento</th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {(serviciosEst.detalle || []).length === 0 && (
+          {cierreTabActiva === 'productos' && (
+            <>
+              <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs text-slate-500">Ingreso productos</p>
+                  <p className="text-xl font-black text-slate-900">{formatMoney(productos.ingresos_venta)}</p>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs text-slate-500">Valor compra</p>
+                  <p className="text-xl font-black text-slate-900">{formatMoney(productos.valor_compra)}</p>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs text-slate-500">Abonos consumo dia</p>
+                  <p className="text-xl font-black text-sky-800">{formatMoney(productos.total_abonos_consumo_dia || 0)}</p>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-emerald-50 p-3">
+                  <p className="text-xs text-emerald-700">Ganancia neta productos</p>
+                  <p className="text-xl font-black text-emerald-900">{formatMoney(productos.ganancia_neta)}</p>
+                </div>
+              </div>
+
+              <div className="mt-4 overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="table-header">
+                    <tr>
+                      <th className="px-4 py-3 text-left">Fecha</th>
+                      <th className="px-4 py-3 text-left">Origen</th>
+                      <th className="px-4 py-3 text-left">Descripcion</th>
+                      <th className="px-4 py-3 text-left">Cantidad</th>
+                      <th className="px-4 py-3 text-left">Valor venta</th>
+                      <th className="px-4 py-3 text-left">Valor compra</th>
+                      <th className="px-4 py-3 text-left">Comision</th>
+                      <th className="px-4 py-3 text-left">Ganancia neta</th>
+                      {puedeAjustarFechaAbonoConsumo && <th className="px-4 py-3 text-left">Ajustar fecha abono</th>}
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {(productos.detalle || []).length === 0 && (
+                      <tr>
+                        <td className="table-cell text-slate-500" colSpan={puedeAjustarFechaAbonoConsumo ? 9 : 8}>No hay detalle de productos en el rango seleccionado.</td>
+                      </tr>
+                    )}
+                    {(productos.detalle || []).map((item, idx) => (
+                      <tr key={`prod-tab-${item.fecha_hora || item.fecha || 'x'}-${idx}`}>
+                        <td className="table-cell">{item.fecha_hora || item.fecha || '-'}</td>
+                        <td className="table-cell">{item.origen || '-'}</td>
+                        <td className="table-cell">{item.descripcion || '-'}</td>
+                        <td className="table-cell">{item.cantidad || 0}</td>
+                        <td className="table-cell">{formatMoney(item.valor_venta)}</td>
+                        <td className="table-cell">{formatMoney(item.valor_compra)}</td>
+                        <td className="table-cell">{formatMoney(item.comision_empleado || 0)}</td>
+                        <td className={`table-cell font-semibold ${Number(item.ganancia_neta || 0) >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>{formatMoney(item.ganancia_neta)}</td>
+                        {puedeAjustarFechaAbonoConsumo && (
+                          <td className="table-cell">
+                            {item.origen === 'consumo_empleado_abono' && item.abono_id ? (
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="date"
+                                  className="input-field !py-2 !w-40"
+                                  value={editFechaAbonoConsumoById[item.abono_id] || String(item.fecha || '').slice(0, 10)}
+                                  onChange={(e) => setEditFechaAbonoConsumoById((prev) => ({ ...prev, [item.abono_id]: e.target.value }))}
+                                />
+                                <button
+                                  type="button"
+                                  className="btn-secondary !py-2 !px-3"
+                                  onClick={() => ajustarFechaAbonoConsumo(item)}
+                                  disabled={!!savingFechaAbonoConsumoById[item.abono_id]}
+                                >
+                                  {savingFechaAbonoConsumoById[item.abono_id] ? 'Guardando...' : 'Guardar'}
+                                </button>
+                              </div>
+                            ) : (
+                              <span className="text-xs text-slate-500">No editable</span>
+                            )}
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+
+          {cierreTabActiva === 'servicios' && (
+            <div className="mt-4 overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="table-header">
                   <tr>
-                    <td className="table-cell text-slate-500" colSpan={4}>No hay servicios con ganancia para establecimiento en el rango.</td>
+                    <th className="px-4 py-3 text-left">Fecha</th>
+                    <th className="px-4 py-3 text-left">Tipo servicio</th>
+                    <th className="px-4 py-3 text-left">Valor servicio</th>
+                    <th className="px-4 py-3 text-left">Ganancia establecimiento</th>
                   </tr>
-                )}
-                {(serviciosEst.detalle || []).map((item, idx) => (
-                  <tr key={`${item.fecha_hora || item.fecha || 'x'}-${item.numero_factura || idx}-${idx}`}>
-                    <td className="table-cell">{item.fecha_hora || item.fecha || '-'}</td>
-                    <td className="table-cell">{item.tipo_servicio || '-'}</td>
-                    <td className="table-cell">{formatMoney(item.valor_servicio)}</td>
-                    <td className="table-cell font-semibold text-violet-700">{formatMoney(item.ganancia_establecimiento)}</td>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {(serviciosEst.detalle || []).length === 0 && (
+                    <tr>
+                      <td className="table-cell text-slate-500" colSpan={4}>No hay servicios con ganancia para establecimiento en el rango.</td>
+                    </tr>
+                  )}
+                  {(serviciosEst.detalle || []).map((item, idx) => (
+                    <tr key={`srv-tab-${item.fecha_hora || item.fecha || 'x'}-${item.numero_factura || idx}-${idx}`}>
+                      <td className="table-cell">{item.fecha_hora || item.fecha || '-'}</td>
+                      <td className="table-cell">{item.tipo_servicio || '-'}</td>
+                      <td className="table-cell">{formatMoney(item.valor_servicio)}</td>
+                      <td className="table-cell font-semibold text-emerald-700">{formatMoney(item.ganancia_establecimiento)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {cierreTabActiva === 'espacios' && (
+            <div className="mt-4 overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="table-header">
+                  <tr>
+                    <th className="px-4 py-3 text-left">Fecha</th>
+                    <th className="px-4 py-3 text-left">Empleado</th>
+                    <th className="px-4 py-3 text-left">Valor pagado</th>
+                    {puedeAjustarFechaEspacio && <th className="px-4 py-3 text-left">Ajustar fecha / monto</th>}
                   </tr>
-                ))}
-                {(serviciosEst.detalle || []).length > 0 && (
-                  <tr className="bg-violet-100 font-semibold">
-                    <td className="table-cell" colSpan={2}>TOTAL</td>
-                    <td className="table-cell">{formatMoney((serviciosEst.detalle || []).reduce((sum, item) => sum + Number(item.valor_servicio || 0), 0))}</td>
-                    <td className="table-cell text-violet-800">{formatMoney((serviciosEst.detalle || []).reduce((sum, item) => sum + Number(item.ganancia_establecimiento || 0), 0))}</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {(espacios.detalle || []).length === 0 && (
+                    <tr>
+                      <td className="table-cell text-slate-500" colSpan={puedeAjustarFechaEspacio ? 4 : 3}>No hay pagos por espacio registrados en el rango.</td>
+                    </tr>
+                  )}
+                  {(espacios.detalle || []).map((item, idx) => (
+                    <tr key={`esp-tab-${item.estado_pago_id || 'x'}-${item.fecha || 'x'}-${item.estilista_id || idx}-${idx}`}>
+                      <td className="table-cell">{item.fecha || '-'}</td>
+                      <td className="table-cell">{item.estilista_nombre || '-'}</td>
+                      <td className="table-cell font-semibold text-sky-700">{formatMoney(item.valor_pagado)}</td>
+                      {puedeAjustarFechaEspacio && (
+                        <td className="table-cell">
+                          {item.estado_pago_id ? (
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="number"
+                                min="1"
+                                step="1"
+                                className="input-field !py-1 !w-28"
+                                value={montoMoverEspacioById[item.estado_pago_id] ?? item.valor_pagado}
+                                onChange={(e) => setMontoMoverEspacioById((prev) => ({ ...prev, [item.estado_pago_id]: e.target.value }))}
+                                title="Monto a mover"
+                              />
+                              <input
+                                type="date"
+                                className="input-field !py-1 !w-40"
+                                value={nuevaFechaEspacioById[item.estado_pago_id] || item.fecha || ''}
+                                onChange={(e) => setNuevaFechaEspacioById((prev) => ({ ...prev, [item.estado_pago_id]: e.target.value }))}
+                              />
+                              <button
+                                type="button"
+                                className="btn-secondary !py-1 !px-2 text-xs"
+                                onClick={() => ajustarFechaPagoEspacio(item)}
+                                disabled={!!savingFechaEspacioById[item.estado_pago_id]}
+                              >
+                                {savingFechaEspacioById[item.estado_pago_id] ? 'Guardando...' : 'Guardar'}
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-slate-500">No editable</span>
+                          )}
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
       </div>
-    </div>
-  );
+    );
+  };
 
   const renderModuloLiquidacion = () => (
     <div className="space-y-6">
