@@ -1834,7 +1834,8 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
             <thead className="table-header">
               <tr>
                 <th className="px-4 py-3 text-left">Empleado</th>
-                <th className="px-4 py-3 text-left">Fecha</th>
+                <th className="px-4 py-3 text-left">Fecha factura</th>
+                <th className="px-4 py-3 text-left">Ultimo abono</th>
                 <th className="px-4 py-3 text-left">Factura</th>
                 <th className="px-4 py-3 text-left">Valor total</th>
                 <th className="px-4 py-3 text-left">Valor abonado</th>
@@ -1846,13 +1847,14 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
             <tbody className="bg-white divide-y divide-gray-200">
               {(carteraData.deudas || []).length === 0 && (
                 <tr>
-                  <td className="table-cell text-slate-500" colSpan={8}>No hay cartera en el rango seleccionado.</td>
+                  <td className="table-cell text-slate-500" colSpan={9}>No hay cartera en el rango seleccionado.</td>
                 </tr>
               )}
               {(carteraData.deudas || []).map((deuda) => {
                 const deudaId = Number(deuda.deuda_id);
                 const resumenEmpleado = resumenPorEstilista[deuda.estilista_id] || {};
                 const saving = !!savingAbonoByDeuda[deudaId];
+                const ultimoAbono = (deuda.abonos || [])[0];
                 return (
                   <tr
                     key={deudaId}
@@ -1861,6 +1863,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                   >
                     <td className="table-cell font-medium">{deuda.estilista_nombre || '-'}</td>
                     <td className="table-cell">{(deuda.fecha_hora || '').slice(0, 10) || '-'}</td>
+                    <td className="table-cell">{(ultimoAbono?.fecha_hora || '').slice(0, 10) || '-'}</td>
                     <td className="table-cell font-semibold">{deuda.numero_factura || '-'}</td>
                     <td className="table-cell">{formatMoney(deuda.total_cargo)}</td>
                     <td className="table-cell text-sky-700 font-semibold">{formatMoney(deuda.total_abonado)}</td>
