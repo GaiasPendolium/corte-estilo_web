@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { format } from 'date-fns';
 import { reportesService, productosService } from '../services/api';
 import { toast } from 'react-toastify';
@@ -182,6 +182,7 @@ const Reportes = () => {
   const [cierreTabActiva, setCierreTabActiva] = useState('medios');
   const [reabastecerByProductoId, setReabastecerByProductoId] = useState({});
   const [savingStockByProductoId, setSavingStockByProductoId] = useState({});
+  const cargarTodoSeqRef = useRef(0);
 
   const calcularPendientePagoEmpleado = useCallback((fila) => {
     const pendienteConsolidado = Number(fila?.pendiente_pago_empleado ?? fila?.pago_neto_pendiente ?? 0);
@@ -460,6 +461,7 @@ const Reportes = () => {
   }, [esRecepcion, periodo, fechaInicio, fechaFin]);
 
   const cargarTodo = useCallback(async () => {
+    const reqSeq = ++cargarTodoSeqRef.current;
     try {
       setLoading(true);
       const [cierreResp, biResp] = await Promise.all([
@@ -476,6 +478,8 @@ const Reportes = () => {
         });
       }
 
+      if (reqSeq !== cargarTodoSeqRef.current) return;
+
       setCierreCaja(cierreResp || null);
       setBiData(biResp || null);
       setCarteraData({
@@ -491,11 +495,17 @@ const Reportes = () => {
           fecha_fin: fechaFin,
           limit: 200,
         });
-        setHistorialEstados(hist?.items || []);
+        if (reqSeq === cargarTodoSeqRef.current) {
+          setHistorialEstados(hist?.items || []);
+        }
       } catch (err) {
-        setHistorialEstados([]);
+        if (reqSeq === cargarTodoSeqRef.current) {
+          setHistorialEstados([]);
+        }
       } finally {
-        setLoadingHistorial(false);
+        if (reqSeq === cargarTodoSeqRef.current) {
+          setLoadingHistorial(false);
+        }
       }
 
       if (moduloActivo !== 'liquidacion') {
@@ -507,12 +517,15 @@ const Reportes = () => {
         setMedioCobroConsumoPorEstilista({});
       }
     } catch (error) {
+      if (reqSeq !== cargarTodoSeqRef.current) return;
       toast.error('No se pudieron cargar los reportes');
       setCierreCaja(null);
       setBiData(null);
       setCarteraData({ resumen: [], deudas: [], abonos_historial: [] });
     } finally {
-      setLoading(false);
+      if (reqSeq === cargarTodoSeqRef.current) {
+        setLoading(false);
+      }
     }
   }, [paramsBase, periodo, fechaInicio, fechaFin, esRecepcion, moduloActivo]);
 
@@ -1052,7 +1065,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
   const pago_otros = Number(pagosPorEstilista[estilistaId]?.otros || 0);
   const abono_puesto = Number(abonoPuestoPorEstilista[estilistaId] || 0);
   const medio_abono_puesto = medioAbonoPuestoPorEstilista[estilistaId] || 'efectivo';
-  const saldoConsumoEmpleado = Number(resumenPorEstilista[estilistaId]?.saldo_pendiente || 0);
+  const saldoConsumoEmpleado = Number(resumenPorEstilistaLiquidacion[estilistaId]?.saldo_pendiente || 0);
   const cobroConsumoDigitado = Number(cobroConsumoPorEstilista[estilistaId] || 0);
   const cobroConsumoAplicado = Math.min(Math.max(cobroConsumoDigitado, 0), Math.max(saldoConsumoEmpleado, 0));
   const deudasConsumoSeleccionadas = (deudaConsumoSeleccionadasPorEstilista[estilistaId] || [])
@@ -1073,24 +1086,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
   setSavingEstadoByEstilista((prev) => ({ ...prev, [estilistaId]: true }));
   
   try {
-    let resumenCobro = null;
-    if (cobroConsumoAplicado > 0) {
-      resumenCobro = await cobrarConsumoEnDeudas({
-        estilistaId,
-        deudaIds: deudasConsumoSeleccionadas,
-        monto: cobroConsumoAplicado,
-        medioPago: medioCobroConsumo,
-        fecha: fechaLiquidacion,
-      });
-
-      if (resumenCobro?.sinPendientes) {
-        toast.warning('Las facturas seleccionadas ya no tienen saldo pendiente. Ajusta la selección o usa distribución automática.');
-      } else if (Number(resumenCobro?.facturasSinPendiente || 0) > 0) {
-        toast.info(`Se omitieron ${resumenCobro.facturasSinPendiente} factura(s) sin saldo pendiente durante el abono.`);
-      }
-    }
-
-    const resultado = await reportesService.liquidarDiaV2({
+    const resultado = await reportesService.liquidarOperacionIntegral({
       estilista_id: estilistaId,
       fecha: fechaLiquidacion,
       pago_efectivo,
@@ -1100,6 +1096,9 @@ const aplicarEstadoLiquidacion = async (fila) => {
       abono_puesto,
       medio_abono_puesto,
       forzar_reemplazo_dia: esCorreccion,
+      consumo_monto: cobroConsumoAplicado,
+      deuda_ids: deudasConsumoSeleccionadas,
+      medio_cobro_consumo: medioCobroConsumo,
       notas: `Liquidación ${fechaLiquidacion}`,
     });
     const g = resultado.liquidacion.ganancias_totales;
@@ -1110,8 +1109,8 @@ const aplicarEstadoLiquidacion = async (fila) => {
     const s = resultado.puesto.saldo_pendiente;
     
     const msgDeuda = d_ant > 0 ? ` (${formatMoney(d_ant)} anterior + ${formatMoney(d)} hoy)` : '';
-    const msgConsumo = resumenCobro && resumenCobro.cobrado > 0
-      ? ` - Consumo cobrado ${formatMoney(resumenCobro.cobrado)}`
+    const msgConsumo = Number(resultado?.consumo_integrado?.monto_aplicado || 0) > 0
+      ? ` - Consumo cobrado ${formatMoney(resultado?.consumo_integrado?.monto_aplicado || 0)}`
       : '';
     toast.success(`✓ ${resultado.estilista.nombre}: Gan ${formatMoney(g)} - Puesto ${formatMoney(d_tot)}${msgDeuda}${msgConsumo} - Pagado ${formatMoney(p)} - Saldo ${formatMoney(s)}`);
     
@@ -1148,6 +1147,10 @@ const aplicarLiquidacionSimple = async ({
   }
 
   const fechaLiquidacion = fechaFin || format(new Date(), 'yyyy-MM-dd');
+  if (String(fechaInicio || '') !== String(fechaLiquidacion || '')) {
+    toast.warning('La liquidación simple opera por día. Usa el mismo valor en fecha inicio y fecha fin.');
+    return;
+  }
   // El pendiente del empleado ya viene neteado con descuento de puesto.
   // Solo se descuenta aquí el consumo que se cobra en esta liquidación.
   const pagoFinalEmpleado = Math.max(Number(pendientePagoEmpleado || 0) - Number(cobroConsumoAplicado || 0), 0);
@@ -1156,20 +1159,7 @@ const aplicarLiquidacionSimple = async ({
 
   setSavingEstadoByEstilista((prev) => ({ ...prev, [estilistaId]: true }));
   try {
-    if (cobroConsumoAplicado > 0) {
-      const resumenCobro = await cobrarConsumoEnDeudas({
-        estilistaId,
-        deudaIds: deudasConsumoSeleccionadas,
-        monto: cobroConsumoAplicado,
-        medioPago: medioCobroConsumo,
-        fecha: fechaLiquidacion,
-      });
-      if (resumenCobro?.sinPendientes) {
-        toast.warning('Las facturas de consumo seleccionadas ya no tienen saldo pendiente.');
-      }
-    }
-
-    await reportesService.liquidarDiaV2({
+    await reportesService.liquidarOperacionIntegral({
       estilista_id: estilistaId,
       fecha: fechaLiquidacion,
       pago_efectivo: pagoFinalEmpleado,
@@ -1179,6 +1169,9 @@ const aplicarLiquidacionSimple = async ({
       abono_puesto: Number(abonoPuestoAplicado || 0),
       medio_abono_puesto,
       forzar_reemplazo_dia: false,
+      consumo_monto: cobroConsumoAplicado,
+      deuda_ids: deudasConsumoSeleccionadas,
+      medio_cobro_consumo: medioCobroConsumo,
       notas: `Liquidación simple ${fechaLiquidacion}`,
     });
 
@@ -1390,7 +1383,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
   const renderModuloCierreCaja = () => {
     const ingresosTotales = Number(resumen?.total_ingresos || (ingresoServiciosTarjeta + ingresoProductosTarjeta + ingresoEspaciosTarjeta));
     const pagosEmpleados = Number(liquidacionPagadoCaja || 0);
-    const gananciaNeta = ingresosTotales - pagosEmpleados;
+    const gananciaNeta = Number(resumen?.ganancia_total ?? (ingresosTotales - pagosEmpleados));
     const totalIngresosCategorias = ingresoServiciosTarjeta + ingresoProductosTarjeta + ingresoEspaciosTarjeta;
     const desgloseCategorias = [
       { key: 'servicios', label: 'Servicios', valor: ingresoServiciosTarjeta },

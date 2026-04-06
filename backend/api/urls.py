@@ -10,7 +10,7 @@ from .views import (
     bi_export_pdf, bi_resumen_diario, estado_pago_estilista_dia,
     estado_pago_estilista_historial, bi_desglose_estilista, bi_desglose_estilista_debug,
     reporte_consumo_empleado, abonar_consumo_empleado, editar_abono_consumo_empleado, reporte_cierre_caja,
-    liquidar_dia_v2, eliminar_estado_pago_historial, mover_fecha_estado_pago_dia, qz_certificate, qz_sign,
+    liquidar_dia_v2, liquidar_operacion_integral, eliminar_estado_pago_historial, mover_fecha_estado_pago_dia, qz_certificate, qz_sign,
     reporte_ajuste_diario_unificado
 )
 
@@ -49,6 +49,7 @@ urlpatterns = [
     path('reportes/estilistas/estado-pago-historial/<int:historial_id>/', eliminar_estado_pago_historial, name='reporte-estilista-estado-pago-historial-eliminar'),
     path('reportes/estilistas/estado-pago-dia/<int:estado_id>/mover-fecha/', mover_fecha_estado_pago_dia, name='reporte-estilista-estado-pago-dia-mover-fecha'),
     path('reportes/estilistas/liquidar-dia-v2/', liquidar_dia_v2, name='reportes-estilista-liquidar-dia-v2'),
+    path('reportes/estilistas/liquidar-operacion-integral/', liquidar_operacion_integral, name='reportes-estilista-liquidar-operacion-integral'),
     path('reportes/consumo-empleado/deudas/', reporte_consumo_empleado, name='reporte-consumo-empleado-deudas'),
     path('reportes/consumo-empleado/abonar/', abonar_consumo_empleado, name='reporte-consumo-empleado-abonar'),
     path('reportes/consumo-empleado/abonos/<int:abono_id>/', editar_abono_consumo_empleado, name='reporte-consumo-empleado-abono-editar'),

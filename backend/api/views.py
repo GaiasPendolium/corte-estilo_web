@@ -2640,63 +2640,19 @@ def abonar_consumo_empleado(request):
         except Exception:
             return Response({'error': 'Fecha inválida. Usa YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    if deuda_objetivo is not None:
-        if deuda_objetivo.estilista_id != estilista.id:
-            return Response({'error': 'La factura no pertenece al empleado indicado.'}, status=status.HTTP_400_BAD_REQUEST)
-        if Decimal(deuda_objetivo.saldo_pendiente or 0) <= 0:
-            return Response({'error': 'La factura seleccionada no tiene saldo pendiente.'}, status=status.HTTP_400_BAD_REQUEST)
-        deudas_pendientes = [deuda_objetivo]
-    else:
-        deudas_pendientes = list(
-            DeudaConsumoEmpleado.objects.filter(
-                estilista=estilista,
-                saldo_pendiente__gt=0,
-            ).order_by('fecha_hora', 'id')
+    try:
+        aplicaciones, restante = _aplicar_abonos_consumo_interno(
+            estilista=estilista,
+            monto_decimal=monto_decimal,
+            medio_pago=medio_pago,
+            usuario=request.user,
+            notas=notas,
+            fecha_abono_dt=fecha_abono_dt,
+            deuda_objetivo=deuda_objetivo,
+            deuda_ids=None,
         )
-
-    if not deudas_pendientes:
-        return Response({'error': 'El empleado no tiene deudas pendientes.'}, status=status.HTTP_400_BAD_REQUEST)
-
-    restante = monto_decimal
-    aplicaciones = []
-
-    with transaction.atomic():
-        for deuda in deudas_pendientes:
-            if restante <= 0:
-                break
-
-            saldo = Decimal(deuda.saldo_pendiente or 0)
-            aplicado = saldo if restante >= saldo else restante
-            if aplicado <= 0:
-                continue
-
-            create_data = {
-                'deuda': deuda,
-                'monto': aplicado,
-                'medio_pago': medio_pago,
-                'usuario': request.user,
-                'notas': notas,
-            }
-            if fecha_abono_dt is not None:
-                create_data['fecha_hora'] = fecha_abono_dt
-
-            AbonoDeudaEmpleado.objects.create(**create_data)
-
-            deuda.total_abonado = Decimal(deuda.total_abonado or 0) + aplicado
-            _recalcular_estado_deuda(deuda)
-            deuda.save(update_fields=['total_abonado', 'saldo_pendiente', 'estado'])
-
-            aplicaciones.append(
-                {
-                    'deuda_id': deuda.id,
-                    'numero_factura': deuda.numero_factura,
-                    'monto_aplicado': float(aplicado),
-                    'saldo_restante': float(deuda.saldo_pendiente),
-                    'estado': deuda.estado,
-                }
-            )
-
-            restante -= aplicado
+    except ValueError as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     return Response(
         {
@@ -2711,6 +2667,80 @@ def abonar_consumo_empleado(request):
             'aplicaciones': aplicaciones,
         }
     )
+
+
+def _aplicar_abonos_consumo_interno(
+    *,
+    estilista,
+    monto_decimal,
+    medio_pago,
+    usuario,
+    notas,
+    fecha_abono_dt=None,
+    deuda_objetivo=None,
+    deuda_ids=None,
+):
+    """Aplica abonos de consumo a deudas pendientes en orden de antigüedad."""
+    if deuda_objetivo is not None:
+        if deuda_objetivo.estilista_id != estilista.id:
+            raise ValueError('La factura no pertenece al empleado indicado.')
+        if Decimal(deuda_objetivo.saldo_pendiente or 0) <= 0:
+            raise ValueError('La factura seleccionada no tiene saldo pendiente.')
+        deudas_pendientes = [deuda_objetivo]
+    else:
+        qs = DeudaConsumoEmpleado.objects.filter(
+            estilista=estilista,
+            saldo_pendiente__gt=0,
+        ).order_by('fecha_hora', 'id')
+        if deuda_ids:
+            ids = [int(x) for x in deuda_ids if str(x).strip().isdigit()]
+            if ids:
+                qs = qs.filter(id__in=ids)
+        deudas_pendientes = list(qs)
+
+    if not deudas_pendientes:
+        raise ValueError('El empleado no tiene deudas pendientes.')
+
+    restante = Decimal(monto_decimal or 0)
+    aplicaciones = []
+    for deuda in deudas_pendientes:
+        if restante <= 0:
+            break
+
+        saldo = Decimal(deuda.saldo_pendiente or 0)
+        aplicado = saldo if restante >= saldo else restante
+        if aplicado <= 0:
+            continue
+
+        create_data = {
+            'deuda': deuda,
+            'monto': aplicado,
+            'medio_pago': medio_pago,
+            'usuario': usuario,
+            'notas': notas,
+        }
+        if fecha_abono_dt is not None:
+            create_data['fecha_hora'] = fecha_abono_dt
+
+        AbonoDeudaEmpleado.objects.create(**create_data)
+
+        deuda.total_abonado = Decimal(deuda.total_abonado or 0) + aplicado
+        _recalcular_estado_deuda(deuda)
+        deuda.save(update_fields=['total_abonado', 'saldo_pendiente', 'estado'])
+
+        aplicaciones.append(
+            {
+                'deuda_id': deuda.id,
+                'numero_factura': deuda.numero_factura,
+                'monto_aplicado': float(aplicado),
+                'saldo_restante': float(deuda.saldo_pendiente),
+                'estado': deuda.estado,
+            }
+        )
+
+        restante -= aplicado
+
+    return aplicaciones, restante
 
 
 @api_view(['PUT', 'PATCH'])
@@ -3526,6 +3556,89 @@ def liquidar_dia_v2(request):
         'tabla_diaria_no_disponible': tabla_diaria_no_disponible,
         'guardado_legacy_sql': guardado_legacy_sql,
     })
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def liquidar_operacion_integral(request):
+    """Ejecuta en una sola transacción: cobro de consumo (opcional) + liquidación diaria."""
+    if _es_recepcion(request.user):
+        raise PermissionDenied('Recepción no tiene permiso para liquidar operaciones integrales.')
+
+    try:
+        estilista_id = int(request.data.get('estilista_id') or 0)
+        estilista = Estilista.objects.get(id=estilista_id, activo=True)
+    except Exception:
+        return Response({'error': 'Estilista no encontrado.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    consumo_monto = request.data.get('consumo_monto', 0)
+    try:
+        consumo_monto = Decimal(str(consumo_monto or 0))
+    except Exception:
+        return Response({'error': 'consumo_monto inválido.'}, status=status.HTTP_400_BAD_REQUEST)
+    consumo_monto = max(consumo_monto, Decimal(0))
+
+    deuda_ids = request.data.get('deuda_ids') or []
+    if not isinstance(deuda_ids, list):
+        deuda_ids = []
+
+    medio_cobro_consumo = (request.data.get('medio_cobro_consumo') or 'efectivo').strip().lower()
+    if medio_cobro_consumo not in {'nequi', 'daviplata', 'efectivo', 'otros'}:
+        return Response({'error': 'medio_cobro_consumo inválido.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    fecha_raw = (request.data.get('fecha') or '').strip()
+    fecha_abono_dt = None
+    if fecha_raw:
+        try:
+            fecha_abono = datetime.strptime(fecha_raw, '%Y-%m-%d').date()
+            fecha_abono_dt = datetime.combine(fecha_abono, datetime.min.time()).replace(hour=12)
+            if timezone.is_naive(fecha_abono_dt):
+                fecha_abono_dt = timezone.make_aware(fecha_abono_dt, timezone.get_current_timezone())
+        except Exception:
+            return Response({'error': 'Fecha inválida. Usa YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    consumo_aplicaciones = []
+    consumo_sobrante = Decimal(0)
+
+    try:
+        with transaction.atomic():
+            if consumo_monto > 0:
+                consumo_aplicaciones, consumo_sobrante = _aplicar_abonos_consumo_interno(
+                    estilista=estilista,
+                    monto_decimal=consumo_monto,
+                    medio_pago=medio_cobro_consumo,
+                    usuario=request.user,
+                    notas=f"Cobro consumo integrado liquidación {fecha_raw or timezone.localdate().strftime('%Y-%m-%d')}",
+                    fecha_abono_dt=fecha_abono_dt,
+                    deuda_objetivo=None,
+                    deuda_ids=deuda_ids,
+                )
+
+            response_liq = liquidar_dia_v2(request)
+            status_liq = int(getattr(response_liq, 'status_code', 500) or 500)
+            if status_liq >= 400:
+                data_liq = getattr(response_liq, 'data', None) or {}
+                if isinstance(data_liq, dict):
+                    msg = data_liq.get('error') or data_liq.get('detail') or 'No se pudo completar la liquidación.'
+                else:
+                    msg = 'No se pudo completar la liquidación.'
+                raise ValueError(str(msg))
+
+            payload = getattr(response_liq, 'data', {}) or {}
+            payload['consumo_integrado'] = {
+                'monto_solicitado': float(consumo_monto),
+                'monto_aplicado': float(consumo_monto - consumo_sobrante),
+                'monto_sobrante': float(consumo_sobrante),
+                'medio_pago': medio_cobro_consumo,
+                'aplicaciones': consumo_aplicaciones,
+            }
+            return Response(payload, status=status_liq)
+    except ValueError as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+    except Exception as e:
+        return Response({'error': f'No se pudo completar la operación integral: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def estado_pago_estilista_historial(request):

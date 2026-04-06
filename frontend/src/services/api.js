@@ -465,6 +465,41 @@ export const reportesService = {
     return response.data;
   },
 
+  liquidarOperacionIntegral: async ({
+    estilista_id,
+    fecha,
+    pago_efectivo,
+    pago_nequi,
+    pago_daviplata,
+    pago_otros,
+    abono_puesto,
+    medio_abono_puesto,
+    forzar_reemplazo_dia = false,
+    consumo_monto = 0,
+    deuda_ids = [],
+    medio_cobro_consumo = 'efectivo',
+    notas,
+  }) => {
+    const payload = {
+      estilista_id,
+      fecha,
+      pago_efectivo,
+      pago_nequi,
+      pago_daviplata,
+      pago_otros,
+      abono_puesto,
+      medio_abono_puesto,
+      forzar_reemplazo_dia,
+      consumo_monto,
+      deuda_ids,
+      medio_cobro_consumo,
+      notas,
+    };
+
+    const response = await api.post('/reportes/estilistas/liquidar-operacion-integral/', payload);
+    return response.data;
+  },
+
   moverFechaEstadoPagoDia: async ({ estado_pago_id, nueva_fecha, monto_mover = null }) => {
     const response = await api.patch(`/reportes/estilistas/estado-pago-dia/${estado_pago_id}/mover-fecha/`, {
       nueva_fecha,
