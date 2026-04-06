@@ -737,6 +737,12 @@ const Reportes = () => {
     carteraDataLiquidacionGlobal,
   ]);
 
+  useEffect(() => {
+    if (!vistaSimpleLiquidacion) return;
+    if (pasoLiquidacion === 3 || pasoLiquidacion === 4) return;
+    setPasoLiquidacion(3);
+  }, [vistaSimpleLiquidacion, pasoLiquidacion]);
+
   const aplicarRangoRapido = (tipo) => {
     const base = new Date();
     if (tipo === 'hoy') {
@@ -1198,7 +1204,7 @@ const aplicarLiquidacionSimple = async ({
     });
 
     toast.success(`Liquidación guardada. Pago final empleado: ${formatMoney(pagoFinalEmpleado)}.`);
-    setPasoLiquidacion(1);
+    setPasoLiquidacion(3);
     await Promise.all([cargarTodo(), cargarCarteraLiquidacionGlobal()]);
   } catch (error) {
     const msg = error?.response?.data?.error || error?.message || 'No se pudo guardar la liquidación simple.';
@@ -1829,7 +1835,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                   type="button"
                   onClick={() => {
                     setEstilistaActivoLiquidacion(estId);
-                    setPasoLiquidacion(1);
+                    setPasoLiquidacion(vistaSimpleLiquidacion ? 3 : 1);
                   }}
                   className={`w-full rounded-2xl border p-3 text-left transition ${activo ? 'border-emerald-400 bg-emerald-50 shadow-md' : 'border-slate-200 bg-white hover:border-slate-300'}`}
                 >
@@ -1995,7 +2001,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
 
                   <div className="card border border-slate-200 bg-white">
                     <div className="flex flex-wrap gap-2">
-                      {[1, 2, 3, 4].map((paso) => {
+                      {[3, 4].map((paso) => {
                         const activo = pasoLiquidacion === paso;
                         const completado = pasoLiquidacion > paso;
                         return (
@@ -2011,65 +2017,6 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                       })}
                     </div>
                   </div>
-
-                  {pasoLiquidacion === 1 && (
-                    <div className="card border border-sky-200 bg-sky-50">
-                      <h4 className="card-header mb-2">Paso 1: Seleccionar empleado y rango de fechas</h4>
-                      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
-                        <div className="xl:col-span-2">
-                          <label className="block text-xs text-slate-600 mb-1">Empleado</label>
-                          <select
-                            className="input-field"
-                            value={String(estId)}
-                            onChange={(e) => {
-                              setEstilistaActivoLiquidacion(Number(e.target.value || 0));
-                              setPasoLiquidacion(1);
-                            }}
-                          >
-                            {(biData?.estilistas || []).map((e) => (
-                              <option key={`sel-${e.estilista_id}`} value={String(e.estilista_id)}>{e.estilista_nombre}</option>
-                            ))}
-                          </select>
-                        </div>
-                        <div>
-                          <label className="block text-xs text-slate-600 mb-1">Fecha inicio</label>
-                          <input type="date" className="input-field" value={fechaInicio} onChange={(e) => setFechaInicio(e.target.value)} />
-                        </div>
-                        <div>
-                          <label className="block text-xs text-slate-600 mb-1">Fecha fin</label>
-                          <input type="date" className="input-field" value={fechaFin} onChange={(e) => setFechaFin(e.target.value)} />
-                        </div>
-                      </div>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        <button className="btn-primary" onClick={cargarTodo} disabled={loading}>{loading ? 'Actualizando...' : 'Calcular liquidación'}</button>
-                        <button className="btn-secondary" onClick={() => setPasoLiquidacion(2)}>Siguiente</button>
-                      </div>
-                    </div>
-                  )}
-
-                  {pasoLiquidacion === 2 && (
-                    <div className="card border border-sky-200 bg-white">
-                      <h4 className="card-header mb-2">Paso 2: Resumen de ganancias</h4>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                          <p className="text-xs text-slate-500">Empleado</p>
-                          <p className="font-bold text-slate-900">{empleado.estilista_nombre}</p>
-                          <p className="text-xs text-slate-500 mt-2">Rango</p>
-                          <p className="text-sm text-slate-800">{fechaInicio} a {fechaFin}</p>
-                        </div>
-                        <div className="rounded-xl border border-sky-200 bg-sky-50 p-3">
-                          <p className="text-xs text-slate-600">Generado por servicios + comisiones</p>
-                          <p className="text-3xl font-black text-sky-900 mt-1">{formatMoney(generadoEmpleadoSimple)}</p>
-                          <p className="text-xs text-slate-600 mt-2">Pendiente por pagar al empleado</p>
-                          <p className="text-xl font-black text-emerald-700">{formatMoney(pendientePagoEmpleadoSimple)}</p>
-                        </div>
-                      </div>
-                      <div className="mt-3 flex gap-2">
-                        <button className="btn-secondary" onClick={() => setPasoLiquidacion(1)}>Anterior</button>
-                        <button className="btn-primary" onClick={() => setPasoLiquidacion(3)}>Siguiente</button>
-                      </div>
-                    </div>
-                  )}
 
                   {pasoLiquidacion === 3 && (
                     <div className="card border border-rose-200 bg-rose-50">
@@ -2210,7 +2157,6 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                         <p className="text-[11px] text-slate-600 mt-1">El descuento de puesto ya está incluido en el pendiente mostrado.</p>
                       </div>
                       <div className="mt-3 flex gap-2">
-                        <button className="btn-secondary" onClick={() => setPasoLiquidacion(2)}>Anterior</button>
                         <button className="btn-primary" onClick={() => setPasoLiquidacion(4)}>Siguiente</button>
                       </div>
                     </div>
