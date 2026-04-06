@@ -1019,7 +1019,11 @@ const aplicarEstadoLiquidacion = async (fila) => {
             const estId = Number(empleado.estilista_id);
             const valorTotalEmpleado = Number((empleado.valor_total_empleado ?? empleado.facturacion_servicios ?? empleado.ganancias_servicios) || 0);
             const comisionesEmpleado = Number(empleado.comision_ventas_producto || 0);
-            const generadoEmpleado = valorTotalEmpleado + comisionesEmpleado;
+            const generadoEmpleadoCalculado = valorTotalEmpleado + comisionesEmpleado;
+            const generadoEmpleado = Math.max(
+              Number(desgloseLiquidacion?.servicios?.total_precio_cobrado ?? generadoEmpleadoCalculado),
+              0
+            );
             const pendientePagoEmpleado = calcularPendientePagoConPuesto(empleado);
             const consumoPendiente = Number(resumenPorEstilistaLiquidacion[estId]?.saldo_pendiente || 0);
             const cobroConsumoDigitado = Number(cobroConsumoPorEstilista[estId] || 0);
