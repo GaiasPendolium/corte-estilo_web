@@ -125,7 +125,7 @@ const Reportes = () => {
   const [medioAbonoPuestoPorEstilista, setMedioAbonoPuestoPorEstilista] = useState({});
   const [cobroConsumoPorEstilista, setCobroConsumoPorEstilista] = useState({});
   const [medioCobroConsumoPorEstilista, setMedioCobroConsumoPorEstilista] = useState({});
-  const [deudaConsumoSeleccionadaPorEstilista, setDeudaConsumoSeleccionadaPorEstilista] = useState({});
+  const [deudaConsumoSeleccionadasPorEstilista, setDeudaConsumoSeleccionadasPorEstilista] = useState({});
   const [savingEstadoByEstilista, setSavingEstadoByEstilista] = useState({});
   const [numericPadTarget, setNumericPadTarget] = useState(null);
   const [desgloseLiquidacion, setDesgloseLiquidacion] = useState(null);
@@ -449,52 +449,53 @@ const Reportes = () => {
     }
   };
 
-  const cobrarConsumoEnDeudas = async ({ estilistaId, deudaId, monto, medioPago, fecha }) => {
+  const cobrarConsumoEnDeudas = async ({ estilistaId, deudaIds = [], monto, medioPago, fecha }) => {
     const deudas = (carteraDataLiquidacionGlobal?.deudas || [])
       .filter((d) => Number(d.estilista_id) === Number(estilistaId) && Number(d.saldo_pendiente || 0) > 0)
       .sort((a, b) => String(a.fecha_hora || '').localeCompare(String(b.fecha_hora || '')));
 
-    if (deudaId) {
-      const deudaObjetivo = deudas.find((d) => Number(d.deuda_id) === Number(deudaId));
-      if (!deudaObjetivo) {
-        return { cobrado: 0, restante: Number(monto || 0) };
-      }
+    const idsSeleccionados = Array.isArray(deudaIds)
+      ? deudaIds.map((x) => Number(x)).filter((x) => Number.isFinite(x) && x > 0)
+      : [];
 
-      const saldo = Number(deudaObjetivo.saldo_pendiente || 0);
-      const abono = Math.min(Number(monto || 0), Math.max(saldo, 0));
-      if (abono <= 0) return { cobrado: 0, restante: Number(monto || 0) };
+    const deudasObjetivo = idsSeleccionados.length > 0
+      ? deudas.filter((d) => idsSeleccionados.includes(Number(d.deuda_id)))
+      : deudas;
 
-      await reportesService.abonarConsumoEmpleado({
-        estilista_id: estilistaId,
-        deuda_id: deudaObjetivo.deuda_id,
-        monto: abono,
-        medio_pago: medioPago,
-        notas: `Cobro consumo integrado en liquidacion ${fecha}`,
-      });
-
-      return { cobrado: abono, restante: Math.max(Number(monto || 0) - abono, 0) };
+    if (deudasObjetivo.length === 0) {
+      return { cobrado: 0, restante: Number(monto || 0), sinPendientes: idsSeleccionados.length > 0 };
     }
 
     let restante = Number(monto || 0);
     let cobrado = 0;
+    let facturasSinPendiente = 0;
 
-    for (const deuda of deudas) {
+    for (const deuda of deudasObjetivo) {
       if (restante <= 0) break;
       const saldo = Number(deuda.saldo_pendiente || 0);
       if (saldo <= 0) continue;
       const abono = Math.min(restante, saldo);
-      await reportesService.abonarConsumoEmpleado({
-        estilista_id: estilistaId,
-        deuda_id: deuda.deuda_id,
-        monto: abono,
-        medio_pago: medioPago,
-        notas: `Cobro consumo integrado en liquidacion ${fecha}`,
-      });
+      try {
+        await reportesService.abonarConsumoEmpleado({
+          estilista_id: estilistaId,
+          deuda_id: deuda.deuda_id,
+          monto: abono,
+          medio_pago: medioPago,
+          notas: `Cobro consumo integrado en liquidacion ${fecha}`,
+        });
+      } catch (error) {
+        const msg = String(error?.response?.data?.error || '').toLowerCase();
+        if (msg.includes('no tiene saldo pendiente')) {
+          facturasSinPendiente += 1;
+          continue;
+        }
+        throw error;
+      }
       cobrado += abono;
       restante -= abono;
     }
 
-    return { cobrado, restante };
+    return { cobrado, restante, facturasSinPendiente, sinPendientes: cobrado <= 0 && idsSeleccionados.length > 0 };
   };
 
   const resumenPorEstilista = useMemo(() => {
@@ -599,7 +600,9 @@ const aplicarEstadoLiquidacion = async (fila) => {
   const saldoConsumoEmpleado = Number(resumenPorEstilista[estilistaId]?.saldo_pendiente || 0);
   const cobroConsumoDigitado = Number(cobroConsumoPorEstilista[estilistaId] || 0);
   const cobroConsumoAplicado = Math.min(Math.max(cobroConsumoDigitado, 0), Math.max(saldoConsumoEmpleado, 0));
-  const deudaConsumoSeleccionada = Number(deudaConsumoSeleccionadaPorEstilista[estilistaId] || 0);
+  const deudasConsumoSeleccionadas = (deudaConsumoSeleccionadasPorEstilista[estilistaId] || [])
+    .map((x) => Number(x))
+    .filter((x) => Number.isFinite(x) && x > 0);
   const medioCobroConsumo = medioCobroConsumoPorEstilista[estilistaId] || 'efectivo';
   const valorTotalEmpleado = Number((fila.valor_total_empleado ?? fila.facturacion_servicios ?? fila.ganancias_servicios) || 0);
   const comisionesEmpleado = Number(fila.comision_ventas_producto || 0);
@@ -617,11 +620,17 @@ const aplicarEstadoLiquidacion = async (fila) => {
     if (cobroConsumoAplicado > 0) {
       resumenCobro = await cobrarConsumoEnDeudas({
         estilistaId,
-        deudaId: deudaConsumoSeleccionada > 0 ? deudaConsumoSeleccionada : null,
+        deudaIds: deudasConsumoSeleccionadas,
         monto: cobroConsumoAplicado,
         medioPago: medioCobroConsumo,
         fecha: fechaLiquidacion,
       });
+
+      if (resumenCobro?.sinPendientes) {
+        toast.warning('Las facturas seleccionadas ya no tienen saldo pendiente. Ajusta la selección o usa distribución automática.');
+      } else if (Number(resumenCobro?.facturasSinPendiente || 0) > 0) {
+        toast.info(`Se omitieron ${resumenCobro.facturasSinPendiente} factura(s) sin saldo pendiente durante el abono.`);
+      }
     }
 
     const resultado = await reportesService.liquidarDiaV2({
@@ -1159,19 +1168,39 @@ const aplicarEstadoLiquidacion = async (fila) => {
                       </div>
 
                       <div>
-                        <label className="block text-xs text-slate-600 mb-1">Factura de consumo a abonar</label>
+                        <label className="block text-xs text-slate-600 mb-1">Facturas de consumo a abonar (puedes elegir varias)</label>
                         <select
                           className="input-field"
-                          value={deudaConsumoSeleccionadaPorEstilista[estId] || ''}
-                          onChange={(e) => setDeudaConsumoSeleccionadaPorEstilista((prev) => ({ ...prev, [estId]: e.target.value }))}
+                          multiple
+                          size={Math.min(Math.max(deudasEmpleado.length, 3), 7)}
+                          value={deudaConsumoSeleccionadasPorEstilista[estId] || []}
+                          onChange={(e) => {
+                            const seleccionadas = Array.from(e.target.selectedOptions || []).map((opt) => opt.value);
+                            setDeudaConsumoSeleccionadasPorEstilista((prev) => ({ ...prev, [estId]: seleccionadas }));
+                          }}
                         >
-                          <option value="">Distribuir automático (más antigua primero)</option>
                           {deudasEmpleado.map((d) => (
-                            <option key={d.deuda_id} value={d.deuda_id}>
+                            <option key={d.deuda_id} value={String(d.deuda_id)}>
                               {(d.numero_factura || `Deuda ${d.deuda_id}`)} - Saldo {formatMoney(d.saldo_pendiente)}
                             </option>
                           ))}
                         </select>
+                        <div className="mt-1 flex items-center justify-between gap-2">
+                          <p className="text-xs text-slate-500">
+                            {(deudaConsumoSeleccionadasPorEstilista[estId] || []).length > 0
+                              ? `${(deudaConsumoSeleccionadasPorEstilista[estId] || []).length} factura(s) seleccionada(s)`
+                              : 'Si no seleccionas, el sistema distribuye automático (más antigua primero).'}
+                          </p>
+                          {(deudaConsumoSeleccionadasPorEstilista[estId] || []).length > 0 && (
+                            <button
+                              type="button"
+                              className="btn-secondary !py-1 !px-2 text-xs"
+                              onClick={() => setDeudaConsumoSeleccionadasPorEstilista((prev) => ({ ...prev, [estId]: [] }))}
+                            >
+                              Limpiar selección
+                            </button>
+                          )}
+                        </div>
                       </div>
 
                       <div>
