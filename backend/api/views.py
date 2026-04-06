@@ -5129,6 +5129,44 @@ def reporte_cierre_caja(request):
     # Ganancia neta = Total ingresos - Pagado a empleados.
     liquidacion_empleados_resumen = max(total_ingresos - ganancia_total, Decimal(0))
 
+    # Alinear detalle de medios con los totales del resumen para que la suma
+    # de filas coincida con las tarjetas principales.
+    detalle_medios_crudo = data_bi.get('cierre_medios', {}).get('detalle', []) or []
+    detalle_medios = []
+    for item in detalle_medios_crudo:
+        detalle_medios.append(
+            {
+                'medio_pago': (item.get('medio_pago') or 'otros'),
+                'ingresos': Decimal(str(item.get('ingresos', 0) or 0)),
+                'salidas': Decimal(str(item.get('salidas', 0) or 0)),
+            }
+        )
+
+    medios_existentes = {str(it.get('medio_pago') or '').strip().lower() for it in detalle_medios}
+    if 'otros' not in medios_existentes:
+        detalle_medios.append({'medio_pago': 'otros', 'ingresos': Decimal(0), 'salidas': Decimal(0)})
+
+    suma_ingresos_detalle = sum((it['ingresos'] for it in detalle_medios), Decimal(0))
+    suma_salidas_detalle = sum((it['salidas'] for it in detalle_medios), Decimal(0))
+    ajuste_ingresos = total_ingresos - suma_ingresos_detalle
+    ajuste_salidas = liquidacion_empleados_resumen - suma_salidas_detalle
+
+    for it in detalle_medios:
+        if str(it.get('medio_pago') or '').strip().lower() == 'otros':
+            it['ingresos'] = it['ingresos'] + ajuste_ingresos
+            it['salidas'] = it['salidas'] + ajuste_salidas
+            break
+
+    detalle_medios_serializado = [
+        {
+            'medio_pago': it['medio_pago'],
+            'ingresos': float(it['ingresos']),
+            'salidas': float(it['salidas']),
+            'saldo': float(it['ingresos'] - it['salidas']),
+        }
+        for it in detalle_medios
+    ]
+
     return Response(
         {
             'fecha_inicio': fecha_inicio,
@@ -5145,7 +5183,7 @@ def reporte_cierre_caja(request):
                 'diferencia_cuadre': float(ganancia_total - suma_componentes),
             },
             'medios': {
-                'detalle': data_bi.get('cierre_medios', {}).get('detalle', []),
+                'detalle': detalle_medios_serializado,
                 'totales': {
                     'ingresos': float(total_ingresos),
                     'salidas': float(liquidacion_empleados_resumen),
