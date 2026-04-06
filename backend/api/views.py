@@ -1408,7 +1408,7 @@ def _calcular_datos_bi(request):
     if medio_pago and medio_pago != 'todos':
         adicionales_asignados_qs = adicionales_asignados_qs.filter(servicio_realizado__medio_pago=medio_pago)
 
-    abonos_consumo_qs = AbonoDeudaEmpleado.objects.filter(
+    abonos_consumo_qs = AbonoDeudaEmpleado.objects.select_related('deuda', 'deuda__estilista').filter(
         fecha_hora__date__gte=fecha_inicio_dt,
         fecha_hora__date__lte=fecha_fin_dt,
     )
@@ -2321,9 +2321,9 @@ def reporte_consumo_empleado(request):
     estilista_id = (request.query_params.get('estilista_id') or '').strip()
 
     qs = DeudaConsumoEmpleado.objects.select_related('estilista').filter(
-        fecha_hora__date__gte=fecha_inicio,
-        fecha_hora__date__lte=fecha_fin,
-    )
+        Q(fecha_hora__date__gte=fecha_inicio, fecha_hora__date__lte=fecha_fin)
+        | Q(abonos__fecha_hora__date__gte=fecha_inicio, abonos__fecha_hora__date__lte=fecha_fin)
+    ).distinct()
 
     if estilista_id:
         qs = qs.filter(estilista_id=int(estilista_id))
@@ -2333,18 +2333,28 @@ def reporte_consumo_empleado(request):
         _sincronizar_deuda_desde_items(deuda)
 
     qs = DeudaConsumoEmpleado.objects.select_related('estilista').filter(
-        fecha_hora__date__gte=fecha_inicio,
-        fecha_hora__date__lte=fecha_fin,
-    )
+        Q(fecha_hora__date__gte=fecha_inicio, fecha_hora__date__lte=fecha_fin)
+        | Q(abonos__fecha_hora__date__gte=fecha_inicio, abonos__fecha_hora__date__lte=fecha_fin)
+    ).distinct()
     if estilista_id:
         qs = qs.filter(estilista_id=int(estilista_id))
 
-    # Cartera principal: solo saldos pendientes reales y con items vigentes.
+    deuda_ids_con_abono_en_rango = set(
+        AbonoDeudaEmpleado.objects.filter(
+            fecha_hora__date__gte=fecha_inicio,
+            fecha_hora__date__lte=fecha_fin,
+            deuda_id__in=[int(d.id) for d in qs],
+        ).values_list('deuda_id', flat=True)
+    )
+
+    # Cartera principal: mantener pendientes y también facturas con abonos en rango
+    # para que el usuario vea inmediatamente los pagos registrados en liquidación.
     qs_pendientes = []
     for deuda in qs:
-        if Decimal(deuda.saldo_pendiente or 0) <= Decimal('0.5'):
-            continue
-        if deuda.estado == 'cancelado':
+        saldo = Decimal(deuda.saldo_pendiente or 0)
+        tiene_abono_rango = int(deuda.id) in deuda_ids_con_abono_en_rango
+
+        if saldo <= Decimal('0.5') and not tiene_abono_rango:
             continue
         if not deuda.ventas_items.filter(tipo_operacion='consumo_empleado').exists():
             continue
@@ -4199,39 +4209,45 @@ def reporte_cierre_caja(request):
             }
         )
 
-    # Consumo empleado: se muestra en el detalle para trazabilidad,
-    # pero en ingresos solo cuenta lo realmente abonado (pagado) en el rango.
-    for venta in ventas_consumo_qs.order_by('-fecha_hora'):
-        valor_credito_total = Decimal(venta.total or 0)
-        valor_venta = Decimal(0)
-        if venta.deuda_consumo_id:
-            valor_venta = Decimal(abonos_por_deuda.get(int(venta.deuda_consumo_id), Decimal(0)))
-            if valor_venta > valor_credito_total:
-                valor_venta = valor_credito_total
+    # Consumo empleado: en cierre de caja se reconoce por fecha de ABONO,
+    # no por fecha de creación de la factura de consumo.
+    for ab in abonos_consumo_qs.order_by('-fecha_hora', '-id'):
+        deuda = getattr(ab, 'deuda', None)
+        if not deuda:
+            continue
 
-        costo_unitario = Decimal(venta.producto.precio_compra or 0)
-        valor_compra_total = costo_unitario * Decimal(venta.cantidad or 0)
+        valor_venta = Decimal(ab.monto or 0)
+        if valor_venta <= 0:
+            continue
 
-        # Prorratear el costo según lo efectivamente pagado en el periodo.
-        factor_pago = (valor_venta / valor_credito_total) if valor_credito_total > 0 else Decimal(0)
-        valor_compra = valor_compra_total * factor_pago
+        total_credito_deuda = Decimal(deuda.total_cargo or 0)
+        costo_total_deuda = Decimal(0)
+        for item in deuda.ventas_items.select_related('producto').filter(tipo_operacion='consumo_empleado'):
+            costo_total_deuda += Decimal(item.producto.precio_compra or 0) * Decimal(item.cantidad or 0)
+
+        factor_pago = (valor_venta / total_credito_deuda) if total_credito_deuda > 0 else Decimal(0)
+        if factor_pago < 0:
+            factor_pago = Decimal(0)
+        if factor_pago > 1:
+            factor_pago = Decimal(1)
+
+        valor_compra = costo_total_deuda * factor_pago
         ganancia = valor_venta - valor_compra
 
-        # Debe cuadrar con la tabla de detalle (que si incluye consumo abonado).
         ventas_productos_total += valor_venta
         costo_productos_total += valor_compra
         consumo_empleado_abonado_total += valor_venta
 
         detalle_productos.append(
             {
-                'fecha_hora': timezone.localtime(venta.fecha_hora).strftime('%Y-%m-%d %H:%M:%S') if venta.fecha_hora else None,
-                'fecha': _fecha_operativa_desde_dt(venta.fecha_hora).strftime('%Y-%m-%d') if venta.fecha_hora else None,
-                'origen': 'consumo_empleado',
-                'numero_factura': venta.numero_factura,
-                'medio_pago': venta.medio_pago,
-                'estilista_nombre': venta.estilista.nombre if venta.estilista_id else '',
-                'descripcion': f"{venta.producto.nombre} (consumo empleado)",
-                'cantidad': int(venta.cantidad or 0),
+                'fecha_hora': timezone.localtime(ab.fecha_hora).strftime('%Y-%m-%d %H:%M:%S') if ab.fecha_hora else None,
+                'fecha': _fecha_operativa_desde_dt(ab.fecha_hora).strftime('%Y-%m-%d') if ab.fecha_hora else None,
+                'origen': 'consumo_empleado_abono',
+                'numero_factura': deuda.numero_factura,
+                'medio_pago': ab.medio_pago,
+                'estilista_nombre': deuda.estilista.nombre if deuda.estilista_id else '',
+                'descripcion': f"Abono consumo empleado ({deuda.numero_factura or deuda.id})",
+                'cantidad': 1,
                 'valor_venta': float(valor_venta),
                 'valor_compra': float(valor_compra),
                 'con_comision_empleado': False,
