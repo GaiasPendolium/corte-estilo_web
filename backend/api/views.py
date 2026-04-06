@@ -3784,8 +3784,7 @@ def bi_desglose_estilista_debug(request):
     # Resumen de servicios
     total_servicios_precio_cobrado = Decimal(servicios_est.aggregate(total=Sum('precio_cobrado'))['total'] or 0)
     total_adicionales_est = Decimal(servicios_est.aggregate(total=Sum('valor_adicionales'))['total'] or 0)
-    total_adicionales_asignados_est = Decimal(adicionales_asignados_est.aggregate(total=Sum('valor_cobrado'))['total'] or 0)
-    ganancia_servicios_est = total_servicios_precio_cobrado + total_adicionales_asignados_est
+    total_adicionales_asignados_est = Decimal(0)
     
     # Resumen de comisiones
     comision_ventas_producto_caja_est = Decimal(0)
@@ -3812,7 +3811,17 @@ def bi_desglose_estilista_debug(request):
         servicios_por_dia[fecha_srv] = servicios_por_dia.get(fecha_srv, Decimal(0)) + Decimal(srv.precio_cobrado or 0)
     for ad in adicionales_asignados_est:
         fecha_ad = _fecha_operativa_desde_dt(ad.servicio_realizado.fecha_hora)
-        servicios_por_dia[fecha_ad] = servicios_por_dia.get(fecha_ad, Decimal(0)) + Decimal(ad.valor_cobrado or 0)
+        valor_ad = Decimal(ad.valor_cobrado or 0)
+        pct_est = Decimal(ad.porcentaje_establecimiento or 0) if ad.aplica_porcentaje_establecimiento else Decimal(0)
+        if pct_est < 0:
+            pct_est = Decimal(0)
+        if pct_est > 100:
+            pct_est = Decimal(100)
+        valor_emp = valor_ad - ((valor_ad * pct_est) / Decimal(100))
+        total_adicionales_asignados_est += valor_emp
+        servicios_por_dia[fecha_ad] = servicios_por_dia.get(fecha_ad, Decimal(0)) + valor_emp
+
+    ganancia_servicios_est = total_servicios_precio_cobrado + total_adicionales_asignados_est
 
     # Días trabajados
     dias_trabajados = set(servicios_por_dia.keys()) | set(comision_por_dia.keys())
@@ -3945,8 +3954,7 @@ def bi_desglose_estilista(request):
     # Resumen de servicios
     total_servicios_precio_cobrado = Decimal(servicios_est.aggregate(total=Sum('precio_cobrado'))['total'] or 0)
     total_adicionales_est = Decimal(servicios_est.aggregate(total=Sum('valor_adicionales'))['total'] or 0)
-    total_adicionales_asignados_est = Decimal(adicionales_asignados_est.aggregate(total=Sum('valor_cobrado'))['total'] or 0)
-    ganancia_servicios_est = total_servicios_precio_cobrado + total_adicionales_asignados_est
+    total_adicionales_asignados_est = Decimal(0)
     
     # Resumen de comisiones
     comision_ventas_producto_caja_est = Decimal(0)
@@ -3973,7 +3981,17 @@ def bi_desglose_estilista(request):
         servicios_por_dia[fecha_srv] = servicios_por_dia.get(fecha_srv, Decimal(0)) + Decimal(srv.precio_cobrado or 0)
     for ad in adicionales_asignados_est:
         fecha_ad = _fecha_operativa_desde_dt(ad.servicio_realizado.fecha_hora)
-        servicios_por_dia[fecha_ad] = servicios_por_dia.get(fecha_ad, Decimal(0)) + Decimal(ad.valor_cobrado or 0)
+        valor_ad = Decimal(ad.valor_cobrado or 0)
+        pct_est = Decimal(ad.porcentaje_establecimiento or 0) if ad.aplica_porcentaje_establecimiento else Decimal(0)
+        if pct_est < 0:
+            pct_est = Decimal(0)
+        if pct_est > 100:
+            pct_est = Decimal(100)
+        valor_emp = valor_ad - ((valor_ad * pct_est) / Decimal(100))
+        total_adicionales_asignados_est += valor_emp
+        servicios_por_dia[fecha_ad] = servicios_por_dia.get(fecha_ad, Decimal(0)) + valor_emp
+
+    ganancia_servicios_est = total_servicios_precio_cobrado + total_adicionales_asignados_est
 
     # Días trabajados
     dias_trabajados = set(servicios_por_dia.keys()) | set(comision_por_dia.keys())
