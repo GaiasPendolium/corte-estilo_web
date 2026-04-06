@@ -5114,13 +5114,6 @@ def reporte_cierre_caja(request):
         + consumo_empleado_abonado_total
     )
 
-    medios_totales = data_bi.get('cierre_medios', {}).get('totales', {})
-
-    # Pagado real por medios (se mantiene para la pestaña de medios).
-    liquidacion_empleados_medios = Decimal(str(medios_totales.get('salidas', 0) or 0))
-    medios_totales_ingresos = Decimal(str(medios_totales.get('ingresos', 0) or 0))
-    medios_totales_salidas = Decimal(str(medios_totales.get('salidas', 0) or 0))
-
     # Mantener coherencia semántica: esta tarjeta debe ser la misma ganancia
     # que se muestra en el detalle de servicios del establecimiento.
     ingresos_servicios_tarjeta = ingresos_servicios_establecimiento
@@ -5154,9 +5147,9 @@ def reporte_cierre_caja(request):
             'medios': {
                 'detalle': data_bi.get('cierre_medios', {}).get('detalle', []),
                 'totales': {
-                    'ingresos': float(medios_totales_ingresos),
-                    'salidas': float(medios_totales_salidas),
-                    'saldo': float(medios_totales_ingresos - medios_totales_salidas),
+                    'ingresos': float(total_ingresos),
+                    'salidas': float(liquidacion_empleados_resumen),
+                    'saldo': float(total_ingresos - liquidacion_empleados_resumen),
                 },
             },
             'productos': {
