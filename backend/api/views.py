@@ -3401,6 +3401,7 @@ def estado_pago_estilista_historial(request):
                 'usuario_nombre': x.usuario.nombre_completo if x.usuario else 'Sistema',
                 'monto_liquidado': float(x.monto_liquidado or 0),
                 'abono_puesto': float(x.abono_puesto or 0),
+                'medio_abono_puesto': getattr(x, 'medio_abono_puesto', 'efectivo') or 'efectivo',
                 'pendiente_puesto': float(x.pendiente_puesto or 0),
                 'fecha_cambio': timezone.localtime(x.fecha_cambio).strftime('%Y-%m-%d %H:%M:%S'),
             }
@@ -3441,10 +3442,10 @@ def estado_pago_estilista_historial(request):
 @api_view(['DELETE'])
 @permission_classes([IsAuthenticated])
 def eliminar_estado_pago_historial(request, historial_id):
-    # Solo administrador puede eliminar registros del historial.
-    if getattr(request.user, 'rol', None) != 'administrador':
+    # Administrador o gerente pueden eliminar para poder corregir liquidaciones mal registradas.
+    if not _es_admin_o_gerente(request.user):
         return Response(
-            {'error': 'Solo el administrador puede eliminar registros del historial.'},
+            {'error': 'Solo administrador o gerente pueden eliminar registros del historial.'},
             status=status.HTTP_403_FORBIDDEN,
         )
 

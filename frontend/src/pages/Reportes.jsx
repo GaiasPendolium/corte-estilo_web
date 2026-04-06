@@ -94,8 +94,10 @@ const NumericPad = ({ visible, value, onChange, onClose }) => {
 
 const Reportes = () => {
   const { user } = useAuthStore();
-  const esAdministrador = String(user?.rol || '').toLowerCase() === 'administrador';
-  const esRecepcion = String(user?.rol || '').toLowerCase() === 'recepcion';
+  const rolUsuario = String(user?.rol || '').trim().toLowerCase();
+  const esAdministrador = rolUsuario === 'administrador';
+  const puedeCorregirLiquidacion = rolUsuario === 'administrador' || rolUsuario === 'gerente';
+  const esRecepcion = rolUsuario === 'recepcion';
   const [moduloActivo, setModuloActivo] = useState('cierre');
   const [periodo, setPeriodo] = useState('mes');
   const [fechaInicio, setFechaInicio] = useState(format(firstDay, 'yyyy-MM-dd'));
@@ -661,9 +663,45 @@ const aplicarEstadoLiquidacion = async (fila) => {
   }
 };
 
+  const precargarCorreccionLiquidacion = (empleado, registroDia) => {
+    const estilistaId = Number(empleado?.estilista_id || 0);
+    if (!estilistaId || !registroDia) return;
+
+    setEstilistaActivoLiquidacion(estilistaId);
+    if (registroDia.fecha) {
+      setFechaFin(String(registroDia.fecha));
+    }
+
+    const pagoEmpleadoDia = Math.max(Number(registroDia.pago_empleado_dia || 0), 0);
+    const abonoPuestoDia = Math.max(Number(registroDia.abono_puesto_dia || 0), 0);
+    const medioAbono = registroDia.medio_abono_puesto || 'efectivo';
+
+    setPagosPorEstilista((prev) => ({
+      ...prev,
+      [estilistaId]: {
+        efectivo: String(pagoEmpleadoDia || ''),
+        nequi: '',
+        daviplata: '',
+        otros: '',
+      },
+    }));
+
+    setAbonoPuestoPorEstilista((prev) => ({
+      ...prev,
+      [estilistaId]: String(abonoPuestoDia || ''),
+    }));
+
+    setMedioAbonoPuestoPorEstilista((prev) => ({
+      ...prev,
+      [estilistaId]: medioAbono,
+    }));
+
+    toast.info(`Valores precargados para corregir ${registroDia.fecha || 'el día seleccionado'}. Ajusta y vuelve a liquidar.`);
+  };
+
   const eliminarRegistroHistorial = async (registro) => {
-    if (!esAdministrador) {
-      toast.error('Solo el administrador puede eliminar registros del historial');
+    if (!puedeCorregirLiquidacion) {
+      toast.error('Solo administrador o gerente pueden corregir registros del historial');
       return;
     }
 
@@ -966,8 +1004,10 @@ const aplicarEstadoLiquidacion = async (fila) => {
                 const fecha = h.fecha || '-';
                 const previo = acc[fecha] || {
                   fecha,
+                  historial_id: Number(h.id || 0),
                   pago_empleado_dia: 0,
                   abono_puesto_dia: 0,
+                  medio_abono_puesto: h.medio_abono_puesto || 'efectivo',
                   saldo_puesto_cierre: Number(h.pendiente_puesto || 0),
                   fecha_cambio: h.fecha_cambio || '',
                   usuario_nombre: h.usuario_nombre || 'Sistema',
@@ -980,10 +1020,12 @@ const aplicarEstadoLiquidacion = async (fila) => {
 
                 acc[fecha] = {
                   ...previo,
+                  historial_id: usarActualComoCierre ? Number(h.id || previo.historial_id || 0) : Number(previo.historial_id || 0),
                   pago_empleado_dia: pagoDia,
                   // Muestra el abono de la última operación del día para evitar
                   // mezclar históricos antiguos guardados como acumulados.
                   abono_puesto_dia: usarActualComoCierre ? Number(h.abono_puesto || 0) : Number(previo.abono_puesto_dia || 0),
+                  medio_abono_puesto: usarActualComoCierre ? (h.medio_abono_puesto || previo.medio_abono_puesto || 'efectivo') : (previo.medio_abono_puesto || 'efectivo'),
                   saldo_puesto_cierre: usarActualComoCierre ? Number(h.pendiente_puesto || 0) : Number(previo.saldo_puesto_cierre || 0),
                   fecha_cambio: usarActualComoCierre ? (h.fecha_cambio || previo.fecha_cambio) : previo.fecha_cambio,
                   usuario_nombre: usarActualComoCierre ? (h.usuario_nombre || previo.usuario_nombre) : previo.usuario_nombre,
@@ -1256,7 +1298,31 @@ const aplicarEstadoLiquidacion = async (fila) => {
                             <p className="text-xs text-sky-700">Cancelado de puesto: {formatMoney(abonadoPuestoDia)}</p>
                             <p className="text-xs text-rose-700">Quedó debiendo del día: {formatMoney(pendientePuestoDia)}</p>
                             <p className="text-xs text-amber-700">Saldo acumulado pendiente: {formatMoney(saldoPuestoCierre)}</p>
+                            <p className="text-xs text-slate-600">Medio abono: {h.medio_abono_puesto || 'efectivo'}</p>
                             <p className="text-xs text-slate-500">Usuario: {h.usuario_nombre || 'Sistema'}</p>
+                            {puedeCorregirLiquidacion && (
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  className="btn-secondary !py-1 !px-2 text-xs"
+                                  onClick={() => precargarCorreccionLiquidacion(empleado, h)}
+                                >
+                                  Cargar para corregir
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-danger !py-1 !px-2 text-xs"
+                                  onClick={() => eliminarRegistroHistorial({
+                                    id: h.historial_id,
+                                    estilista_nombre: empleado.estilista_nombre,
+                                    fecha: h.fecha,
+                                  })}
+                                  disabled={!h.historial_id}
+                                >
+                                  Eliminar día
+                                </button>
+                              </div>
+                            )}
                           </div>
                         );
                       })}
