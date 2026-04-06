@@ -1875,7 +1875,14 @@ def _calcular_datos_bi(request):
             if fact_dia:
                 descuento_dia = Decimal(fact_dia.descuento_puesto_dia or descuento_dia)
                 ganancias_dia = Decimal(fact_dia.ganancias_totales or ganancias_dia)
-                pago_empleado_dia = Decimal(fact_dia.pago_total_empleado or 0)
+                pago_medios_fact = (
+                    Decimal(fact_dia.pago_efectivo or 0)
+                    + Decimal(fact_dia.pago_nequi or 0)
+                    + Decimal(fact_dia.pago_daviplata or 0)
+                    + Decimal(fact_dia.pago_otros or 0)
+                )
+                # Compatibilidad con registros legacy donde solo quedó pago_total_empleado.
+                pago_empleado_dia = pago_medios_fact if pago_medios_fact > 0 else Decimal(fact_dia.pago_total_empleado or 0)
                 abono_puesto_dia = Decimal(fact_dia.abono_puesto_dia or 0)
                 estado_dia = fact_dia.estado_liquidacion
             elif estado_dia_obj:
