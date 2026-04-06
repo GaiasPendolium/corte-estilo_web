@@ -5118,6 +5118,8 @@ def reporte_cierre_caja(request):
 
     # Ganancia Total = servicios establecimiento + productos + espacios.
     liquidacion_empleados = Decimal(str(medios_totales.get('salidas', 0) or 0))
+    medios_totales_ingresos = Decimal(str(medios_totales.get('ingresos', 0) or 0))
+    medios_totales_salidas = Decimal(str(medios_totales.get('salidas', 0) or 0))
 
     # Mantener coherencia semántica: esta tarjeta debe ser la misma ganancia
     # que se muestra en el detalle de servicios del establecimiento.
@@ -5148,9 +5150,9 @@ def reporte_cierre_caja(request):
             'medios': {
                 'detalle': data_bi.get('cierre_medios', {}).get('detalle', []),
                 'totales': {
-                    'ingresos': float(total_ingresos),
-                    'salidas': float(liquidacion_empleados),
-                    'saldo': float(total_ingresos - liquidacion_empleados),
+                    'ingresos': float(medios_totales_ingresos),
+                    'salidas': float(medios_totales_salidas),
+                    'saldo': float(medios_totales_ingresos - medios_totales_salidas),
                 },
             },
             'productos': {
