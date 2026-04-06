@@ -279,7 +279,7 @@ def _listar_historial_legacy(fecha_inicio, fecha_fin, estilista_id=None, limit=1
         LEFT JOIN usuarios u ON u.id = h.usuario_id
         WHERE h.fecha >= %s AND h.fecha <= %s
     """
-    params = [fecha_inicio, fecha_fin]
+                # [3] TOTAL PAGABLE AL EMPLEADO = neto del día (ganancias menos puesto del día).
 
     if estilista_id:
         sql += " AND h.estilista_id = %s"
@@ -421,7 +421,7 @@ def calcular_liquidacion_dia_estilista(estilista, fecha_dia):
     
     # [2] TOTAL PAGABLE AL EMPLEADO = ganancias completas del día.
     # La deuda del puesto se registra por separado y puede quedar pendiente.
-    total_pagable = max(ganancias_totales, Decimal(0))
+    total_pagable = max(ganancias_totales - descuento_puesto, Decimal(0))
     
     return {
         'ganancias_totales': ganancias_totales,
@@ -1809,7 +1809,7 @@ def _calcular_datos_bi(request):
                 )
                 abono_puesto_dia = Decimal(estado_dia_obj.abono_puesto or 0)
 
-            neto_dia = ganancias_dia
+            neto_dia = max(ganancias_dia - descuento_dia, Decimal(0))
 
             descuento_espacio += descuento_dia
             pago_neto_periodo += neto_dia
@@ -1819,10 +1819,10 @@ def _calcular_datos_bi(request):
             if pago_empleado_dia > 0:
                 dias_con_pago += 1
 
-            pendiente_empleado_dia = max(ganancias_dia - pago_empleado_dia, Decimal(0))
+            pendiente_empleado_dia = max(neto_dia - pago_empleado_dia, Decimal(0))
             pago_neto_pendiente += pendiente_empleado_dia
-            if pendiente_empleado_dia <= 0 and ganancias_dia > 0:
-                pago_neto_cancelado += ganancias_dia
+            if pendiente_empleado_dia <= 0 and neto_dia > 0:
+                pago_neto_cancelado += neto_dia
                 dias_cancelados += 1
 
         total_descuentos_espacio += descuento_espacio
@@ -4133,9 +4133,7 @@ def bi_desglose_estilista_debug(request):
         
         descuento_dia = _descuento_puesto_dia(estilista, base_servicio_dia)
         
-        # Regla unificada: el descuento de puesto se registra como deuda aparte,
-        # no se descuenta del pagable del empleado en neto_dia.
-        neto_dia = base_servicio_dia + comision_dia
+        neto_dia = max((base_servicio_dia + comision_dia) - descuento_dia, Decimal(0))
         estado_dia = estados_pago_map.get((estilista.id, dia), 'pendiente')
         
         pago_neto_periodo += neto_dia
@@ -4307,9 +4305,7 @@ def bi_desglose_estilista(request):
         
         descuento_dia = _descuento_puesto_dia(estilista, base_servicio_dia)
         
-        # Regla unificada: el descuento de puesto se registra como deuda aparte,
-        # no se descuenta del pagable del empleado en neto_dia.
-        neto_dia = base_servicio_dia + comision_dia
+        neto_dia = max((base_servicio_dia + comision_dia) - descuento_dia, Decimal(0))
         estado_dia = estados_pago_map.get((estilista.id, dia), 'pendiente')
         
         pago_neto_periodo += neto_dia
