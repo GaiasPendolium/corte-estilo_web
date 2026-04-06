@@ -1070,6 +1070,8 @@ const aplicarEstadoLiquidacion = async (fila) => {
   const pago_daviplata = Number(pagosPorEstilista[estilistaId]?.daviplata || 0);
   const pago_otros = Number(pagosPorEstilista[estilistaId]?.otros || 0);
   const abono_puesto = Number(abonoPuestoPorEstilista[estilistaId] || 0);
+  const puesto_modo = modoCobroPuestoPorEstilista[estilistaId] || 'fijo';
+  const puesto_porcentaje = Number(porcentajePuestoPorEstilista[estilistaId] || 0);
   const medio_abono_puesto = medioAbonoPuestoPorEstilista[estilistaId] || 'efectivo';
   const aplica_comision_ventas = Boolean(aplicaComisionVentasPorEstilista[estilistaId] ?? true);
   const saldoConsumoEmpleado = Number(resumenPorEstilistaLiquidacion[estilistaId]?.saldo_pendiente || 0);
@@ -1103,6 +1105,8 @@ const aplicarEstadoLiquidacion = async (fila) => {
       abono_puesto,
       medio_abono_puesto,
       aplica_comision_ventas,
+      puesto_modo,
+      puesto_porcentaje,
       forzar_reemplazo_dia: esCorreccion,
       consumo_monto: cobroConsumoAplicado,
       deuda_ids: deudasConsumoSeleccionadas,
@@ -1161,6 +1165,8 @@ const aplicarLiquidacionSimple = async ({
   }
   const totalDescuentos = Math.max(Number(abonoPuestoAplicado || 0), 0) + Math.max(Number(cobroConsumoAplicado || 0), 0);
   const pagoFinalEmpleado = Math.max(Number(pendientePagoEmpleado || 0) - totalDescuentos, 0);
+  const puesto_modo = modoCobroPuestoPorEstilista[estilistaId] || 'fijo';
+  const puesto_porcentaje = Number(porcentajePuestoPorEstilista[estilistaId] || 0);
   const medio_abono_puesto = medioAbonoPuestoPorEstilista[estilistaId] || 'efectivo';
   const aplica_comision_ventas = Boolean(aplicaComisionVentasPorEstilista[estilistaId] ?? true);
   const medioCobroConsumo = medioCobroConsumoPorEstilista[estilistaId] || 'efectivo';
@@ -1177,6 +1183,8 @@ const aplicarLiquidacionSimple = async ({
       abono_puesto: Number(abonoPuestoAplicado || 0),
       medio_abono_puesto,
       aplica_comision_ventas,
+      puesto_modo,
+      puesto_porcentaje,
       forzar_reemplazo_dia: false,
       consumo_monto: cobroConsumoAplicado,
       deuda_ids: deudasConsumoSeleccionadas,
@@ -2661,9 +2669,20 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                     <div className="space-y-2 max-h-[280px] overflow-y-auto pr-1">
                       {historialDiarioLiquidacion.length === 0 && <p className="text-sm text-slate-500">Sin movimientos registrados.</p>}
                       {historialDiarioLiquidacion.map((h) => {
-                        const cobroPuestoDia = Math.max(Number(h.descuento_dia || 0), 0);
+                        const porcentajePuestoActual = Math.max(Number(porcentajePuestoPorEstilista[estId] || 0), 0);
+                        const cobroPuestoDiaPorcentaje = Math.max(
+                          Math.round((Math.max(Number(generadoEmpleadoSimple || 0), 0) * porcentajePuestoActual) / 100),
+                          0
+                        );
+                        const cobroPuestoDia = (modoCobroPuestoPorEstilista[estId] === 'porcentaje' && String(h.fecha || '') === fechaOperacionSimple)
+                          ? cobroPuestoDiaPorcentaje
+                          : Math.max(Number(h.descuento_dia || 0), 0);
                         const abonadoPuestoDia = Math.max(Number(h.abono_aplicado_dia || 0), 0);
                         const saldoPuestoCierre = Math.max(Number(h.saldo_puesto_cierre || 0), 0);
+                        const usaPuestoPorcentaje = modoCobroPuestoPorEstilista[estId] === 'porcentaje';
+                        const saldoPuestoMostrado = usaPuestoPorcentaje
+                          ? Math.max(cobroPuestoDia - abonadoPuestoDia, 0)
+                          : saldoPuestoCierre;
                         const estadoPuesto = saldoPuestoCierre > 0 ? 'Debe' : 'Liquidado';
                         const pagoEmpleadoDia = Math.max(Number(h.pago_empleado_dia || 0), 0);
                         const pagoConsumoDia = Math.max(Number(pagoConsumoPorFecha[String(h.fecha || '')] || 0), 0);
@@ -2680,7 +2699,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                             <p className="text-xs text-emerald-700 mt-1">Pago Empleado: {formatMoney(pagoEmpleadoDia)}</p>
                             <p className="text-xs text-slate-700 mt-1">Cobro puesto del día: {formatMoney(cobroPuestoDia)}</p>
                             <p className="text-xs text-sky-700">Cancelado de puesto: {formatMoney(abonadoPuestoDia)}</p>
-                            <p className="text-xs text-amber-700">Saldo acumulado pendiente: {formatMoney(saldoPuestoCierre)}</p>
+                            <p className="text-xs text-amber-700">Saldo acumulado pendiente: {formatMoney(saldoPuestoMostrado)}</p>
                             <p className="text-xs text-slate-600">Medio abono: {h.medio_abono_puesto || 'efectivo'}</p>
                             <p className="text-xs text-violet-700">Pago consumo: {formatMoney(pagoConsumoDia)}</p>
                             <p className="text-xs text-violet-700">Valor acumulado pendiente: {formatMoney(consumoPendiente)}</p>

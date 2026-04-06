@@ -3341,6 +3341,12 @@ def _liquidar_dia_v2_core(request):
     abono_puesto = _to_decimal(request.data.get('abono_puesto'))
     # El payload trae el abono de esta operación; luego se acumula con lo ya registrado en el día.
     abono_operacion_puesto = abono_puesto
+    puesto_modo = str(request.data.get('puesto_modo') or 'fijo').strip().lower()
+    if puesto_modo not in {'fijo', 'porcentaje'}:
+        puesto_modo = 'fijo'
+    puesto_porcentaje = _to_decimal(request.data.get('puesto_porcentaje'))
+    if puesto_porcentaje > Decimal(100):
+        puesto_porcentaje = Decimal(100)
     forzar_reemplazo_dia_raw = request.data.get('forzar_reemplazo_dia', False)
     if isinstance(forzar_reemplazo_dia_raw, str):
         forzar_reemplazo_dia = forzar_reemplazo_dia_raw.strip().lower() in {'1', 'true', 'si', 'sí', 'yes'}
@@ -3368,6 +3374,10 @@ def _liquidar_dia_v2_core(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
     ganancias = calc['ganancias_totales']
+    if puesto_modo == 'porcentaje':
+        descuento_override = max((ganancias * puesto_porcentaje) / Decimal(100), Decimal(0))
+        calc['descuento_puesto'] = descuento_override
+        calc['total_pagable'] = max(ganancias - descuento_override, Decimal(0))
     descuento = calc['descuento_puesto']
     pagable = calc['total_pagable']
     
@@ -3679,6 +3689,8 @@ def _liquidar_dia_v2_core(request):
             'abono_operacion': float(abono_operacion_puesto),
             'abono_previo_dia': float(abono_puesto_previo_dia),
             'medio_abono': medio_abono_puesto,
+            'modo_cobro': puesto_modo,
+            'porcentaje_cobro': float(puesto_porcentaje),
             'deuda_anterior': float(deuda_anterior_puesto),
             'deuda_total': float(deuda_total_puesto),
             'abono_aplicado': float(abono_aplicado_total_puesto),
