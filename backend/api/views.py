@@ -1567,7 +1567,7 @@ def _calcular_datos_bi(request):
             # Evita tumbar cierre por un registro inconsistente aislado.
             continue
 
-    ingresos_abonos_consumo = Decimal(abonos_consumo_qs.aggregate(total=Sum('monto'))['total'] or 0)
+    ingresos_abonos_consumo = sum((Decimal(ab.monto or 0) for ab in abonos_consumo_lista), Decimal(0))
     deuda_consumo_empleado_total = Decimal(
         DeudaConsumoEmpleado.objects.filter(saldo_pendiente__gt=0).aggregate(total=Sum('saldo_pendiente'))['total'] or 0
     )
@@ -2059,7 +2059,7 @@ def _calcular_datos_bi(request):
             medio_v = 'otros'
         ingresos_por_medio[medio_v] += Decimal(v.total or 0)
 
-    for ab in abonos_consumo_qs:
+    for ab in abonos_consumo_lista:
         medio_ab = (ab.medio_pago or 'otros').strip().lower()
         if medio_ab not in ingresos_por_medio:
             medio_ab = 'otros'
@@ -2250,7 +2250,7 @@ def _calcular_datos_bi(request):
         productos_diario_map[key]['valor_reserva'] += precio_compra_ad * cantidad_ad
 
     # Consumo de empleado: se reconoce por abonos (no por el valor del cargo).
-    for ab in abonos_consumo_qs:
+    for ab in abonos_consumo_lista:
         fecha_ab = _fecha_operativa_desde_dt(ab.fecha_hora)
         key = fecha_ab.strftime('%Y-%m-%d')
         if key not in productos_diario_map:
@@ -2428,7 +2428,7 @@ def _calcular_datos_bi(request):
             'pago_total_estilistas_neto_periodo': float(total_pago_neto_estilistas_periodo),
             'descuentos_espacio_estilistas': float(total_descuentos_espacio),
             'cantidad_ventas_productos': ventas_pagadas_qs.count(),
-            'cantidad_abonos_consumo_empleado': abonos_consumo_qs.count(),
+            'cantidad_abonos_consumo_empleado': len(abonos_consumo_lista),
             'cantidad_servicios': servicios_qs.count(),
             'productos_bajo_stock': productos_bajo_stock_qs.count(),
         },
