@@ -1,6 +1,6 @@
 ﻿import { useCallback, useEffect, useMemo, useState } from 'react';
 import { format } from 'date-fns';
-import { reportesService } from '../services/api';
+import { reportesService, productosService } from '../services/api';
 import { toast } from 'react-toastify';
 import useAuthStore from '../store/authStore';
 
@@ -8,11 +8,11 @@ const today = new Date();
 const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
 
 const MODULOS = [
-  { key: 'cierre', label: 'Cierre de Caja' },
-  { key: 'ajuste', label: 'Ajuste Diario' },
-  { key: 'liquidacion', label: 'Liquidacion Empleado' },
-  { key: 'cartera', label: 'Cartera Empleado' },
-  { key: 'agotarse', label: 'Productos por Agotarse' },
+  { key: 'cierre', label: '1. Cierre de Caja (Resumen Global)' },
+  { key: 'liquidacion', label: '2. Liquidación Empleado (Por Día)' },
+  { key: 'cartera', label: '3. Cartera Empleado' },
+  { key: 'ajuste', label: '4. Ajuste Diario' },
+  { key: 'agotarse', label: '5. Productos por Agotarse' },
 ];
 const REPORTES_UI_VERSION = '2026-04-05 v3';
 
@@ -177,6 +177,9 @@ const Reportes = () => {
   const [savingAjusteDiarioByKey, setSavingAjusteDiarioByKey] = useState({});
   const [filtroAjusteTexto, setFiltroAjusteTexto] = useState('');
   const [soloPendientesAjuste, setSoloPendientesAjuste] = useState(false);
+  const [vistaSimpleLiquidacion, setVistaSimpleLiquidacion] = useState(true);
+  const [reabastecerByProductoId, setReabastecerByProductoId] = useState({});
+  const [savingStockByProductoId, setSavingStockByProductoId] = useState({});
 
   const calcularPendientePagoEmpleado = useCallback((fila) => {
     const pendienteConsolidado = Number(fila?.pendiente_pago_empleado ?? fila?.pago_neto_pendiente ?? 0);
@@ -261,6 +264,39 @@ const Reportes = () => {
       toast.error(String(msg));
     } finally {
       setSavingFechaAbonoConsumoById((prev) => ({ ...prev, [abonoId]: false }));
+    }
+  };
+
+  const reabastecerProducto = async (item) => {
+    const productoId = Number(item?.id || 0);
+    const cantidad = Number(reabastecerByProductoId[productoId] || 0);
+    const stockActual = Number(item?.stock || 0);
+
+    if (!productoId) {
+      toast.error('Producto inválido.');
+      return;
+    }
+    if (!Number.isFinite(cantidad) || cantidad <= 0) {
+      toast.warning('Ingresa una cantidad de reabastecimiento mayor a 0.');
+      return;
+    }
+
+    const nuevoStock = stockActual + cantidad;
+    setSavingStockByProductoId((prev) => ({ ...prev, [productoId]: true }));
+    try {
+      await productosService.ajustarStock(
+        productoId,
+        nuevoStock,
+        `Reabastecimiento desde Reportes (+${cantidad})`
+      );
+      toast.success('Stock actualizado correctamente.');
+      setReabastecerByProductoId((prev) => ({ ...prev, [productoId]: '' }));
+      await cargarTodo();
+    } catch (error) {
+      const msg = error?.response?.data?.error || 'No se pudo actualizar el stock.';
+      toast.error(String(msg));
+    } finally {
+      setSavingStockByProductoId((prev) => ({ ...prev, [productoId]: false }));
     }
   };
 
@@ -1484,7 +1520,23 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
     <div className="space-y-6">
       <section className="rounded-3xl bg-gradient-to-br from-slate-900 via-slate-800 to-emerald-900 p-6 text-white shadow-2xl">
         <h2 className="text-2xl font-black tracking-tight">Liquidación Inteligente</h2>
-        <p className="mt-2 text-sm text-slate-200">Selecciona un empleado y liquida todo en una sola vista: pendiente de pago, deuda de puesto, consumos y medios.</p>
+        <p className="mt-2 text-sm text-slate-200">Vista por día para liquidar lo que gana el empleado con menor complejidad operativa.</p>
+        <div className="mt-3 inline-flex rounded-xl border border-white/30 bg-white/10 p-1">
+          <button
+            type="button"
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${vistaSimpleLiquidacion ? 'bg-white text-slate-900' : 'text-white'}`}
+            onClick={() => setVistaSimpleLiquidacion(true)}
+          >
+            Vista simple
+          </button>
+          <button
+            type="button"
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${!vistaSimpleLiquidacion ? 'bg-white text-slate-900' : 'text-white'}`}
+            onClick={() => setVistaSimpleLiquidacion(false)}
+          >
+            Vista avanzada
+          </button>
+        </div>
       </section>
 
       <div className="grid grid-cols-1 xl:grid-cols-[320px_1fr] gap-6">
@@ -1976,6 +2028,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                   </div>
                 </div>
 
+                {!vistaSimpleLiquidacion && (
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
                   <div className="card border border-amber-200 bg-amber-50">
                     <div className="mb-2 flex items-center justify-between gap-2">
@@ -2077,7 +2130,9 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                     </div>
                   </div>
                 </div>
+                )}
 
+                {!vistaSimpleLiquidacion && (
                 <div className="card border border-violet-200 bg-violet-50">
                   <h4 className="card-header mb-2">Historial de abonos de consumo del empleado</h4>
                   <div className="space-y-2 max-h-[280px] overflow-y-auto pr-1">
@@ -2095,6 +2150,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                     ))}
                   </div>
                 </div>
+                )}
 
               </>
             );
@@ -2444,7 +2500,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
   const renderModuloAgotarse = () => (
     <div className="card">
       <h2 className="card-header">Productos por Agotarse</h2>
-      <p className="text-sm text-slate-600">Listado de productos con stock igual o menor al minimo configurado.</p>
+      <p className="text-sm text-slate-600">Listado de productos con stock igual o menor al minimo configurado. Puedes reabastecer desde aqui mismo.</p>
       <div className="mt-4 overflow-x-auto">
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="table-header">
@@ -2454,12 +2510,13 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
               <th className="px-4 py-3 text-left">Stock</th>
               <th className="px-4 py-3 text-left">Stock minimo</th>
               <th className="px-4 py-3 text-left">Precio venta</th>
+              <th className="px-4 py-3 text-left">Reabastecer</th>
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
             {(biData?.productos_bajo_stock || []).length === 0 && (
               <tr>
-                <td className="table-cell text-slate-500" colSpan={5}>No hay productos en riesgo para el rango seleccionado.</td>
+                <td className="table-cell text-slate-500" colSpan={6}>No hay productos en riesgo para el rango seleccionado.</td>
               </tr>
             )}
             {(biData?.productos_bajo_stock || []).map((item) => (
@@ -2469,6 +2526,28 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                 <td className="table-cell">{item.stock}</td>
                 <td className="table-cell">{item.stock_minimo}</td>
                 <td className="table-cell">{formatMoney(item.precio_venta)}</td>
+                <td className="table-cell">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min="1"
+                      className="input-field w-24"
+                      value={reabastecerByProductoId[item.id] ?? ''}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setReabastecerByProductoId((prev) => ({ ...prev, [item.id]: val }));
+                      }}
+                      placeholder="Cant."
+                    />
+                    <button
+                      className="btn-primary whitespace-nowrap"
+                      onClick={() => reabastecerProducto(item)}
+                      disabled={!!savingStockByProductoId[item.id]}
+                    >
+                      {savingStockByProductoId[item.id] ? 'Guardando...' : 'Sumar stock'}
+                    </button>
+                  </div>
+                </td>
               </tr>
             ))}
           </tbody>
