@@ -2670,6 +2670,13 @@ def editar_abono_consumo_empleado(request, abono_id):
         _recalcular_estado_deuda(deuda)
         deuda.save(update_fields=['total_abonado', 'saldo_pendiente', 'estado'])
 
+    fecha_abono_resp = None
+    if abono.fecha_hora:
+        try:
+            fecha_abono_resp = timezone.localtime(abono.fecha_hora).strftime('%Y-%m-%d %H:%M:%S')
+        except Exception:
+            fecha_abono_resp = abono.fecha_hora.strftime('%Y-%m-%d %H:%M:%S')
+
     return Response(
         {
             'ok': True,
@@ -2680,7 +2687,7 @@ def editar_abono_consumo_empleado(request, abono_id):
                 'monto': float(abono.monto or 0),
                 'medio_pago': abono.medio_pago,
                 'notas': abono.notas,
-                'fecha_hora': timezone.localtime(abono.fecha_hora).strftime('%Y-%m-%d %H:%M:%S') if abono.fecha_hora else None,
+                'fecha_hora': fecha_abono_resp,
             },
             'deuda': {
                 'deuda_id': deuda.id,
