@@ -1052,6 +1052,12 @@ const aplicarEstadoLiquidacion = async (fila) => {
               return acc;
             }, {});
             const historialAbonosConsumo = (carteraDataLiquidacionGlobal?.abonos_historial || []).filter((h) => Number(h.estilista_id) === estId);
+            const pagoConsumoPorFecha = historialAbonosConsumo.reduce((acc, a) => {
+              const fecha = String(a.fecha_hora || '').slice(0, 10);
+              if (!fecha) return acc;
+              acc[fecha] = Number(acc[fecha] || 0) + Number(a.monto || 0);
+              return acc;
+            }, {});
             const deudasEmpleado = (carteraDataLiquidacionGlobal?.deudas || []).filter((d) => Number(d.estilista_id) === estId && Number(d.saldo_pendiente || 0) > 0);
 
             return (
@@ -1281,9 +1287,10 @@ const aplicarEstadoLiquidacion = async (fila) => {
                       {historialDiarioLiquidacion.map((h) => {
                         const cobroPuestoDia = Math.max(Number(h.descuento_dia || 0), 0);
                         const abonadoPuestoDia = Math.max(Number(h.abono_aplicado_dia || 0), 0);
-                        const pendientePuestoDia = Math.max(cobroPuestoDia - abonadoPuestoDia, 0);
                         const saldoPuestoCierre = Math.max(Number(h.saldo_puesto_cierre || 0), 0);
                         const estadoPuesto = saldoPuestoCierre > 0 ? 'Debe' : 'Liquidado';
+                        const pagoEmpleadoDia = Math.max(Number(h.pago_empleado_dia || 0), 0);
+                        const pagoConsumoDia = Math.max(Number(pagoConsumoPorFecha[String(h.fecha || '')] || 0), 0);
 
                         return (
                           <div key={`hist-dia-${h.fecha}`} className="rounded-xl border border-sky-200 bg-white p-3">
@@ -1294,11 +1301,13 @@ const aplicarEstadoLiquidacion = async (fila) => {
                               </span>
                             </div>
                             <p className="text-xs text-slate-500">{h.fecha_cambio || '-'}</p>
+                            <p className="text-xs text-emerald-700 mt-1">Pago Empleado: {formatMoney(pagoEmpleadoDia)}</p>
                             <p className="text-xs text-slate-700 mt-1">Cobro puesto del día: {formatMoney(cobroPuestoDia)}</p>
                             <p className="text-xs text-sky-700">Cancelado de puesto: {formatMoney(abonadoPuestoDia)}</p>
-                            <p className="text-xs text-rose-700">Quedó debiendo del día: {formatMoney(pendientePuestoDia)}</p>
                             <p className="text-xs text-amber-700">Saldo acumulado pendiente: {formatMoney(saldoPuestoCierre)}</p>
                             <p className="text-xs text-slate-600">Medio abono: {h.medio_abono_puesto || 'efectivo'}</p>
+                            <p className="text-xs text-violet-700">Pago consumo: {formatMoney(pagoConsumoDia)}</p>
+                            <p className="text-xs text-violet-700">Valor acumulado pendiente: {formatMoney(consumoPendiente)}</p>
                             <p className="text-xs text-slate-500">Usuario: {h.usuario_nombre || 'Sistema'}</p>
                             {puedeCorregirLiquidacion && (
                               <div className="mt-2 flex flex-wrap gap-2">
