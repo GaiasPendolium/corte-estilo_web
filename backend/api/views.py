@@ -4164,12 +4164,17 @@ def reporte_cierre_caja(request):
         servicios_qs = servicios_qs.filter(medio_pago=medio_pago)
         adicionales_qs = adicionales_qs.filter(servicio_realizado__medio_pago=medio_pago)
 
-    abonos_consumo_qs = AbonoDeudaEmpleado.objects.filter(
-        fecha_hora__date__gte=fecha_inicio_dt,
-        fecha_hora__date__lte=fecha_fin_dt,
-    )
+    abonos_consumo_qs = AbonoDeudaEmpleado.objects.select_related('deuda', 'deuda__estilista')
     if medio_pago and medio_pago != 'todos':
         abonos_consumo_qs = abonos_consumo_qs.filter(medio_pago=medio_pago)
+
+    abonos_consumo_lista = []
+    for ab in abonos_consumo_qs:
+        fecha_operativa_ab = _fecha_operativa_desde_dt(ab.fecha_hora)
+        if not fecha_operativa_ab:
+            continue
+        if fecha_inicio_dt <= fecha_operativa_ab <= fecha_fin_dt:
+            abonos_consumo_lista.append(ab)
 
     abonos_por_deuda = {}
     for ab in abonos_consumo_lista:
