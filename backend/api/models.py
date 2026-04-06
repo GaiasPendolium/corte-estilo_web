@@ -731,6 +731,7 @@ class FactLiquidacionEstilistaDia(models.Model):
     ganancias_servicios = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     comision_producto_caja = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     comision_producto_servicios = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    aplica_comision_ventas = models.BooleanField(default=True)
     ganancias_totales = models.DecimalField(max_digits=14, decimal_places=2, default=0)
 
     descuento_puesto_dia = models.DecimalField(max_digits=14, decimal_places=2, default=0)

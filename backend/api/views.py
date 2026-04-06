@@ -346,7 +346,7 @@ def _listar_historial_legacy(fecha_inicio, fecha_fin, estilista_id=None, limit=1
     return registros
 
 
-def calcular_liquidacion_dia_estilista(estilista, fecha_dia):
+def calcular_liquidacion_dia_estilista(estilista, fecha_dia, aplica_comision_ventas=True):
     """
     LIQUIDADOR SIMPLIFICADO Y CLARO:
     
@@ -412,6 +412,8 @@ def calcular_liquidacion_dia_estilista(estilista, fecha_dia):
         comisiones_ventas_servicios += (monto_venta * pct_comision) / Decimal(100)
 
     comisiones_ventas = comisiones_ventas_caja + comisiones_ventas_servicios
+    if not aplica_comision_ventas:
+        comisiones_ventas = Decimal(0)
     
     # [1] GANANCIAS TOTALES = BASE + TODAS LAS COMISIONES
     ganancias_totales = servicios_base + comisiones_adicionales + comisiones_ventas
@@ -433,6 +435,7 @@ def calcular_liquidacion_dia_estilista(estilista, fecha_dia):
         'comisiones_ventas_caja': comisiones_ventas_caja,
         'comisiones_ventas_servicios': comisiones_ventas_servicios,
         'comisiones_ventas': comisiones_ventas,
+        'aplica_comision_ventas': bool(aplica_comision_ventas),
         'descuento_puesto': descuento_puesto,
         'total_pagable': total_pagable,
     }
@@ -453,6 +456,21 @@ def _calcular_neto_dia_estilista(estilista, fecha_dia):
 def _usar_fact_liquidacion_en_reportes():
     raw = (os.environ.get('USE_FACT_LIQUIDACION_REPORTES') or '').strip().lower()
     return raw in {'1', 'true', 'si', 'sí', 'yes'}
+
+
+def _to_bool_flag(value, default=True):
+    if value is None:
+        return bool(default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    raw = str(value).strip().lower()
+    if raw in {'1', 'true', 'si', 'sí', 'yes'}:
+        return True
+    if raw in {'0', 'false', 'no'}:
+        return False
+    return bool(default)
 
 
 def _cobro_consumo_dia_estilista(estilista_id, fecha_dia):
@@ -479,6 +497,7 @@ def _upsert_fact_liquidacion_dia(
     pago_otros,
     abono_puesto,
     medio_abono_puesto,
+    aplica_comision_ventas,
     deuda_anterior,
     deuda_cierre,
     pendiente_pago,
@@ -512,6 +531,7 @@ def _upsert_fact_liquidacion_dia(
             fact.ganancias_servicios = Decimal(calc.get('servicios_base') or 0) + Decimal(calc.get('comisiones_adicionales') or 0)
             fact.comision_producto_caja = comision_caja
             fact.comision_producto_servicios = comision_servicios
+            fact.aplica_comision_ventas = bool(aplica_comision_ventas)
             fact.ganancias_totales = Decimal(calc.get('ganancias_totales') or 0)
             fact.descuento_puesto_dia = Decimal(calc.get('descuento_puesto') or 0)
             fact.deuda_puesto_anterior = Decimal(deuda_anterior or 0)
@@ -543,6 +563,7 @@ def _upsert_fact_liquidacion_dia(
                 'comisiones_ventas_caja': float(comision_caja),
                 'comisiones_ventas_servicios': float(comision_servicios),
                 'comisiones_ventas': float(comisiones_totales),
+                'aplica_comision_ventas': bool(aplica_comision_ventas),
             }
             fact.save()
     except Exception:
@@ -1829,6 +1850,8 @@ def _calcular_datos_bi(request):
             pago_empleado_dia = Decimal(0)
             abono_puesto_dia = Decimal(0)
             if fact_dia:
+                descuento_dia = Decimal(fact_dia.descuento_puesto_dia or descuento_dia)
+                ganancias_dia = Decimal(fact_dia.ganancias_totales or ganancias_dia)
                 pago_empleado_dia = Decimal(fact_dia.pago_total_empleado or 0)
                 abono_puesto_dia = Decimal(fact_dia.abono_puesto_dia or 0)
                 estado_dia = fact_dia.estado_liquidacion
@@ -2937,10 +2960,26 @@ def estado_pago_estilista_dia(request):
                     'pago_otros': float(x.pago_otros or 0),
                     'abono_puesto': float(x.abono_puesto or 0),
                     'medio_abono_puesto': getattr(x, 'medio_abono_puesto', 'efectivo') or 'efectivo',
+                    'aplica_comision_ventas': True,
                     'notas': x.notas,
                 }
                 for x in qs.order_by('fecha', 'estilista_id')
             ]
+
+            if _usar_fact_liquidacion_en_reportes() and items:
+                fact_map = {
+                    (int(f.estilista_id), f.fecha): f
+                    for f in FactLiquidacionEstilistaDia.objects.filter(
+                        vigente=True,
+                        fecha__gte=fecha_inicio,
+                        fecha__lte=fecha_fin,
+                    )
+                }
+                for item in items:
+                    key = (int(item['estilista_id']), datetime.strptime(item['fecha'], '%Y-%m-%d').date())
+                    fact = fact_map.get(key)
+                    if fact:
+                        item['aplica_comision_ventas'] = bool(getattr(fact, 'aplica_comision_ventas', True))
 
             return Response({'fecha_inicio': fecha_inicio.strftime('%Y-%m-%d'), 'fecha_fin': fecha_fin.strftime('%Y-%m-%d'), 'items': items})
 
@@ -2961,10 +3000,21 @@ def estado_pago_estilista_dia(request):
                     'pago_otros': float(x.pago_otros or 0),
                     'abono_puesto': float(x.abono_puesto or 0),
                     'medio_abono_puesto': getattr(x, 'medio_abono_puesto', 'efectivo') or 'efectivo',
+                    'aplica_comision_ventas': True,
                     'notas': x.notas,
                 }
                 for x in EstadoPagoEstilistaDia.objects.filter(fecha=fecha)
             ]
+
+            if _usar_fact_liquidacion_en_reportes() and items:
+                fact_map = {
+                    int(f.estilista_id): f
+                    for f in FactLiquidacionEstilistaDia.objects.filter(vigente=True, fecha=fecha)
+                }
+                for item in items:
+                    fact = fact_map.get(int(item['estilista_id']))
+                    if fact:
+                        item['aplica_comision_ventas'] = bool(getattr(fact, 'aplica_comision_ventas', True))
         except (OperationalError, ProgrammingError):
             # Fallback: reconstruir estado del día usando el último historial por estilista.
             historial_qs = EstadoPagoEstilistaHistorial.objects.select_related('estilista').filter(
@@ -2986,6 +3036,7 @@ def estado_pago_estilista_dia(request):
                         'pago_otros': 0,
                         'abono_puesto': float(getattr(h, 'abono_puesto', 0) or 0),
                         'medio_abono_puesto': getattr(h, 'medio_abono_puesto', 'efectivo') or 'efectivo',
+                        'aplica_comision_ventas': True,
                         'notas': h.notas,
                     }
                 )
@@ -3275,6 +3326,7 @@ def liquidar_dia_v2(request):
     else:
         forzar_reemplazo_dia = bool(forzar_reemplazo_dia_raw)
     medio_abono_puesto = (request.data.get('medio_abono_puesto') or 'efectivo').strip().lower()
+    aplica_comision_ventas = _to_bool_flag(request.data.get('aplica_comision_ventas'), default=True)
     if medio_abono_puesto not in {'efectivo', 'nequi', 'daviplata', 'otros'}:
         medio_abono_puesto = 'efectivo'
     notas = request.data.get('notas', '').strip()[:255]
@@ -3283,7 +3335,7 @@ def liquidar_dia_v2(request):
     
     # ============ [1] CALCULAR LIQUIDACIÓN ============
     try:
-        calc = calcular_liquidacion_dia_estilista(estilista, fecha)
+        calc = calcular_liquidacion_dia_estilista(estilista, fecha, aplica_comision_ventas=aplica_comision_ventas)
     except (OperationalError, ProgrammingError) as e:
         return Response(
             {'error': f'No se pudo calcular la liquidación por un problema de base de datos: {str(e)}'},
@@ -3570,6 +3622,7 @@ def liquidar_dia_v2(request):
         pago_otros=pago_otros,
         abono_puesto=abono_puesto,
         medio_abono_puesto=medio_abono_puesto,
+        aplica_comision_ventas=aplica_comision_ventas,
         deuda_anterior=deuda_anterior_puesto,
         deuda_cierre=saldo_puesto,
         pendiente_pago=pendiente_liquidacion,
@@ -3590,6 +3643,7 @@ def liquidar_dia_v2(request):
             'descuento_puesto': float(descuento),
             'total_pagable': float(pagable),
             'pendiente_liquidacion': float(pendiente_liquidacion),
+            'aplica_comision_ventas': bool(aplica_comision_ventas),
         },
         'pagos': {
             'efectivo': float(pago_efectivo),
@@ -4535,6 +4589,7 @@ def reporte_ajuste_diario_unificado(request):
             pago_otros = Decimal((fact.pago_otros if fact else (ep.pago_otros if ep else 0)) or 0)
             abono_puesto = Decimal((fact.abono_puesto_dia if fact else (ep.abono_puesto if ep else 0)) or 0)
             medio_abono = (getattr(fact, 'medio_abono_puesto', None) or (getattr(ep, 'medio_abono_puesto', None) if ep else None) or 'efectivo')
+            aplica_comision_ventas = bool(getattr(fact, 'aplica_comision_ventas', True)) if fact else True
             pagado_total = pago_efectivo + pago_nequi + pago_daviplata + pago_otros
             generado = Decimal((
                 max(Decimal(fact.ganancias_totales or 0) - Decimal(fact.descuento_puesto_dia or 0), Decimal(0))
@@ -4561,6 +4616,7 @@ def reporte_ajuste_diario_unificado(request):
                     'pendiente_pago_empleado': float(max(generado - pagado_total, Decimal(0))),
                     'abono_puesto': float(abono_puesto),
                     'medio_abono_puesto': medio_abono,
+                    'aplica_comision_ventas': aplica_comision_ventas,
                     'cobro_consumo_dia': float(cobro_consumo),
                     'deuda_puesto_pendiente': float(deuda_puesto),
                 }

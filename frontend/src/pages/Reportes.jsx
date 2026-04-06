@@ -154,6 +154,7 @@ const Reportes = () => {
   const [abonoPuestoPorEstilista, setAbonoPuestoPorEstilista] = useState({});
   const [abonoPuestoAcumuladoPorEstilista, setAbonoPuestoAcumuladoPorEstilista] = useState({});
   const [medioAbonoPuestoPorEstilista, setMedioAbonoPuestoPorEstilista] = useState({});
+  const [aplicaComisionVentasPorEstilista, setAplicaComisionVentasPorEstilista] = useState({});
   const [cobroConsumoPorEstilista, setCobroConsumoPorEstilista] = useState({});
   const [medioCobroConsumoPorEstilista, setMedioCobroConsumoPorEstilista] = useState({});
   const [deudaConsumoSeleccionadasPorEstilista, setDeudaConsumoSeleccionadasPorEstilista] = useState({});
@@ -341,6 +342,7 @@ const Reportes = () => {
         || toMontoNoNegativo(edit.pago_otros) !== toMontoNoNegativo(fila.pago_otros)
         || toMontoNoNegativo(edit.abono_puesto) !== toMontoNoNegativo(fila.abono_puesto)
         || String(edit.medio_abono_puesto || 'efectivo') !== String(fila.medio_abono_puesto || 'efectivo')
+        || Boolean(edit.aplica_comision_ventas ?? true) !== Boolean(fila.aplica_comision_ventas ?? true)
         || toMontoNoNegativo(edit.cobro_consumo_objetivo) !== toMontoNoNegativo(fila.cobro_consumo_dia)
       );
       if (dif) filasModificadas += 1;
@@ -359,9 +361,12 @@ const Reportes = () => {
         pago_otros: '',
         abono_puesto: '',
         medio_abono_puesto: 'efectivo',
+        aplica_comision_ventas: true,
       };
-      const nextValue = campo === 'medio_abono_puesto'
+      const nextValue = (campo === 'medio_abono_puesto')
         ? valor
+        : campo === 'aplica_comision_ventas'
+          ? Boolean(valor)
         : String(valor || '').replace(/[^\d.]/g, '');
 
       return {
@@ -446,6 +451,7 @@ const Reportes = () => {
           pago_otros: String(Number(r.pago_otros || 0) || ''),
           abono_puesto: String(Number(r.abono_puesto || 0) || ''),
           medio_abono_puesto: r.medio_abono_puesto || 'efectivo',
+          aplica_comision_ventas: Boolean(r.aplica_comision_ventas ?? true),
           cobro_consumo_objetivo: String(Number(r.cobro_consumo_dia || 0) || ''),
           medio_cobro_consumo: 'efectivo',
         };
@@ -513,6 +519,7 @@ const Reportes = () => {
         setEstadoDiaPorEstilista({});
         setAbonoPuestoPorEstilista({});
         setMedioAbonoPuestoPorEstilista({});
+        setAplicaComisionVentasPorEstilista({});
         setCobroConsumoPorEstilista({});
         setMedioCobroConsumoPorEstilista({});
       }
@@ -581,6 +588,9 @@ const Reportes = () => {
         setMedioAbonoPuestoPorEstilista(
           Object.fromEntries((estadoDia?.items || []).map((x) => [x.estilista_id, x.medio_abono_puesto || 'efectivo']))
         );
+        setAplicaComisionVentasPorEstilista(
+          Object.fromEntries((estadoDia?.items || []).map((x) => [x.estilista_id, Boolean(x.aplica_comision_ventas ?? true)]))
+        );
       } catch (err) {
         if (cancelado) return;
         setPagosPorEstilista({});
@@ -588,6 +598,7 @@ const Reportes = () => {
         setAbonoPuestoPorEstilista({});
         setAbonoPuestoAcumuladoPorEstilista({});
         setMedioAbonoPuestoPorEstilista({});
+        setAplicaComisionVentasPorEstilista({});
       }
     };
 
@@ -658,6 +669,7 @@ const Reportes = () => {
             pago_otros: String(Number(x.pago_otros || 0) || ''),
             abono_puesto: String(Number(x.abono_puesto || 0) || ''),
             medio_abono_puesto: x.medio_abono_puesto || 'efectivo',
+            aplica_comision_ventas: Boolean(x.aplica_comision_ventas ?? true),
           };
         });
 
@@ -835,12 +847,15 @@ const Reportes = () => {
         pago_otros: '',
         abono_puesto: '',
         medio_abono_puesto: 'efectivo',
+        aplica_comision_ventas: true,
         cobro_consumo_objetivo: '',
         medio_cobro_consumo: 'efectivo',
       };
 
       const nextValue = ['medio_abono_puesto', 'medio_cobro_consumo'].includes(campo)
         ? valor
+        : campo === 'aplica_comision_ventas'
+          ? Boolean(valor)
         : String(valor || '').replace(/[^\d.]/g, '');
 
       return {
@@ -863,6 +878,7 @@ const Reportes = () => {
     const pago_otros = toMontoNoNegativo(edit.pago_otros);
     const abono_puesto = toMontoNoNegativo(edit.abono_puesto);
     const medio_abono_puesto = edit.medio_abono_puesto || 'efectivo';
+    const aplica_comision_ventas = Boolean(edit.aplica_comision_ventas ?? true);
     const consumo_actual = Math.max(Number(fila.cobro_consumo_dia || 0), 0);
     const consumo_obj = toMontoNoNegativo(edit.cobro_consumo_objetivo);
     const medio_cobro_consumo = edit.medio_cobro_consumo || 'efectivo';
@@ -890,6 +906,7 @@ const Reportes = () => {
         pago_otros,
         abono_puesto,
         medio_abono_puesto,
+        aplica_comision_ventas,
         forzar_reemplazo_dia: true,
         consumo_monto: extra_consumo,
         deuda_ids: [],
@@ -1009,6 +1026,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
   const pago_otros = Number(pagosPorEstilista[estilistaId]?.otros || 0);
   const abono_puesto = Number(abonoPuestoPorEstilista[estilistaId] || 0);
   const medio_abono_puesto = medioAbonoPuestoPorEstilista[estilistaId] || 'efectivo';
+  const aplica_comision_ventas = Boolean(aplicaComisionVentasPorEstilista[estilistaId] ?? true);
   const saldoConsumoEmpleado = Number(resumenPorEstilistaLiquidacion[estilistaId]?.saldo_pendiente || 0);
   const cobroConsumoDigitado = Number(cobroConsumoPorEstilista[estilistaId] || 0);
   const cobroConsumoAplicado = Math.min(Math.max(cobroConsumoDigitado, 0), Math.max(saldoConsumoEmpleado, 0));
@@ -1039,6 +1057,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
       pago_otros,
       abono_puesto,
       medio_abono_puesto,
+      aplica_comision_ventas,
       forzar_reemplazo_dia: esCorreccion,
       consumo_monto: cobroConsumoAplicado,
       deuda_ids: deudasConsumoSeleccionadas,
@@ -1099,6 +1118,7 @@ const aplicarLiquidacionSimple = async ({
   // Solo se descuenta aquí el consumo que se cobra en esta liquidación.
   const pagoFinalEmpleado = Math.max(Number(pendientePagoEmpleado || 0) - Number(cobroConsumoAplicado || 0), 0);
   const medio_abono_puesto = medioAbonoPuestoPorEstilista[estilistaId] || 'efectivo';
+  const aplica_comision_ventas = Boolean(aplicaComisionVentasPorEstilista[estilistaId] ?? true);
   const medioCobroConsumo = medioCobroConsumoPorEstilista[estilistaId] || 'efectivo';
 
   setSavingEstadoByEstilista((prev) => ({ ...prev, [estilistaId]: true }));
@@ -1112,6 +1132,7 @@ const aplicarLiquidacionSimple = async ({
       pago_otros: 0,
       abono_puesto: Number(abonoPuestoAplicado || 0),
       medio_abono_puesto,
+      aplica_comision_ventas,
       forzar_reemplazo_dia: false,
       consumo_monto: cobroConsumoAplicado,
       deuda_ids: deudasConsumoSeleccionadas,
@@ -1141,6 +1162,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
   const pago_otros = toMontoNoNegativo(fila.pago_otros);
   const abono_puesto = toMontoNoNegativo(fila.abono_puesto);
   const medio_abono_puesto = fila.medio_abono_puesto || 'efectivo';
+  const aplica_comision_ventas = Boolean(fila.aplica_comision_ventas ?? true);
 
   const totalPagoEmpleado = pago_efectivo + pago_nequi + pago_daviplata + pago_otros;
   const topePagoDia = Math.max(Number(netoDia || 0), 0);
@@ -1160,6 +1182,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
       pago_otros,
       abono_puesto,
       medio_abono_puesto,
+      aplica_comision_ventas,
       forzar_reemplazo_dia: true,
       notas: `Cuadre diario ${fecha}`,
     });
@@ -1186,6 +1209,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
     const pagoEmpleadoDia = Math.max(Number(registroDia.pago_empleado_dia || 0), 0);
     const abonoPuestoDia = Math.max(Number(registroDia.abono_puesto_dia || 0), 0);
     const medioAbono = registroDia.medio_abono_puesto || 'efectivo';
+    const aplicaComisionVentas = Boolean(registroDia.aplica_comision_ventas ?? true);
 
     setPagosPorEstilista((prev) => ({
       ...prev,
@@ -1205,6 +1229,11 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
     setMedioAbonoPuestoPorEstilista((prev) => ({
       ...prev,
       [estilistaId]: medioAbono,
+    }));
+
+    setAplicaComisionVentasPorEstilista((prev) => ({
+      ...prev,
+      [estilistaId]: aplicaComisionVentas,
     }));
 
     setModoCorreccionPorEstilista((prev) => ({
@@ -1933,6 +1962,15 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                               <option key={`medio-puesto-${m.value}`} value={m.value}>{m.label}</option>
                             ))}
                           </select>
+                          <label className="block text-xs text-slate-600 mt-2 mb-1">Comisión de ventas al empleado</label>
+                          <select
+                            className="input-field"
+                            value={Boolean(aplicaComisionVentasPorEstilista[estId] ?? true) ? 'si' : 'no'}
+                            onChange={(e) => setAplicaComisionVentasPorEstilista((prev) => ({ ...prev, [estId]: e.target.value === 'si' }))}
+                          >
+                            <option value="si">Sí, aplica</option>
+                            <option value="no">No aplica (ingreso establecimiento)</option>
+                          </select>
                           <p className="text-xs text-amber-700 mt-2">Aplicado: {formatMoney(descuentoPuestoAplicado)}</p>
                           <p className="text-[11px] text-slate-600 mt-1">Se registra como abono de puesto y no se vuelve a descontar del pendiente.</p>
                         </div>
@@ -2109,13 +2147,14 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                           <th className="px-3 py-2 text-left">Otros</th>
                           <th className="px-3 py-2 text-left">Abono puesto</th>
                           <th className="px-3 py-2 text-left">Medio abono</th>
+                          <th className="px-3 py-2 text-left">Comisión ventas</th>
                           <th className="px-3 py-2 text-left">Acción</th>
                         </tr>
                       </thead>
                       <tbody className="bg-white divide-y divide-indigo-100">
                         {diasCuadre.length === 0 && (
                           <tr>
-                            <td className="table-cell text-slate-500" colSpan={9}>No hay días en el rango para cuadrar.</td>
+                            <td className="table-cell text-slate-500" colSpan={10}>No hay días en el rango para cuadrar.</td>
                           </tr>
                         )}
                         {diasCuadre.map((d) => {
@@ -2130,6 +2169,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                           const pagoOtros = filaCuadre.pago_otros ?? '';
                           const abonoPuesto = filaCuadre.abono_puesto ?? (histDia.abono_puesto_dia ? String(Number(histDia.abono_puesto_dia || 0)) : '');
                           const medioAbono = filaCuadre.medio_abono_puesto || histDia.medio_abono_puesto || 'efectivo';
+                          const aplicaComisionVentasDia = Boolean(filaCuadre.aplica_comision_ventas ?? histDia.aplica_comision_ventas ?? true);
                           const totalPagoFila = toMontoNoNegativo(pagoEfectivo) + toMontoNoNegativo(pagoNequi) + toMontoNoNegativo(pagoDaviplata) + toMontoNoNegativo(pagoOtros);
                           const netoDia = Math.max(Number(d.neto_dia || 0), 0);
                           const excedido = totalPagoFila > netoDia;
@@ -2200,6 +2240,16 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                                   {MEDIOS_PAGO_OPERACION.map((m) => (
                                     <option key={`${fechaDia}-${m.value}`} value={m.value}>{m.label}</option>
                                   ))}
+                                </select>
+                              </td>
+                              <td className="table-cell">
+                                <select
+                                  className="input-field !py-2 !w-44"
+                                  value={aplicaComisionVentasDia ? 'si' : 'no'}
+                                  onChange={(e) => actualizarCuadreDiaCampo(estId, fechaDia, 'aplica_comision_ventas', e.target.value === 'si')}
+                                >
+                                  <option value="si">Sí aplica</option>
+                                  <option value="no">No aplica</option>
                                 </select>
                               </td>
                               <td className="table-cell">
@@ -2347,6 +2397,18 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                           {MEDIOS_PAGO_OPERACION.map((m) => (
                             <option key={m.value} value={m.value}>{m.label}</option>
                           ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs text-slate-600 mb-1">Comisión de ventas al empleado</label>
+                        <select
+                          className="input-field"
+                          value={Boolean(aplicaComisionVentasPorEstilista[estId] ?? true) ? 'si' : 'no'}
+                          onChange={(e) => setAplicaComisionVentasPorEstilista((prev) => ({ ...prev, [estId]: e.target.value === 'si' }))}
+                        >
+                          <option value="si">Sí, aplicar</option>
+                          <option value="no">No, ingreso establecimiento</option>
                         </select>
                       </div>
 
@@ -2778,6 +2840,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                 <th className="px-3 py-2 text-left">Otros</th>
                 <th className="px-3 py-2 text-left">Abono puesto</th>
                 <th className="px-3 py-2 text-left">Medio abono</th>
+                <th className="px-3 py-2 text-left">Comisión ventas</th>
                 <th className="px-3 py-2 text-left">Consumo día</th>
                 <th className="px-3 py-2 text-left">Medio consumo</th>
                 <th className="px-3 py-2 text-left">Pendiente</th>
@@ -2787,12 +2850,12 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
             <tbody className="bg-white divide-y divide-emerald-100">
               {!loadingAjusteDiario && ajusteDiarioRowsFiltradas.length === 0 && (
                 <tr>
-                  <td className="table-cell text-slate-500" colSpan={14}>No hay filas para el rango seleccionado.</td>
+                  <td className="table-cell text-slate-500" colSpan={15}>No hay filas para el rango seleccionado.</td>
                 </tr>
               )}
               {loadingAjusteDiario && (
                 <tr>
-                  <td className="table-cell text-slate-500" colSpan={14}>Cargando ajuste diario...</td>
+                  <td className="table-cell text-slate-500" colSpan={15}>Cargando ajuste diario...</td>
                 </tr>
               )}
               {ajusteDiarioRowsFiltradas.map((fila) => {
@@ -2819,6 +2882,12 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                     <td className="table-cell">
                       <select className="input-field !py-2 !w-28" value={edit.medio_abono_puesto || 'efectivo'} onChange={(e) => actualizarAjusteDiarioCampo(key, 'medio_abono_puesto', e.target.value)}>
                         {MEDIOS_PAGO_OPERACION.map((m) => (<option key={`aj-ab-${key}-${m.value}`} value={m.value}>{m.label}</option>))}
+                      </select>
+                    </td>
+                    <td className="table-cell">
+                      <select className="input-field !py-2 !w-44" value={Boolean(edit.aplica_comision_ventas ?? true) ? 'si' : 'no'} onChange={(e) => actualizarAjusteDiarioCampo(key, 'aplica_comision_ventas', e.target.value === 'si')}>
+                        <option value="si">Sí aplica</option>
+                        <option value="no">No aplica</option>
                       </select>
                     </td>
                     <td className="table-cell">

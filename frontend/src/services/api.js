@@ -447,7 +447,7 @@ export const reportesService = {
     return response.data;
   },
 
-  liquidarDiaV2: async ({ estilista_id, fecha, pago_efectivo, pago_nequi, pago_daviplata, pago_otros, abono_puesto, medio_abono_puesto, notas, forzar_reemplazo_dia = false }) => {
+  liquidarDiaV2: async ({ estilista_id, fecha, pago_efectivo, pago_nequi, pago_daviplata, pago_otros, abono_puesto, medio_abono_puesto, aplica_comision_ventas = true, notas, forzar_reemplazo_dia = false }) => {
     const payload = {
       estilista_id,
       fecha,
@@ -457,6 +457,7 @@ export const reportesService = {
       pago_otros,
       abono_puesto,
       medio_abono_puesto,
+      aplica_comision_ventas,
       notas,
       forzar_reemplazo_dia,
     };
@@ -474,6 +475,7 @@ export const reportesService = {
     pago_otros,
     abono_puesto,
     medio_abono_puesto,
+    aplica_comision_ventas = true,
     forzar_reemplazo_dia = false,
     consumo_monto = 0,
     deuda_ids = [],
@@ -489,6 +491,7 @@ export const reportesService = {
       pago_otros,
       abono_puesto,
       medio_abono_puesto,
+      aplica_comision_ventas,
       forzar_reemplazo_dia,
       consumo_monto,
       deuda_ids,

@@ -95,6 +95,7 @@ class Command(BaseCommand):
                         fact.ganancias_servicios = ganancias_servicios
                         fact.comision_producto_caja = comision_producto_caja
                         fact.comision_producto_servicios = comision_producto_servicios
+                        fact.aplica_comision_ventas = True
                         fact.ganancias_totales = ganancias
                         fact.descuento_puesto_dia = descuento
                         fact.deuda_puesto_anterior = deuda_anterior
