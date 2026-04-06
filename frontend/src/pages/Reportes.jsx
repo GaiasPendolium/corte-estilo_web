@@ -449,6 +449,27 @@ const Reportes = () => {
     }
   };
 
+  const toggleDeudaConsumoSeleccion = (estilistaId, deudaId) => {
+    const idStr = String(deudaId);
+    setDeudaConsumoSeleccionadasPorEstilista((prev) => {
+      const actuales = prev[estilistaId] || [];
+      const existe = actuales.includes(idStr);
+      const siguiente = existe
+        ? actuales.filter((x) => x !== idStr)
+        : [...actuales, idStr];
+      return { ...prev, [estilistaId]: siguiente };
+    });
+  };
+
+  const seleccionarTodasDeudasConsumo = (estilistaId, deudasEmpleado) => {
+    const ids = (deudasEmpleado || []).map((d) => String(d.deuda_id));
+    setDeudaConsumoSeleccionadasPorEstilista((prev) => ({ ...prev, [estilistaId]: ids }));
+  };
+
+  const limpiarSeleccionDeudasConsumo = (estilistaId) => {
+    setDeudaConsumoSeleccionadasPorEstilista((prev) => ({ ...prev, [estilistaId]: [] }));
+  };
+
   const cobrarConsumoEnDeudas = async ({ estilistaId, deudaIds = [], monto, medioPago, fecha }) => {
     const deudas = (carteraDataLiquidacionGlobal?.deudas || [])
       .filter((d) => Number(d.estilista_id) === Number(estilistaId) && Number(d.saldo_pendiente || 0) > 0)
@@ -1068,6 +1089,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
               return acc;
             }, {});
             const deudasEmpleado = (carteraDataLiquidacionGlobal?.deudas || []).filter((d) => Number(d.estilista_id) === estId && Number(d.saldo_pendiente || 0) > 0);
+            const deudasConsumoSeleccionadas = deudaConsumoSeleccionadasPorEstilista[estId] || [];
 
             return (
               <>
@@ -1173,7 +1195,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
                           className="input-field"
                           multiple
                           size={Math.min(Math.max(deudasEmpleado.length, 3), 7)}
-                          value={deudaConsumoSeleccionadasPorEstilista[estId] || []}
+                          value={deudasConsumoSeleccionadas}
                           onChange={(e) => {
                             const seleccionadas = Array.from(e.target.selectedOptions || []).map((opt) => opt.value);
                             setDeudaConsumoSeleccionadasPorEstilista((prev) => ({ ...prev, [estId]: seleccionadas }));
@@ -1187,15 +1209,15 @@ const aplicarEstadoLiquidacion = async (fila) => {
                         </select>
                         <div className="mt-1 flex items-center justify-between gap-2">
                           <p className="text-xs text-slate-500">
-                            {(deudaConsumoSeleccionadasPorEstilista[estId] || []).length > 0
-                              ? `${(deudaConsumoSeleccionadasPorEstilista[estId] || []).length} factura(s) seleccionada(s)`
+                            {deudasConsumoSeleccionadas.length > 0
+                              ? `${deudasConsumoSeleccionadas.length} factura(s) seleccionada(s)`
                               : 'Si no seleccionas, el sistema distribuye automático (más antigua primero).'}
                           </p>
-                          {(deudaConsumoSeleccionadasPorEstilista[estId] || []).length > 0 && (
+                          {deudasConsumoSeleccionadas.length > 0 && (
                             <button
                               type="button"
                               className="btn-secondary !py-1 !px-2 text-xs"
-                              onClick={() => setDeudaConsumoSeleccionadasPorEstilista((prev) => ({ ...prev, [estId]: [] }))}
+                              onClick={() => limpiarSeleccionDeudasConsumo(estId)}
                             >
                               Limpiar selección
                             </button>
@@ -1296,12 +1318,40 @@ const aplicarEstadoLiquidacion = async (fila) => {
 
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
                   <div className="card border border-amber-200 bg-amber-50">
-                    <h4 className="card-header mb-2">Facturas de consumo pendientes</h4>
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <h4 className="card-header">Facturas de consumo pendientes</h4>
+                      {deudasEmpleado.length > 0 && (
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            className="btn-secondary !py-1 !px-2 text-xs"
+                            onClick={() => seleccionarTodasDeudasConsumo(estId, deudasEmpleado)}
+                          >
+                            Seleccionar todas
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-secondary !py-1 !px-2 text-xs"
+                            onClick={() => limpiarSeleccionDeudasConsumo(estId)}
+                          >
+                            Limpiar
+                          </button>
+                        </div>
+                      )}
+                    </div>
                     <div className="space-y-2 max-h-[280px] overflow-y-auto pr-1">
                       {deudasEmpleado.length === 0 && <p className="text-sm text-slate-500">No tiene consumo pendiente.</p>}
                       {deudasEmpleado.map((d) => (
                         <div key={d.deuda_id} className="rounded-xl border border-amber-200 bg-white p-3">
-                          <p className="text-sm font-semibold text-slate-900">{d.numero_factura || `Deuda ${d.deuda_id}`}</p>
+                          <label className="flex items-start gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              className="mt-1"
+                              checked={deudasConsumoSeleccionadas.includes(String(d.deuda_id))}
+                              onChange={() => toggleDeudaConsumoSeleccion(estId, d.deuda_id)}
+                            />
+                            <span className="text-sm font-semibold text-slate-900">{d.numero_factura || `Deuda ${d.deuda_id}`}</span>
+                          </label>
                           <p className="text-xs text-slate-500">{d.fecha_hora || '-'}</p>
                           <p className="text-xs text-rose-700 mt-1">Saldo: {formatMoney(d.saldo_pendiente)}</p>
                         </div>
