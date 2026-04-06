@@ -2004,7 +2004,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
 
                   <div className="card border border-slate-200 bg-white">
                     <div className="flex flex-wrap gap-2">
-                      {[3, 4].map((paso) => {
+                      {[3, 4].map((paso, idx) => {
                         const activo = pasoLiquidacion === paso;
                         const completado = pasoLiquidacion > paso;
                         return (
@@ -2014,7 +2014,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                             className={`px-3 py-2 rounded-xl border text-sm font-semibold ${activo ? 'border-sky-400 bg-sky-100 text-sky-900' : completado ? 'border-emerald-300 bg-emerald-50 text-emerald-800' : 'border-slate-200 bg-slate-50 text-slate-700'}`}
                             onClick={() => setPasoLiquidacion(paso)}
                           >
-                            Paso {paso}
+                            Paso {idx + 1}
                           </button>
                         );
                       })}
@@ -2023,7 +2023,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
 
                   {pasoLiquidacion === 3 && (
                     <div className="card border border-rose-200 bg-rose-50">
-                      <h4 className="card-header mb-2">Paso 3: Aplicar descuentos</h4>
+                      <h4 className="card-header mb-2">Paso 1: Aplicar descuentos</h4>
                       <div className="mb-3 grid grid-cols-1 md:grid-cols-2 gap-3">
                         <div className="rounded-xl border border-amber-300 bg-amber-50 p-3">
                           <p className="text-xs text-amber-800">Pendiente cobro puesto</p>
@@ -2167,7 +2167,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
 
                   {pasoLiquidacion === 4 && (
                     <div className="card border border-emerald-200 bg-emerald-50">
-                      <h4 className="card-header mb-2">Paso 4: Total final a pagar</h4>
+                      <h4 className="card-header mb-2">Paso 2: Total final a pagar</h4>
                       <div className="rounded-2xl border border-emerald-300 bg-white p-4">
                         <p className="text-sm text-slate-700">Pendiente por pagar</p>
                         <p className="text-lg font-bold text-slate-900">{formatMoney(pendientePagoEmpleadoSimple)}</p>
