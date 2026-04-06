@@ -1147,7 +1147,9 @@ const aplicarLiquidacionSimple = async ({
   }
 
   const fechaLiquidacion = fechaFin || format(new Date(), 'yyyy-MM-dd');
-  const pagoFinalEmpleado = Math.max(Number(pendientePagoEmpleado || 0) - Number(abonoPuestoAplicado || 0) - Number(cobroConsumoAplicado || 0), 0);
+  // El pendiente del empleado ya viene neteado con descuento de puesto.
+  // Solo se descuenta aquí el consumo que se cobra en esta liquidación.
+  const pagoFinalEmpleado = Math.max(Number(pendientePagoEmpleado || 0) - Number(cobroConsumoAplicado || 0), 0);
   const medio_abono_puesto = medioAbonoPuestoPorEstilista[estilistaId] || 'efectivo';
   const medioCobroConsumo = medioCobroConsumoPorEstilista[estilistaId] || 'efectivo';
 
@@ -1730,8 +1732,8 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
             const cuadrePorFecha = cuadreDiarioByEstilista[estId] || {};
             const descuentoPuestoAplicado = Math.min(abonoPuestoDigitado, Math.max(deudaPuestoAcumulada, 0));
             const descuentoConsumoAplicado = cobroConsumoAplicado;
-            const totalDescuentosSimple = descuentoPuestoAplicado + descuentoConsumoAplicado;
-            const totalPagarFinalSimple = Math.max(pendientePagoEmpleado - totalDescuentosSimple, 0);
+            const totalDescuentosSimple = descuentoConsumoAplicado;
+            const totalPagarFinalSimple = Math.max(pendientePagoEmpleado - descuentoConsumoAplicado, 0);
 
             if (vistaSimpleLiquidacion) {
               return (
@@ -1745,6 +1747,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                       <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4">
                         <p className="text-xs uppercase tracking-wide text-rose-700 font-semibold">Total descuentos</p>
                         <p className="text-2xl font-black text-rose-900 mt-1">{formatMoney(totalDescuentosSimple)}</p>
+                        <p className="text-[11px] text-rose-700 mt-1">Consumo aplicado en esta liquidación.</p>
                       </div>
                       <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
                         <p className="text-xs uppercase tracking-wide text-emerald-700 font-semibold">Total a pagar final</p>
@@ -1857,6 +1860,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                             ))}
                           </select>
                           <p className="text-xs text-amber-700 mt-2">Aplicado: {formatMoney(descuentoPuestoAplicado)}</p>
+                          <p className="text-[11px] text-slate-600 mt-1">Se registra como abono de puesto y no se vuelve a descontar del pendiente.</p>
                         </div>
 
                         <div className="rounded-xl border border-rose-200 bg-white p-3">
@@ -1903,6 +1907,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                       <div className="mt-3 rounded-xl border border-rose-200 bg-white p-3">
                         <p className="text-sm text-slate-700">Descuento total en tiempo real</p>
                         <p className="text-2xl font-black text-rose-700">{formatMoney(totalDescuentosSimple)}</p>
+                        <p className="text-[11px] text-slate-600 mt-1">El descuento de puesto ya está incluido en el pendiente mostrado.</p>
                       </div>
                       <div className="mt-3 flex gap-2">
                         <button className="btn-secondary" onClick={() => setPasoLiquidacion(2)}>Anterior</button>
@@ -1918,7 +1923,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                         <p className="text-sm text-slate-700">Pendiente por pagar</p>
                         <p className="text-lg font-bold text-slate-900">{formatMoney(pendientePagoEmpleado)}</p>
                         <p className="text-sm text-rose-700 mt-2">(-) Descuentos: {formatMoney(totalDescuentosSimple)}</p>
-                        <p className="text-xs text-slate-500">Puesto {formatMoney(descuentoPuestoAplicado)} + Consumo {formatMoney(descuentoConsumoAplicado)}</p>
+                        <p className="text-xs text-slate-500">Consumo {formatMoney(descuentoConsumoAplicado)}. Puesto registrado: {formatMoney(descuentoPuestoAplicado)} (ya incluido en pendiente).</p>
                         <p className="text-4xl font-black text-emerald-800 mt-3">{formatMoney(totalPagarFinalSimple)}</p>
                       </div>
                       <div className="mt-3 flex gap-2">
