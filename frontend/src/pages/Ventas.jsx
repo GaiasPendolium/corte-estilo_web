@@ -270,18 +270,23 @@ const Ventas = () => {
     }
   };
 
-  const seleccionarProductoSugerido = (producto) => {
+  const aplicarProductoSeleccionado = (producto, { limpiarBusqueda = true } = {}) => {
+    if (!producto) return;
     if (Number(producto?.stock || 0) <= 0) {
       toast.warning('Este producto está agotado y no se puede seleccionar');
       return;
     }
     setProductoSeleccionado(producto);
-    setBusquedaProducto(producto.codigo_barras || formatProductSearchLabel(producto));
-    setSugerenciasProducto([]);
-    setMostrarSugerenciasProducto(false);
     if (!editandoId) {
       setForm((prev) => ({ ...prev, precio_unitario: String(producto.precio_venta || '') }));
     }
+    setBusquedaProducto(limpiarBusqueda ? '' : (producto.codigo_barras || formatProductSearchLabel(producto)));
+    setSugerenciasProducto([]);
+    setMostrarSugerenciasProducto(false);
+  };
+
+  const seleccionarProductoSugerido = (producto) => {
+    aplicarProductoSeleccionado(producto, { limpiarBusqueda: true });
   };
 
   const limpiarFormulario = () => {
@@ -1356,6 +1361,12 @@ const Ventas = () => {
             onChange={(e) => {
               const nextValue = e.target.value;
               setBusquedaProducto(nextValue);
+
+              const codigoExacto = productos.find((p) => String(p.codigo_barras || '') === String(nextValue || '').trim());
+              if (codigoExacto) {
+                aplicarProductoSeleccionado(codigoExacto, { limpiarBusqueda: true });
+                return;
+              }
 
               if (productoSeleccionado) {
                 const tokenSeleccionado = productoSeleccionado.codigo_barras || formatProductSearchLabel(productoSeleccionado);
