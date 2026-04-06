@@ -2505,6 +2505,7 @@ def abonar_consumo_empleado(request):
     monto = request.data.get('monto')
     medio_pago = (request.data.get('medio_pago') or 'efectivo').strip().lower()
     notas = request.data.get('notas')
+    fecha_abono_raw = (request.data.get('fecha') or '').strip()
 
     if medio_pago not in {'nequi', 'daviplata', 'efectivo', 'otros'}:
         return Response({'error': 'Medio de pago inválido.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -2529,6 +2530,18 @@ def abonar_consumo_empleado(request):
 
     if monto_decimal <= 0:
         return Response({'error': 'El monto debe ser mayor a cero.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    fecha_abono_dt = None
+    if fecha_abono_raw:
+        try:
+            fecha_abono = datetime.strptime(fecha_abono_raw, '%Y-%m-%d').date()
+        except Exception:
+            return Response({'error': 'Fecha inválida. Usa YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        hora_ref = timezone.localtime().time().replace(microsecond=0)
+        fecha_abono_dt = datetime.combine(fecha_abono, hora_ref)
+        if timezone.is_naive(fecha_abono_dt):
+            fecha_abono_dt = timezone.make_aware(fecha_abono_dt, timezone.get_current_timezone())
 
     if deuda_objetivo is not None:
         if deuda_objetivo.estilista_id != estilista.id:
@@ -2560,13 +2573,17 @@ def abonar_consumo_empleado(request):
             if aplicado <= 0:
                 continue
 
-            AbonoDeudaEmpleado.objects.create(
-                deuda=deuda,
-                monto=aplicado,
-                medio_pago=medio_pago,
-                usuario=request.user,
-                notas=notas,
-            )
+            create_data = {
+                'deuda': deuda,
+                'monto': aplicado,
+                'medio_pago': medio_pago,
+                'usuario': request.user,
+                'notas': notas,
+            }
+            if fecha_abono_dt is not None:
+                create_data['fecha_hora'] = fecha_abono_dt
+
+            AbonoDeudaEmpleado.objects.create(**create_data)
 
             deuda.total_abonado = Decimal(deuda.total_abonado or 0) + aplicado
             _recalcular_estado_deuda(deuda)

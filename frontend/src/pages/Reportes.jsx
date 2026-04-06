@@ -201,8 +201,10 @@ const Reportes = () => {
         pago_otros: '',
         abono_puesto: '',
         medio_abono_puesto: 'efectivo',
+        cobro_consumo: '',
+        medio_cobro_consumo: 'efectivo',
       };
-      const nextValue = campo === 'medio_abono_puesto'
+      const nextValue = (campo === 'medio_abono_puesto' || campo === 'medio_cobro_consumo')
         ? valor
         : String(valor || '').replace(/[^\d.]/g, '');
 
@@ -442,6 +444,8 @@ const Reportes = () => {
             pago_otros: String(Number(x.pago_otros || 0) || ''),
             abono_puesto: String(Number(x.abono_puesto || 0) || ''),
             medio_abono_puesto: x.medio_abono_puesto || 'efectivo',
+            cobro_consumo: '',
+            medio_cobro_consumo: 'efectivo',
           };
         });
 
@@ -634,6 +638,7 @@ const Reportes = () => {
           monto: abono,
           medio_pago: medioPago,
           notas: `Cobro consumo integrado en liquidacion ${fecha}`,
+          fecha,
         });
       } catch (error) {
         const msg = String(error?.response?.data?.error || '').toLowerCase();
@@ -832,7 +837,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
   }
 };
 
-const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
+const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia, consumoPagadoDia }) => {
   const key = `${estilistaId}|${fecha}`;
   const porEstilista = cuadreDiarioByEstilista[estilistaId] || {};
   const fila = porEstilista[fecha] || {};
@@ -843,6 +848,13 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
   const pago_otros = toMontoNoNegativo(fila.pago_otros);
   const abono_puesto = toMontoNoNegativo(fila.abono_puesto);
   const medio_abono_puesto = fila.medio_abono_puesto || 'efectivo';
+  const consumoRegistradoDia = Math.max(Number(consumoPagadoDia || 0), 0);
+  const cobroConsumoObjetivo = toMontoNoNegativo(
+    (fila.cobro_consumo ?? '') === '' ? consumoRegistradoDia : fila.cobro_consumo
+  );
+  const cobroConsumoPorAplicar = Math.max(cobroConsumoObjetivo - consumoRegistradoDia, 0);
+  const medioCobroConsumo = fila.medio_cobro_consumo || medioCobroConsumoPorEstilista[estilistaId] || 'efectivo';
+  const deudasConsumoSeleccionadas = deudaConsumoSeleccionadasPorEstilista[estilistaId] || [];
 
   const totalPagoEmpleado = pago_efectivo + pago_nequi + pago_daviplata + pago_otros;
   const topePagoDia = Math.max(Number(netoDia || 0), 0);
@@ -851,8 +863,26 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
     return;
   }
 
+  if (cobroConsumoObjetivo < consumoRegistradoDia) {
+    toast.info(`Para disminuir cobros de consumo ya registrados en ${fecha}, usa la edición de abonos en Cartera.`);
+  }
+
   setSavingCuadreDiaByKey((prev) => ({ ...prev, [key]: true }));
   try {
+    if (cobroConsumoPorAplicar > 0) {
+      const resumenCobro = await cobrarConsumoEnDeudas({
+        estilistaId,
+        deudaIds: deudasConsumoSeleccionadas,
+        monto: cobroConsumoPorAplicar,
+        medioPago: medioCobroConsumo,
+        fecha,
+      });
+
+      if (resumenCobro?.sinPendientes) {
+        toast.warning('Las facturas seleccionadas no tienen saldo pendiente para aplicar el cobro de consumo.');
+      }
+    }
+
     await reportesService.liquidarDiaV2({
       estilista_id: estilistaId,
       fecha,
@@ -1407,13 +1437,15 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                           <th className="px-3 py-2 text-left">Otros</th>
                           <th className="px-3 py-2 text-left">Abono puesto</th>
                           <th className="px-3 py-2 text-left">Medio abono</th>
+                          <th className="px-3 py-2 text-left">Cobro consumo</th>
+                          <th className="px-3 py-2 text-left">Medio cobro</th>
                           <th className="px-3 py-2 text-left">Acción</th>
                         </tr>
                       </thead>
                       <tbody className="bg-white divide-y divide-indigo-100">
                         {diasCuadre.length === 0 && (
                           <tr>
-                            <td className="table-cell text-slate-500" colSpan={9}>No hay días en el rango para cuadrar.</td>
+                            <td className="table-cell text-slate-500" colSpan={11}>No hay días en el rango para cuadrar.</td>
                           </tr>
                         )}
                         {diasCuadre.map((d) => {
@@ -1421,6 +1453,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                           const key = `${estId}|${fechaDia}`;
                           const histDia = historialDiarioPorFecha[fechaDia] || {};
                           const filaCuadre = cuadrePorFecha[fechaDia] || {};
+                          const pagoConsumoDia = Math.max(Number(pagoConsumoPorFecha[fechaDia] || 0), 0);
                           const pagoHistorial = Math.max(Number(histDia.pago_empleado_dia || 0), 0);
                           const pagoEfectivo = filaCuadre.pago_efectivo ?? (pagoHistorial ? String(pagoHistorial) : '');
                           const pagoNequi = filaCuadre.pago_nequi ?? '';
@@ -1428,6 +1461,8 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                           const pagoOtros = filaCuadre.pago_otros ?? '';
                           const abonoPuesto = filaCuadre.abono_puesto ?? (histDia.abono_puesto_dia ? String(Number(histDia.abono_puesto_dia || 0)) : '');
                           const medioAbono = filaCuadre.medio_abono_puesto || histDia.medio_abono_puesto || 'efectivo';
+                          const cobroConsumo = filaCuadre.cobro_consumo ?? (pagoConsumoDia ? String(pagoConsumoDia) : '');
+                          const medioCobroConsumo = filaCuadre.medio_cobro_consumo || medioCobroConsumoPorEstilista[estId] || 'efectivo';
                           const totalPagoFila = toMontoNoNegativo(pagoEfectivo) + toMontoNoNegativo(pagoNequi) + toMontoNoNegativo(pagoDaviplata) + toMontoNoNegativo(pagoOtros);
                           const netoDia = Math.max(Number(d.neto_dia || 0), 0);
                           const excedido = totalPagoFila > netoDia;
@@ -1501,11 +1536,33 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                                 </select>
                               </td>
                               <td className="table-cell">
+                                <input
+                                  className="input-field !py-2 !w-24"
+                                  type="number"
+                                  min="0"
+                                  step="1"
+                                  value={cobroConsumo}
+                                  onChange={(e) => actualizarCuadreDiaCampo(estId, fechaDia, 'cobro_consumo', e.target.value)}
+                                />
+                                <p className="text-[11px] text-slate-500 mt-1">Registrado: {formatMoney(pagoConsumoDia)}</p>
+                              </td>
+                              <td className="table-cell">
+                                <select
+                                  className="input-field !py-2 !w-28"
+                                  value={medioCobroConsumo}
+                                  onChange={(e) => actualizarCuadreDiaCampo(estId, fechaDia, 'medio_cobro_consumo', e.target.value)}
+                                >
+                                  {MEDIOS_PAGO_OPERACION.map((m) => (
+                                    <option key={`${fechaDia}-consumo-${m.value}`} value={m.value}>{m.label}</option>
+                                  ))}
+                                </select>
+                              </td>
+                              <td className="table-cell">
                                 <div className="space-y-1">
                                   <button
                                     type="button"
                                     className="btn-primary !py-2 !px-3"
-                                    onClick={() => guardarCuadreDiario({ estilistaId: estId, fecha: fechaDia, netoDia })}
+                                    onClick={() => guardarCuadreDiario({ estilistaId: estId, fecha: fechaDia, netoDia, consumoPagadoDia: pagoConsumoDia })}
                                     disabled={!!savingCuadreDiaByKey[key] || !fechaDia}
                                   >
                                     {savingCuadreDiaByKey[key] ? 'Guardando...' : 'Guardar día'}
