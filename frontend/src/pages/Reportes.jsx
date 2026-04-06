@@ -138,11 +138,10 @@ const Reportes = () => {
   const [savingFechaEspacioById, setSavingFechaEspacioById] = useState({});
 
   const calcularPendientePagoEmpleado = useCallback((fila) => {
-    const pendiente = Number(fila?.pago_neto_pendiente ?? 0);
-    if (Number.isFinite(pendiente)) return Math.max(pendiente, 0);
     const valorTotalEmpleado = Number((fila?.valor_total_empleado ?? fila?.facturacion_servicios ?? fila?.ganancias_servicios) || 0);
     const comisionesEmpleado = Number(fila?.comision_ventas_producto || 0);
-    return Math.max(valorTotalEmpleado + comisionesEmpleado, 0);
+    const deudaPuestoAcumulada = Number(fila?.deuda_total_acumulada || 0);
+    return Math.max((valorTotalEmpleado + comisionesEmpleado) - deudaPuestoAcumulada, 0);
   }, []);
 
   const puedeAjustarFechaEspacio = rolUsuario === 'administrador' || rolUsuario === 'gerente';
@@ -1116,10 +1115,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
               Number(desgloseLiquidacion?.servicios?.total_precio_cobrado ?? generadoEmpleadoCalculado),
               0
             );
-            const pendientePagoEmpleado = Math.max(
-              Number(desgloseLiquidacion?.resumen?.pago_neto_pendiente ?? calcularPendientePagoEmpleado(empleado)),
-              0
-            );
+            const pendientePagoEmpleado = Math.max(generadoEmpleado - Number(empleado.deuda_total_acumulada || 0), 0);
             const consumoPendiente = Number(resumenPorEstilistaLiquidacion[estId]?.saldo_pendiente || 0);
             const cobroConsumoDigitado = Number(cobroConsumoPorEstilista[estId] || 0);
             const cobroConsumoAplicado = Math.min(Math.max(cobroConsumoDigitado, 0), Math.max(consumoPendiente, 0));
