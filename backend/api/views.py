@@ -4214,7 +4214,7 @@ def bi_desglose_estilista_debug(request):
         return Response({'error': f'Parámetros inválidos: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
     
     # Cargar datos
-    servicios_est = ServicioRealizado.objects.select_related('estilista').filter(
+    servicios_est = ServicioRealizado.objects.select_related('estilista', 'servicio').filter(
         estilista=estilista,
         estado='finalizado',
         fecha_hora__date__gte=fecha_inicio_dt,
@@ -4259,7 +4259,9 @@ def bi_desglose_estilista_debug(request):
     servicios_por_dia = {}
     for srv in servicios_est:
         fecha_srv = _fecha_operativa_desde_dt(srv.fecha_hora)
-        servicios_por_dia[fecha_srv] = servicios_por_dia.get(fecha_srv, Decimal(0)) + Decimal(srv.precio_cobrado or 0)
+        # En liquidación del empleado la base del día debe excluir la porción del establecimiento.
+        base_empleado_srv = _monto_estilista_resuelto(srv)
+        servicios_por_dia[fecha_srv] = servicios_por_dia.get(fecha_srv, Decimal(0)) + base_empleado_srv
     for ad in adicionales_asignados_est:
         fecha_ad = _fecha_operativa_desde_dt(ad.servicio_realizado.fecha_hora)
         valor_ad = Decimal(ad.valor_cobrado or 0)
