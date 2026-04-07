@@ -1985,7 +1985,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
             const descuentoPuestoIncluidoSimple = diaSeleccionadoSimple
               ? Math.max(Number(diaSeleccionadoSimple.descuento_espacio || 0), 0)
               : 0;
-            const generadoEmpleadoSimple = netoEmpleadoSimpleDia + descuentoPuestoIncluidoSimple;
+            const generadoEmpleadoSimple = netoEmpleadoSimpleDia;
             const pagoRegistradoDiaSimple = diaSeleccionadoSimple ? Math.max(totalPagoMedios(estId), 0) : 0;
             const pendientePagoEmpleadoSimple = diaSeleccionadoSimple
               ? Math.max(netoEmpleadoSimpleDia - pagoRegistradoDiaSimple, 0)
@@ -2022,7 +2022,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                       <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4">
                         <p className="text-xs uppercase tracking-wide text-sky-700 font-semibold">Total generado</p>
                         <p className="text-2xl font-black text-sky-900 mt-1">{formatMoney(generadoEmpleadoSimple)}</p>
-                        <p className="text-[11px] text-sky-700 mt-1">Fecha operativa: {fechaOperacionSimple || '-'}</p>
+                        <p className="text-[11px] text-sky-700 mt-1">Neto del día para liquidación. Fecha operativa: {fechaOperacionSimple || '-'}</p>
                       </div>
                       <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4">
                         <p className="text-xs uppercase tracking-wide text-rose-700 font-semibold">Total descuentos</p>
