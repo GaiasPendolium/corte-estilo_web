@@ -1169,6 +1169,7 @@ const aplicarLiquidacionSimple = async ({
   fila,
   pendientePagoEmpleado,
   abonoPuestoAplicado,
+  descuentoPuestoYaIncluido = 0,
   cobroConsumoAplicado,
   deudasConsumoSeleccionadas,
   pagosPorMedio = null,
@@ -1184,7 +1185,11 @@ const aplicarLiquidacionSimple = async ({
     toast.warning('La liquidación simple opera por día. Usa el mismo valor en fecha inicio y fecha fin.');
     return;
   }
-  const totalDescuentos = Math.max(Number(abonoPuestoAplicado || 0), 0) + Math.max(Number(cobroConsumoAplicado || 0), 0);
+  const descuentoPuestoAdicional = Math.max(
+    Math.max(Number(abonoPuestoAplicado || 0), 0) - Math.max(Number(descuentoPuestoYaIncluido || 0), 0),
+    0,
+  );
+  const totalDescuentos = descuentoPuestoAdicional + Math.max(Number(cobroConsumoAplicado || 0), 0);
   const pagoFinalEmpleado = Math.max(Number(pendientePagoEmpleado || 0) - totalDescuentos, 0);
   const pago_efectivo = Math.max(Number(pagosPorMedio?.efectivo || 0), 0);
   const pago_nequi = Math.max(Number(pagosPorMedio?.nequi || 0), 0);
@@ -1974,19 +1979,24 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
             const diaSeleccionadoSimple = (desgloseLiquidacion?.desglose_por_dia || []).find(
               (d) => String(d.fecha || '') === fechaOperacionSimple
             );
-            const generadoEmpleadoSimple = diaSeleccionadoSimple
+            const netoEmpleadoSimpleDia = diaSeleccionadoSimple
               ? Math.max(Number(diaSeleccionadoSimple.neto_dia || 0), 0)
               : generadoEmpleado;
+            const descuentoPuestoIncluidoSimple = diaSeleccionadoSimple
+              ? Math.max(Number(diaSeleccionadoSimple.descuento_espacio || 0), 0)
+              : 0;
+            const generadoEmpleadoSimple = netoEmpleadoSimpleDia + descuentoPuestoIncluidoSimple;
             const pagoRegistradoDiaSimple = diaSeleccionadoSimple ? Math.max(totalPagoMedios(estId), 0) : 0;
             const pendientePagoEmpleadoSimple = diaSeleccionadoSimple
-              ? Math.max(generadoEmpleadoSimple - pagoRegistradoDiaSimple, 0)
+              ? Math.max(netoEmpleadoSimpleDia - pagoRegistradoDiaSimple, 0)
               : pendientePagoEmpleado;
             const abonoPuestoCalculado = modoCobroPuesto === 'porcentaje'
               ? Math.round((Math.max(generadoEmpleadoSimple, 0) * porcentajePuestoDigitado) / 100)
               : abonoPuestoDigitado;
             const descuentoPuestoAplicado = Math.min(abonoPuestoCalculado, Math.max(deudaPuestoAcumulada, 0));
             const descuentoConsumoAplicado = cobroConsumoAplicado;
-            const totalDescuentosSimple = descuentoPuestoAplicado + descuentoConsumoAplicado;
+            const descuentoPuestoAdicionalSimple = Math.max(descuentoPuestoAplicado - descuentoPuestoIncluidoSimple, 0);
+            const totalDescuentosSimple = descuentoPuestoAdicionalSimple + descuentoConsumoAplicado;
             const totalPagarFinalSimple = Math.max(pendientePagoEmpleadoSimple - totalDescuentosSimple, 0);
             const pagosSimple = pagosPorEstilista[estId] || {};
             const pagoEfectivoSimple = Math.max(Number(pagosSimple.efectivo || 0), 0);
@@ -2198,7 +2208,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                         <p className="text-sm text-rose-700 mt-2">(-) Descuentos: {formatMoney(totalDescuentosSimple)}</p>
                         <p className="text-sm text-slate-700 mt-2">Pagos digitados por medios: {formatMoney(totalPagosDigitadosSimple)}</p>
                         <p className="text-sm text-amber-700 mt-1">Saldo operativo por pagar: {formatMoney(saldoOperativoSimple)}</p>
-                        <p className="text-xs text-slate-500">Consumo {formatMoney(descuentoConsumoAplicado)}. Puesto {formatMoney(descuentoPuestoAplicado)}.</p>
+                        <p className="text-xs text-slate-500">Consumo {formatMoney(descuentoConsumoAplicado)}. Puesto adicional {formatMoney(descuentoPuestoAdicionalSimple)} (puesto ya incluido hoy: {formatMoney(descuentoPuestoIncluidoSimple)}).</p>
                         <p className="text-4xl font-black text-emerald-800 mt-3">{formatMoney(totalPagarFinalSimple)}</p>
                       </div>
 
@@ -2261,6 +2271,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                             fila: empleado,
                             pendientePagoEmpleado: pendientePagoEmpleadoSimple,
                             abonoPuestoAplicado: descuentoPuestoAplicado,
+                            descuentoPuestoYaIncluido: descuentoPuestoIncluidoSimple,
                             cobroConsumoAplicado: descuentoConsumoAplicado,
                             deudasConsumoSeleccionadas,
                             pagosPorMedio: {
