@@ -17,9 +17,11 @@ import base64
 import csv
 import io
 import json
+import logging
 import os
 import uuid
 from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding
 from .models import (
     Usuario, Estilista, Servicio, Cliente, Producto,
     ServicioRealizado, VentaProducto, MovimientoInventario, EstadoPagoEstilistaDia,
@@ -32,6 +34,9 @@ from .serializers import (
     MovimientoInventarioSerializer, ReporteVentasSerializer,
     ReporteServiciosSerializer, EstadisticasGeneralesSerializer
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 def _es_admin_o_gerente(user):
@@ -120,6 +125,7 @@ def qz_sign(request):
         signature_b64 = base64.b64encode(signature).decode('ascii')
         return HttpResponse(signature_b64, content_type='text/plain; charset=utf-8')
     except Exception:
+        logger.exception('Error firmando solicitud QZ')
         return HttpResponse('No se pudo firmar la solicitud', status=500, content_type='text/plain; charset=utf-8')
 
 
