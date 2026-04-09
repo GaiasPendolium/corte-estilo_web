@@ -4408,7 +4408,7 @@ def bi_desglose_estilista(request):
         return Response({'error': f'Parámetros inválidos: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
     
     # Cargar datos
-    servicios_est = ServicioRealizado.objects.select_related('estilista').filter(
+    servicios_est = ServicioRealizado.objects.select_related('estilista', 'servicio').filter(
         estilista=estilista,
         estado='finalizado',
         fecha_hora__date__gte=fecha_inicio_dt,
@@ -4453,7 +4453,11 @@ def bi_desglose_estilista(request):
     servicios_por_dia = {}
     for srv in servicios_est:
         fecha_srv = _fecha_operativa_desde_dt(srv.fecha_hora)
-        servicios_por_dia[fecha_srv] = servicios_por_dia.get(fecha_srv, Decimal(0)) + Decimal(srv.precio_cobrado or 0)
+        # Debe coincidir con Histórico de ventas: base empleado = suma de monto_estilista.
+        base_empleado_srv = Decimal(getattr(srv, 'monto_estilista', 0) or 0)
+        if base_empleado_srv <= 0:
+            base_empleado_srv = _monto_estilista_resuelto(srv)
+        servicios_por_dia[fecha_srv] = servicios_por_dia.get(fecha_srv, Decimal(0)) + base_empleado_srv
     for ad in adicionales_asignados_est:
         fecha_ad = _fecha_operativa_desde_dt(ad.servicio_realizado.fecha_hora)
         valor_ad = Decimal(ad.valor_cobrado or 0)
@@ -4464,7 +4468,7 @@ def bi_desglose_estilista(request):
             pct_est = Decimal(100)
         valor_emp = valor_ad - ((valor_ad * pct_est) / Decimal(100))
         total_adicionales_asignados_est += valor_emp
-        servicios_por_dia[fecha_ad] = servicios_por_dia.get(fecha_ad, Decimal(0)) + valor_emp
+        # No sumar aquí a la base diaria para evitar doble conteo respecto a monto_estilista.
 
     ganancia_servicios_est = total_servicios_precio_cobrado + total_adicionales_asignados_est
 
