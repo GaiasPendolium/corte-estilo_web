@@ -193,11 +193,21 @@ def _monto_estilista_resuelto(srv):
         return Decimal(0)
 
     tipo_reparto = str(srv.tipo_reparto_establecimiento or '').strip().lower()
+    monto_estilista = Decimal(getattr(srv, 'monto_estilista', 0) or 0)
     monto_establecimiento = Decimal(srv.monto_establecimiento or 0)
     nombre_servicio = str(getattr(getattr(srv, 'servicio', None), 'nombre', '') or '').lower()
 
     if 'shampoo' in nombre_servicio:
         return Decimal(0)
+
+    # Si ya existe reparto guardado en la factura (monto del estilista o establecimiento),
+    # usar ese valor como fuente de verdad para no volver al total cobrado.
+    if monto_estilista > 0 or monto_establecimiento > 0:
+        if monto_estilista < 0:
+            return Decimal(0)
+        if monto_estilista > neto:
+            return neto
+        return monto_estilista
 
     # Si el servicio sí tiene reparto explícito, usarlo como fuente de verdad.
     if tipo_reparto in {'porcentaje', 'monto'}:
@@ -218,11 +228,21 @@ def _monto_establecimiento_resuelto(srv):
         return Decimal(0)
 
     tipo_reparto = str(srv.tipo_reparto_establecimiento or '').strip().lower()
+    monto_estilista = Decimal(getattr(srv, 'monto_estilista', 0) or 0)
     monto_establecimiento = Decimal(srv.monto_establecimiento or 0)
     nombre_servicio = str(getattr(getattr(srv, 'servicio', None), 'nombre', '') or '').lower()
 
     if 'shampoo' in nombre_servicio:
         return neto
+
+    # Si la factura ya trae reparto persistido, respetarlo para mantener consistencia
+    # entre histórico y cálculos de liquidación.
+    if monto_estilista > 0 or monto_establecimiento > 0:
+        if monto_establecimiento < 0:
+            return Decimal(0)
+        if monto_establecimiento > neto:
+            return neto
+        return monto_establecimiento
 
     if tipo_reparto in {'porcentaje', 'monto'}:
         if monto_establecimiento < 0:
