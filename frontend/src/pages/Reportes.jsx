@@ -1980,6 +1980,8 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
             const descuentoPuestoDiaSimple = diaSeleccionadoSimple
               ? Math.max(Number(diaSeleccionadoSimple.descuento_espacio || 0), 0)
               : 0;
+            const puestoPendienteSimple = Math.max(Number(deudaPuestoAcumulada || 0), 0);
+            const puestoTotalSimple = Math.max(descuentoPuestoDiaSimple + puestoPendienteSimple, 0);
             const abonoPuestoCalculado = modoCobroPuesto === 'porcentaje'
               ? Math.round((Math.max(generadoEmpleadoSimple, 0) * porcentajePuestoDigitado) / 100)
               : abonoPuestoDigitado;
@@ -2065,7 +2067,11 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                         <div className="rounded-xl border border-amber-200 bg-white p-3">
                           <p className="text-sm font-semibold text-slate-900">Alquiler del puesto</p>
-                          <p className="text-xs text-slate-600 mt-1">Pendiente actual: <span className="font-semibold text-amber-800">{formatMoney(Math.max(deudaPuestoAcumulada, 0))}</span></p>
+                          <div className="mt-1 space-y-1 text-xs text-slate-700">
+                            <p>Valor puesto día filtrado: <span className="font-semibold text-amber-800">{formatMoney(descuentoPuestoDiaSimple)}</span></p>
+                            <p>Valor pendiente: <span className="font-semibold text-amber-800">{formatMoney(puestoPendienteSimple)}</span></p>
+                            <p>Valor total (día + pendiente): <span className="font-semibold text-amber-900">{formatMoney(puestoTotalSimple)}</span></p>
+                          </div>
                           <label className="block text-xs text-slate-600 mt-2 mb-1">Tipo de cobro del puesto</label>
                           <select
                             className="input-field"
@@ -2081,7 +2087,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                               <button
                                 type="button"
                                 className="btn-secondary !py-1 !px-2 text-xs mt-2"
-                                onClick={() => setAbonoPuestoPorEstilista((prev) => ({ ...prev, [estId]: String(Math.max(deudaPuestoAcumulada, 0)) }))}
+                                onClick={() => setAbonoPuestoPorEstilista((prev) => ({ ...prev, [estId]: String(puestoPendienteSimple) }))}
                               >
                                 Usar pendiente completo
                               </button>
