@@ -2609,7 +2609,29 @@ def reporte_consumo_empleado(request):
     # para que el usuario vea inmediatamente los pagos registrados en liquidación.
     qs_pendientes = []
     for deuda in qs:
-        saldo = Decimal(deuda.saldo_pendiente or 0)
+        total_cargo = Decimal(deuda.total_cargo or 0)
+        total_abonado_real = Decimal(deuda.abonos.aggregate(total=Sum('monto'))['total'] or 0)
+        saldo = max(total_cargo - total_abonado_real, Decimal(0))
+
+        estado_real = 'pendiente'
+        if saldo <= 0:
+            estado_real = 'cancelado'
+        elif total_abonado_real > 0:
+            estado_real = 'parcial'
+
+        # Normaliza datos persistidos para evitar que la UI muestre saldos en 0 incorrectos.
+        total_abonado_db = Decimal(deuda.total_abonado or 0)
+        saldo_db = Decimal(deuda.saldo_pendiente or 0)
+        if (
+            abs(total_abonado_db - total_abonado_real) > Decimal('0.009')
+            or abs(saldo_db - saldo) > Decimal('0.009')
+            or str(deuda.estado or '') != estado_real
+        ):
+            deuda.total_abonado = total_abonado_real
+            deuda.saldo_pendiente = saldo
+            deuda.estado = estado_real
+            deuda.save(update_fields=['total_abonado', 'saldo_pendiente', 'estado'])
+
         tiene_abono = int(getattr(deuda, 'abonos_count', 0) or 0) > 0
 
         if saldo <= Decimal('0.5') and not tiene_abono:

@@ -149,6 +149,8 @@ const Reportes = () => {
   const [editNotasByAbono, setEditNotasByAbono] = useState({});
   const [savingEditByAbono, setSavingEditByAbono] = useState({});
   const [deudaActivaHistorial, setDeudaActivaHistorial] = useState(null);
+  const [filtroCarteraEstilistaId, setFiltroCarteraEstilistaId] = useState('todos');
+  const [mostrarFacturasSaldadas, setMostrarFacturasSaldadas] = useState(false);
   const [estilistaActivoLiquidacion, setEstilistaActivoLiquidacion] = useState(null);
   const [pagosPorEstilista, setPagosPorEstilista] = useState({});
   const [estadoDiaPorEstilista, setEstadoDiaPorEstilista] = useState({});
@@ -1004,10 +1006,58 @@ const Reportes = () => {
     return mapa;
   }, [carteraDataLiquidacionGlobal]);
 
-  const deudaSeleccionada = useMemo(
-    () => (carteraData?.deudas || []).find((d) => Number(d.deuda_id) === Number(deudaActivaHistorial)) || null,
-    [carteraData, deudaActivaHistorial]
+  const opcionesEstilistaCartera = useMemo(
+    () => [...(carteraData?.resumen || [])]
+      .sort((a, b) => String(a.estilista_nombre || '').localeCompare(String(b.estilista_nombre || ''), 'es')),
+    [carteraData]
   );
+
+  const deudasCarteraFiltradas = useMemo(() => {
+    return (carteraData?.deudas || []).filter((deuda) => {
+      const coincideEstilista = filtroCarteraEstilistaId === 'todos'
+        ? true
+        : Number(deuda.estilista_id) === Number(filtroCarteraEstilistaId);
+      const saldo = Number(deuda.saldo_pendiente || 0);
+      const mostrarPorSaldo = mostrarFacturasSaldadas ? true : saldo > 0.5;
+      return coincideEstilista && mostrarPorSaldo;
+    });
+  }, [carteraData, filtroCarteraEstilistaId, mostrarFacturasSaldadas]);
+
+  const resumenCarteraVisible = useMemo(() => {
+    let totalCargado = 0;
+    let totalAbonado = 0;
+    let totalPendiente = 0;
+    let facturasPendientes = 0;
+
+    deudasCarteraFiltradas.forEach((deuda) => {
+      const total = Number(deuda.total_cargo || 0);
+      const abonado = Number(deuda.total_abonado || 0);
+      const saldo = Number(deuda.saldo_pendiente || 0);
+      totalCargado += total;
+      totalAbonado += abonado;
+      totalPendiente += saldo;
+      if (saldo > 0.5) facturasPendientes += 1;
+    });
+
+    return {
+      facturas: deudasCarteraFiltradas.length,
+      totalCargado,
+      totalAbonado,
+      totalPendiente,
+      facturasPendientes,
+    };
+  }, [deudasCarteraFiltradas]);
+
+  const deudaSeleccionada = useMemo(
+    () => deudasCarteraFiltradas.find((d) => Number(d.deuda_id) === Number(deudaActivaHistorial)) || null,
+    [deudasCarteraFiltradas, deudaActivaHistorial]
+  );
+
+  useEffect(() => {
+    if (!deudaActivaHistorial) return;
+    if (deudasCarteraFiltradas.some((d) => Number(d.deuda_id) === Number(deudaActivaHistorial))) return;
+    setDeudaActivaHistorial(null);
+  }, [deudasCarteraFiltradas, deudaActivaHistorial]);
 
   const abonarFacturaCartera = async (deuda) => {
     const deudaId = Number(deuda?.deuda_id || 0);
@@ -2857,12 +2907,64 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
     <div className="space-y-6">
       <div className="card border border-amber-200 bg-amber-50">
         <h2 className="card-header">Cartera Empleado</h2>
-        <p className="text-sm text-slate-600">Vista por factura con abonos y saldo pendiente. Selecciona una fila para ver su histórico.</p>
+        <p className="text-sm text-slate-600">Filtra por empleado, revisa facturas y controla saldos pendientes. Selecciona una fila para ver su histórico.</p>
+
+        <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
+          <div className="rounded-xl border border-amber-200 bg-white p-3">
+            <p className="text-xs text-slate-500">Facturas visibles</p>
+            <p className="text-xl font-black text-slate-900">{resumenCarteraVisible.facturas}</p>
+          </div>
+          <div className="rounded-xl border border-amber-200 bg-white p-3">
+            <p className="text-xs text-slate-500">Total facturado</p>
+            <p className="text-xl font-black text-slate-900">{formatMoney(resumenCarteraVisible.totalCargado)}</p>
+          </div>
+          <div className="rounded-xl border border-amber-200 bg-white p-3">
+            <p className="text-xs text-slate-500">Total abonado</p>
+            <p className="text-xl font-black text-sky-700">{formatMoney(resumenCarteraVisible.totalAbonado)}</p>
+          </div>
+          <div className="rounded-xl border border-amber-200 bg-white p-3">
+            <p className="text-xs text-slate-500">Saldo pendiente</p>
+            <p className="text-xl font-black text-rose-700">{formatMoney(resumenCarteraVisible.totalPendiente)}</p>
+          </div>
+          <div className="rounded-xl border border-amber-200 bg-white p-3">
+            <p className="text-xs text-slate-500">Facturas con deuda</p>
+            <p className="text-xl font-black text-rose-700">{resumenCarteraVisible.facturasPendientes}</p>
+          </div>
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-end gap-3">
+          <div>
+            <label className="block text-xs text-slate-600 mb-1">Empleado</label>
+            <select
+              className="input-field !py-2 min-w-[240px]"
+              value={filtroCarteraEstilistaId}
+              onChange={(e) => setFiltroCarteraEstilistaId(e.target.value)}
+            >
+              <option value="todos">Todos los empleados</option>
+              {opcionesEstilistaCartera.map((item) => (
+                <option key={`cartera-est-${item.estilista_id}`} value={String(item.estilista_id)}>
+                  {item.estilista_nombre}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <label className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={mostrarFacturasSaldadas}
+              onChange={(e) => setMostrarFacturasSaldadas(e.target.checked)}
+            />
+            Mostrar facturas saldadas
+          </label>
+        </div>
+
         <div className="mt-4 overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="table-header">
               <tr>
                 <th className="px-4 py-3 text-left">Empleado</th>
+                <th className="px-4 py-3 text-left">Estado</th>
                 <th className="px-4 py-3 text-left">Fecha factura</th>
                 <th className="px-4 py-3 text-left">Ultimo abono</th>
                 <th className="px-4 py-3 text-left">Factura</th>
@@ -2874,29 +2976,41 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {(carteraData.deudas || []).length === 0 && (
+              {deudasCarteraFiltradas.length === 0 && (
                 <tr>
-                  <td className="table-cell text-slate-500" colSpan={9}>No hay cartera en el rango seleccionado.</td>
+                  <td className="table-cell text-slate-500" colSpan={10}>No hay facturas para los filtros actuales.</td>
                 </tr>
               )}
-              {(carteraData.deudas || []).map((deuda) => {
+              {deudasCarteraFiltradas.map((deuda) => {
                 const deudaId = Number(deuda.deuda_id);
                 const resumenEmpleado = resumenPorEstilista[deuda.estilista_id] || {};
                 const saving = !!savingAbonoByDeuda[deudaId];
                 const ultimoAbono = (deuda.abonos || [])[0];
+                const saldoFactura = Number(deuda.saldo_pendiente || 0);
+                const estado = saldoFactura <= 0.5 ? 'cancelado' : Number(deuda.total_abonado || 0) > 0 ? 'parcial' : 'pendiente';
+                const estadoClass = estado === 'cancelado'
+                  ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
+                  : estado === 'parcial'
+                  ? 'bg-amber-100 text-amber-700 border-amber-200'
+                  : 'bg-rose-100 text-rose-700 border-rose-200';
                 return (
                   <tr
                     key={deudaId}
-                    className={`cursor-pointer ${Number(deudaActivaHistorial) === deudaId ? 'bg-amber-100' : ''}`}
+                    className={`cursor-pointer ${Number(deudaActivaHistorial) === deudaId ? 'bg-amber-100' : 'hover:bg-slate-50'}`}
                     onClick={() => setDeudaActivaHistorial(deudaId)}
                   >
                     <td className="table-cell font-medium">{deuda.estilista_nombre || '-'}</td>
+                    <td className="table-cell">
+                      <span className={`inline-flex items-center rounded-full border px-2 py-1 text-xs font-semibold uppercase ${estadoClass}`}>
+                        {estado}
+                      </span>
+                    </td>
                     <td className="table-cell">{(deuda.fecha_hora || '').slice(0, 10) || '-'}</td>
                     <td className="table-cell">{(ultimoAbono?.fecha_hora || '').slice(0, 10) || '-'}</td>
                     <td className="table-cell font-semibold">{deuda.numero_factura || '-'}</td>
                     <td className="table-cell">{formatMoney(deuda.total_cargo)}</td>
                     <td className="table-cell text-sky-700 font-semibold">{formatMoney(deuda.total_abonado)}</td>
-                    <td className="table-cell text-rose-700 font-semibold">{formatMoney(deuda.saldo_pendiente)}</td>
+                    <td className="table-cell text-rose-700 font-semibold">{formatMoney(saldoFactura)}</td>
                     <td className="table-cell">
                       <div className="text-xs text-slate-700">Saldo: <b>{formatMoney(resumenEmpleado.saldo_pendiente)}</b></div>
                       <div className="text-xs text-slate-500">Facturas: {resumenEmpleado.facturas || 0}</div>
