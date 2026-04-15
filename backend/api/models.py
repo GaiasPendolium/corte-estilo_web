@@ -3,6 +3,10 @@ from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, Permis
 from django.utils import timezone
 
 
+def default_ui_permissions():
+    return {}
+
+
 class UsuarioManager(BaseUserManager):
     """Manager personalizado para el modelo Usuario"""
     
@@ -43,6 +47,7 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
     username = models.CharField(max_length=150, unique=True, verbose_name='Usuario')
     nombre_completo = models.CharField(max_length=255, verbose_name='Nombre Completo')
     rol = models.CharField(max_length=20, choices=ROLES, default='recepcion', verbose_name='Rol')
+    permisos_ui = models.JSONField(default=default_ui_permissions, blank=True, verbose_name='Permisos UI')
     activo = models.BooleanField(default=True, verbose_name='Activo')
     fecha_creacion = models.DateTimeField(default=timezone.now, verbose_name='Fecha de Creación')
     

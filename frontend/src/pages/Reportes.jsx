@@ -3,6 +3,7 @@ import { format } from 'date-fns';
 import { reportesService, productosService } from '../services/api';
 import { toast } from 'react-toastify';
 import useAuthStore from '../store/authStore';
+import { hasSubmenuPermission } from '../utils/permissions';
 
 const today = new Date();
 const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
@@ -387,9 +388,12 @@ const Reportes = () => {
   };
 
   const modulosVisibles = useMemo(() => {
-    if (!esRecepcion) return MODULOS;
-    return MODULOS.filter((mod) => mod.key === 'cierre' || mod.key === 'liquidacion' || mod.key === 'ajuste');
-  }, [esRecepcion]);
+    const permitidosPorRol = esRecepcion
+      ? MODULOS.filter((mod) => mod.key === 'cierre' || mod.key === 'liquidacion' || mod.key === 'ajuste')
+      : MODULOS;
+
+    return permitidosPorRol.filter((mod) => hasSubmenuPermission(user, 'reportes', mod.key, 'view'));
+  }, [esRecepcion, user]);
 
   useEffect(() => {
     if (modulosVisibles.some((mod) => mod.key === moduloActivo)) return;

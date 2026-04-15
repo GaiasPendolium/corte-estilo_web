@@ -14,6 +14,7 @@ import DraggableSearchKeyboard from '../components/DraggableSearchKeyboard';
 import { ticketPrintService } from '../services/printing/ticketPrintService';
 import { customerDisplayService } from '../services/customerDisplayService';
 import useAuthStore from '../store/authStore';
+import { getAllowedSubmenuKey, hasSubmenuPermission } from '../utils/permissions';
 
 // Todos los perfiles autenticados pueden registrar ventas y servicios (operación diaria)
 // Solo admin/gerente pueden EDITAR o ELIMINAR del historial (controlado en Ventas.jsx y backend)
@@ -161,7 +162,12 @@ const minimoConDescuentoEmpleado = (precioBase) => {
 
 const Servicios = () => {
   const { user } = useAuthStore();
-  const puedeFacturar = true; // Todos los roles pueden registrar ventas y servicios (recepcion incluida)
+  const puedeVerServicios = hasSubmenuPermission(user, 'servicios', 'servicios', 'view');
+  const puedeVerVentas = hasSubmenuPermission(user, 'servicios', 'ventas', 'view');
+  const puedeVerConsumo = hasSubmenuPermission(user, 'servicios', 'consumo_empleado', 'view');
+  const puedeCrearServicio = hasSubmenuPermission(user, 'servicios', 'servicios', 'create');
+  const puedeCrearVenta = hasSubmenuPermission(user, 'servicios', 'ventas', 'create');
+  const puedeCrearConsumo = hasSubmenuPermission(user, 'servicios', 'consumo_empleado', 'create');
 
   const [modoVista, setModoVista] = useState('servicios');
   const [loading, setLoading] = useState(true);
@@ -212,6 +218,12 @@ const Servicios = () => {
   const [ventaSugerencias, setVentaSugerencias] = useState([]);
   const [productoVentaSeleccionado, setProductoVentaSeleccionado] = useState(null);
   const [carrito, setCarrito] = useState([]);
+
+  const puedeCrearEnVistaActual = modoVista === 'servicios'
+    ? puedeCrearServicio
+    : modoVista === 'consumo_empleado'
+    ? puedeCrearConsumo
+    : puedeCrearVenta;
 
   const abrirTecladoWindows = async () => {
     try {
@@ -280,6 +292,13 @@ const Servicios = () => {
   useEffect(() => {
     cargarTodo();
   }, []);
+
+  useEffect(() => {
+    const next = getAllowedSubmenuKey(user, 'servicios', modoVista);
+    if (next && next !== modoVista) {
+      setModoVista(next);
+    }
+  }, [user, modoVista]);
 
   useEffect(() => {
     const q = ventaBusqueda.trim().toLowerCase();
@@ -632,6 +651,10 @@ const Servicios = () => {
 
   const solicitarConfirmacionFinalizar = (e) => {
     e.preventDefault();
+    if (!puedeCrearServicio) {
+      toast.warning('Este perfil solo puede visualizar servicios. No puede facturar ni finalizar.');
+      return;
+    }
     if (!servicioFinalizarId && (!finalizacion.estilista || !finalizacion.servicio)) {
       toast.warning('Selecciona empleado y servicio para facturar');
       return;
@@ -740,6 +763,10 @@ const Servicios = () => {
 
   const finalizarServicio = async () => {
     setShowConfirmacionFinalizar(false);
+    if (!puedeCrearServicio) {
+      toast.warning('Este perfil solo puede visualizar servicios. No puede facturar ni finalizar.');
+      return;
+    }
     try {
       setSaving(true);
       const itemsNormalizados = finalizacion.tiene_adicionales
@@ -984,8 +1011,8 @@ const Servicios = () => {
 
   const registrarVentaCaja = async (e) => {
     e.preventDefault();
-    if (!puedeFacturar) {
-      toast.warning('Solo administrador o gerente pueden crear facturas');
+    if (!puedeCrearEnVistaActual) {
+      toast.warning('Este perfil no puede registrar movimientos en este submódulo');
       return;
     }
 
@@ -1129,7 +1156,7 @@ const Servicios = () => {
           <button className="btn-secondary inline-flex items-center gap-2" onClick={abrirTecladoWindows}>
             Teclado Windows
           </button>
-          <button className="btn-primary inline-flex items-center gap-2" onClick={() => setShowNuevoClienteModal(true)}>
+          <button className="btn-primary inline-flex items-center gap-2" onClick={() => setShowNuevoClienteModal(true)} disabled={!puedeCrearEnVistaActual}>
             <FiPlus /> Nuevo cliente
           </button>
         </div>
@@ -1137,15 +1164,21 @@ const Servicios = () => {
 
       <div className="card p-2">
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-          <button className={modoVista === 'servicios' ? 'btn-primary' : 'btn-secondary'} onClick={() => setModoVista('servicios')}>
-            Modo servicios
-          </button>
-          <button className={modoVista === 'ventas' ? 'btn-primary' : 'btn-secondary'} onClick={() => setModoVista('ventas')}>
-            Modo venta productos
-          </button>
-          <button className={modoVista === 'consumo_empleado' ? 'btn-primary' : 'btn-secondary'} onClick={() => setModoVista('consumo_empleado')}>
-            Consumo Empleado
-          </button>
+          {puedeVerServicios && (
+            <button className={modoVista === 'servicios' ? 'btn-primary' : 'btn-secondary'} onClick={() => setModoVista('servicios')}>
+              Modo servicios
+            </button>
+          )}
+          {puedeVerVentas && (
+            <button className={modoVista === 'ventas' ? 'btn-primary' : 'btn-secondary'} onClick={() => setModoVista('ventas')}>
+              Modo venta productos
+            </button>
+          )}
+          {puedeVerConsumo && (
+            <button className={modoVista === 'consumo_empleado' ? 'btn-primary' : 'btn-secondary'} onClick={() => setModoVista('consumo_empleado')}>
+              Consumo Empleado
+            </button>
+          )}
         </div>
       </div>
 
@@ -1154,7 +1187,7 @@ const Servicios = () => {
           <h2 className="card-header">
             {esConsumoEmpleado ? 'Caja registradora - Consumo de empleado' : 'Caja registradora - Venta de productos'}
           </h2>
-          {!puedeFacturar && <p className="text-amber-700">Este perfil solo puede visualizar. Para facturar usa Administrador o Gerente.</p>}
+          {!puedeCrearEnVistaActual && <p className="text-amber-700">Este perfil solo puede visualizar este submódulo. No puede registrar movimientos.</p>}
           {esConsumoEmpleado && (
             <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">
               Este modo registra productos usados por el empleado y crea una cuenta por cobrar automática.
@@ -1315,7 +1348,7 @@ const Servicios = () => {
             )}
 
             <div className="md:col-span-4">
-              <button className="btn-primary w-full" type="submit" disabled={saving || !puedeFacturar}>
+              <button className="btn-primary w-full" type="submit" disabled={saving || !puedeCrearEnVistaActual}>
                 {saving
                   ? 'Guardando...'
                   : carrito.length > 0
@@ -1331,6 +1364,7 @@ const Servicios = () => {
       <>
       <div className="card border border-dashed border-gray-300 bg-gray-50">
         <p className="text-gray-700">Facturación rápida: selecciona empleado libre y registra el servicio en un solo paso.</p>
+        {!puedeCrearServicio && <p className="text-amber-700 mt-2">Este perfil solo puede visualizar servicios. No puede facturar ni finalizar.</p>}
       </div>
 
       <div className="card">
@@ -1345,11 +1379,11 @@ const Servicios = () => {
               )}
               <div className="mt-3">
                 {item.estado === 'libre' ? (
-                  <button className="btn-primary !px-3 !py-2 w-full inline-flex items-center justify-center gap-2" onClick={() => abrirFacturacionDirecta(item.estilista_id)}>
+                  <button className="btn-primary !px-3 !py-2 w-full inline-flex items-center justify-center gap-2" onClick={() => abrirFacturacionDirecta(item.estilista_id)} disabled={!puedeCrearServicio}>
                     <FiScissors /> Facturar servicio
                   </button>
                 ) : (
-                  <button className="btn-danger !px-3 !py-2 w-full inline-flex items-center justify-center gap-2" onClick={() => prepararFinalizacionPorTarjeta(item)}>
+                  <button className="btn-danger !px-3 !py-2 w-full inline-flex items-center justify-center gap-2" onClick={() => prepararFinalizacionPorTarjeta(item)} disabled={!puedeCrearServicio}>
                     <FiCheckCircle /> Finalizar servicio
                   </button>
                 )}
@@ -1382,7 +1416,7 @@ const Servicios = () => {
                     <td className="table-cell">{srv.cliente_nombre || '-'}</td>
                     <td className="table-cell">{formatCOP(srv.precio_cobrado || 0)}</td>
                     <td className="table-cell text-right">
-                      <button className="btn-primary !px-3 !py-2" onClick={() => prepararFinalizacion(srv)}>
+                      <button className="btn-primary !px-3 !py-2" onClick={() => prepararFinalizacion(srv)} disabled={!puedeCrearServicio}>
                         Finalizar
                       </button>
                     </td>
@@ -1815,7 +1849,7 @@ const Servicios = () => {
           </div>
 
           <div className="md:col-span-3 flex gap-2">
-            <button className="btn-primary" type="submit" disabled={saving}>Revisar y finalizar</button>
+            <button className="btn-primary" type="submit" disabled={saving || !puedeCrearServicio}>Revisar y finalizar</button>
             <button className="btn-secondary" type="button" onClick={() => setShowFinalizarModal(false)}>Cancelar</button>
           </div>
         </form>

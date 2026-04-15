@@ -7,6 +7,7 @@ import {
 import useAuthStore from '../store/authStore';
 import { toast } from 'react-toastify';
 import { roleLabel, isManagerRole } from '../utils/roles';
+import { hasMenuPermission } from '../utils/permissions';
 
 const logoSalon = '/corte_estilo_logo.png';
 
@@ -29,17 +30,17 @@ const Layout = () => {
 
   const esAdmin = isManagerRole(user?.rol);
   const menuItems = [
-    { path: '/dashboard', icon: FiHome, label: 'Dashboard' },
+    { path: '/dashboard', icon: FiHome, label: 'Dashboard', permissionKey: 'dashboard' },
     ...(esAdmin ? [
       { path: '/usuarios', icon: FiUsers, label: 'Usuarios' },
-      { path: '/estilistas', icon: FiScissors, label: 'Empleados' },
-      { path: '/impresion-pos', icon: FiPrinter, label: 'Impresion POS' },
+      { path: '/estilistas', icon: FiScissors, label: 'Empleados', permissionKey: 'estilistas' },
+      { path: '/impresion-pos', icon: FiPrinter, label: 'Impresion POS', permissionKey: 'impresion_pos' },
     ] : []),
-    { path: '/servicios', icon: FiPackage, label: 'Operación diaria' },
-    { path: '/productos', icon: FiPackage, label: 'Inventario y Servicio' },
-    { path: '/ventas', icon: FiDollarSign, label: 'Histórico de ventas' },
-    { path: '/reportes', icon: FiBarChart2, label: 'Reportes' },
-  ];
+    { path: '/servicios', icon: FiPackage, label: 'Operación diaria', permissionKey: 'servicios' },
+    { path: '/productos', icon: FiPackage, label: 'Inventario y Servicio', permissionKey: 'productos' },
+    { path: '/ventas', icon: FiDollarSign, label: 'Histórico de ventas', permissionKey: 'ventas' },
+    { path: '/reportes', icon: FiBarChart2, label: 'Reportes', permissionKey: 'reportes' },
+  ].filter((item) => !item.permissionKey || hasMenuPermission(user, item.permissionKey, 'view'));
 
   return (
     <div className="flex h-screen bg-gray-100 touch-scroll">

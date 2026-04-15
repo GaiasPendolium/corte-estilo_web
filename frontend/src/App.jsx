@@ -14,12 +14,27 @@ import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
 import useAuthStore from './store/authStore';
 import { isManagerRole } from './utils/roles';
+import { getFirstAllowedPath, hasMenuPermission } from './utils/permissions';
 
 const AdminRoute = ({ children }) => {
   const { user, isAuthenticated } = useAuthStore();
   if (!isAuthenticated) return <Navigate to="/login" replace />;
   if (!isManagerRole(user?.rol)) return <Navigate to="/dashboard" replace />;
   return children;
+};
+
+const MenuRoute = ({ menuKey, children }) => {
+  const { user, isAuthenticated } = useAuthStore();
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
+  if (!hasMenuPermission(user, menuKey, 'view')) {
+    return <Navigate to={getFirstAllowedPath(user)} replace />;
+  }
+  return children;
+};
+
+const HomeRedirect = () => {
+  const { user } = useAuthStore();
+  return <Navigate to={getFirstAllowedPath(user)} replace />;
 };
 
 function App() {
@@ -43,15 +58,15 @@ function App() {
             </ProtectedRoute>
           }
         >
-          <Route index element={<Navigate to="/dashboard" replace />} />
-          <Route path="dashboard" element={<Dashboard />} />
+          <Route index element={<HomeRedirect />} />
+          <Route path="dashboard" element={<MenuRoute menuKey="dashboard"><Dashboard /></MenuRoute>} />
           <Route path="usuarios" element={<AdminRoute><Usuarios /></AdminRoute>} />
-          <Route path="estilistas" element={<AdminRoute><Estilistas /></AdminRoute>} />
-          <Route path="servicios" element={<Servicios />} />
-          <Route path="productos" element={<Productos />} />
-          <Route path="ventas" element={<Ventas />} />
-          <Route path="impresion-pos" element={<AdminRoute><ImpresionPOS /></AdminRoute>} />
-          <Route path="reportes" element={<Reportes />} />
+          <Route path="estilistas" element={<MenuRoute menuKey="estilistas"><Estilistas /></MenuRoute>} />
+          <Route path="servicios" element={<MenuRoute menuKey="servicios"><Servicios /></MenuRoute>} />
+          <Route path="productos" element={<MenuRoute menuKey="productos"><Productos /></MenuRoute>} />
+          <Route path="ventas" element={<MenuRoute menuKey="ventas"><Ventas /></MenuRoute>} />
+          <Route path="impresion-pos" element={<MenuRoute menuKey="impresion_pos"><ImpresionPOS /></MenuRoute>} />
+          <Route path="reportes" element={<MenuRoute menuKey="reportes"><Reportes /></MenuRoute>} />
         </Route>
 
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

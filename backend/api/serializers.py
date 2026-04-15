@@ -16,9 +16,16 @@ class UsuarioSerializer(serializers.ModelSerializer):
         model = Usuario
         fields = [
             'id', 'username', 'password', 'nombre_completo',
-            'rol', 'activo', 'fecha_creacion'
+            'rol', 'permisos_ui', 'activo', 'fecha_creacion'
         ]
         read_only_fields = ['fecha_creacion']
+
+    def validate_permisos_ui(self, value):
+        if value in (None, ''):
+            return {}
+        if not isinstance(value, dict):
+            raise serializers.ValidationError('Los permisos deben enviarse como objeto JSON.')
+        return value
     
     def create(self, validated_data):
         """Crear usuario con contraseña hasheada"""

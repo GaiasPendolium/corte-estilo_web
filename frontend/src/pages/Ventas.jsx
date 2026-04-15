@@ -8,7 +8,7 @@ import useAuthStore from '../store/authStore';
 import { qzTrayService } from '../services/printing/qzTrayService';
 import { ticketPrintService } from '../services/printing/ticketPrintService';
 import { customerDisplayService } from '../services/customerDisplayService';
-import { canManageInvoices } from '../utils/roles';
+import { getAllowedSubmenuKey, hasSubmenuPermission } from '../utils/permissions';
 import { buildThermalTicketPreview } from '../utils/thermalTicketPrint';
 
 const MEDIOS_PAGO = [
@@ -101,7 +101,16 @@ const esServicioShampooNombre = (nombre) => String(nombre || '').toLowerCase().i
 
 const Ventas = () => {
   const { user } = useAuthStore();
-  const puedeEditarFacturas = canManageInvoices(user);
+  const puedeVerVentas = hasSubmenuPermission(user, 'ventas', 'ventas', 'view');
+  const puedeVerServicios = hasSubmenuPermission(user, 'ventas', 'servicios', 'view');
+  const puedeVerConsumo = hasSubmenuPermission(user, 'ventas', 'consumo_empleado', 'view');
+  const puedeCrearVenta = hasSubmenuPermission(user, 'ventas', 'ventas', 'create');
+  const puedeEditarVentas = hasSubmenuPermission(user, 'ventas', 'ventas', 'edit');
+  const puedeEliminarVentas = hasSubmenuPermission(user, 'ventas', 'ventas', 'delete');
+  const puedeEditarServicios = hasSubmenuPermission(user, 'ventas', 'servicios', 'edit');
+  const puedeEliminarServicios = hasSubmenuPermission(user, 'ventas', 'servicios', 'delete');
+  const puedeEditarConsumo = hasSubmenuPermission(user, 'ventas', 'consumo_empleado', 'edit');
+  const puedeEliminarConsumo = hasSubmenuPermission(user, 'ventas', 'consumo_empleado', 'delete');
   const [modoVista, setModoVista] = useState('ventas');
   const [fechaInicio, setFechaInicio] = useState('');
   const [fechaFin, setFechaFin] = useState('');
@@ -210,6 +219,13 @@ const Ventas = () => {
   }, [fechaInicio, fechaFin]);
 
   useEffect(() => {
+    const siguienteModo = getAllowedSubmenuKey(user, 'ventas', modoVista);
+    if (siguienteModo && siguienteModo !== modoVista) {
+      setModoVista(siguienteModo);
+    }
+  }, [user, modoVista]);
+
+  useEffect(() => {
     if (!mostrarSugerenciasProducto) {
       setSugerenciasProducto([]);
       return;
@@ -301,8 +317,8 @@ const Ventas = () => {
   const guardarVenta = async (e) => {
     e.preventDefault();
 
-    if (!puedeEditarFacturas) {
-      toast.warning('Solo administrador o gerente pueden crear o editar facturas');
+    if (!puedeCrearVenta) {
+      toast.warning('Este perfil no puede crear facturas de productos');
       return;
     }
 
@@ -389,8 +405,9 @@ const Ventas = () => {
   };
 
   const eliminarVenta = async (venta) => {
-    if (!puedeEditarFacturas) {
-      toast.warning('Solo administrador o gerente pueden eliminar facturas');
+    const esConsumoEmpleado = Boolean(venta?.es_consumo_empleado || venta?.tipo_factura === 'consumo_empleado' || venta?.deuda_consumo_estado);
+    if (esConsumoEmpleado ? !puedeEliminarConsumo : !puedeEliminarVentas) {
+      toast.warning(esConsumoEmpleado ? 'Este perfil no puede eliminar facturas de consumo empleado' : 'Este perfil no puede eliminar facturas de productos');
       return;
     }
 
@@ -444,8 +461,8 @@ const Ventas = () => {
 
   const guardarEdicionFactura = async (e) => {
     e.preventDefault();
-    if (!puedeEditarFacturas) {
-      toast.warning('Solo administrador o gerente pueden editar facturas');
+    if (!puedeEditarVentas) {
+      toast.warning('Este perfil no puede editar facturas de productos');
       return;
     }
     if (!invoiceEditForm.numero_factura) {
@@ -648,8 +665,8 @@ const Ventas = () => {
 
   const guardarServicioEditado = async (e) => {
     e.preventDefault();
-    if (!puedeEditarFacturas) {
-      toast.warning('Solo administrador o gerente pueden editar facturas de servicio');
+    if (!puedeEditarServicios) {
+      toast.warning('Este perfil no puede editar facturas de servicio');
       return;
     }
     if (!servicioEditando) return;
@@ -751,8 +768,8 @@ const Ventas = () => {
   };
 
   const eliminarServicio = async (servicio) => {
-    if (!puedeEditarFacturas) {
-      toast.warning('Solo administrador o gerente pueden eliminar facturas de servicio');
+    if (!puedeEliminarServicios) {
+      toast.warning('Este perfil no puede eliminar facturas de servicio');
       return;
     }
     const ok = window.confirm(`¿Eliminar la factura de servicio ${servicio.numero_factura || servicio.id}?`);
@@ -920,7 +937,7 @@ const Ventas = () => {
               setMostrarSugerenciasProducto(false);
               setForm({ cliente_nombre: '', estilista: '', medio_pago: 'efectivo', cantidad: '1', precio_unitario: '' });
             }}
-            disabled={!puedeEditarFacturas || modoVista !== 'ventas'}
+            disabled={!puedeCrearVenta || modoVista !== 'ventas'}
           >
             <FiPlus /> Nueva factura
           </button>
@@ -929,15 +946,21 @@ const Ventas = () => {
 
       <div className="card p-4 space-y-3">
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-          <button className={modoVista === 'ventas' ? 'btn-primary' : 'btn-secondary'} onClick={() => setModoVista('ventas')}>
-            Ventas de productos
-          </button>
-          <button className={modoVista === 'servicios' ? 'btn-primary' : 'btn-secondary'} onClick={() => setModoVista('servicios')}>
-            Servicios facturados
-          </button>
-          <button className={modoVista === 'consumo_empleado' ? 'btn-primary' : 'btn-secondary'} onClick={() => setModoVista('consumo_empleado')}>
-            Consumo Empleado
-          </button>
+          {puedeVerVentas && (
+            <button className={modoVista === 'ventas' ? 'btn-primary' : 'btn-secondary'} onClick={() => setModoVista('ventas')}>
+              Ventas de productos
+            </button>
+          )}
+          {puedeVerServicios && (
+            <button className={modoVista === 'servicios' ? 'btn-primary' : 'btn-secondary'} onClick={() => setModoVista('servicios')}>
+              Servicios facturados
+            </button>
+          )}
+          {puedeVerConsumo && (
+            <button className={modoVista === 'consumo_empleado' ? 'btn-primary' : 'btn-secondary'} onClick={() => setModoVista('consumo_empleado')}>
+              Consumo Empleado
+            </button>
+          )}
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3">
           <input className="input-field" type="date" value={fechaInicio} onChange={(e) => setFechaInicio(e.target.value)} />
@@ -1493,7 +1516,7 @@ const Ventas = () => {
                         <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => visualizarVenta(v)}>
                           <FiEye size={14} /> Ver
                         </button>
-                        {puedeEditarFacturas && (
+                        {puedeEditarVentas && (
                           <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => editarVenta(v)}>
                             <FiEdit2 size={14} /> Editar
                           </button>
@@ -1507,7 +1530,7 @@ const Ventas = () => {
                         <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={abrirCaja}>
                           Abrir caja
                         </button>
-                        {puedeEditarFacturas && (
+                        {puedeEliminarVentas && (
                           <button className="btn-danger !px-3 !py-2 inline-flex items-center gap-1" onClick={() => eliminarVenta(v)}>
                             <FiTrash2 size={14} /> Eliminar
                           </button>
@@ -1796,7 +1819,7 @@ const Ventas = () => {
                         <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => visualizarServicio(s)}>
                           <FiEye size={14} /> Ver
                         </button>
-                        {puedeEditarFacturas && (
+                        {puedeEditarServicios && (
                           <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => editarServicio(s)}>
                             <FiEdit2 size={14} /> Editar
                           </button>
@@ -1810,7 +1833,7 @@ const Ventas = () => {
                         <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={abrirCaja}>
                           Abrir caja
                         </button>
-                        {puedeEditarFacturas && (
+                        {puedeEliminarServicios && (
                           <button className="btn-danger !px-3 !py-2 inline-flex items-center gap-1" onClick={() => eliminarServicio(s)}>
                             <FiTrash2 size={14} /> Eliminar
                           </button>
@@ -1864,7 +1887,7 @@ const Ventas = () => {
                         <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => visualizarVenta(v)}>
                           <FiEye size={14} /> Ver
                         </button>
-                        {puedeEditarFacturas && (
+                        {puedeEditarConsumo && (
                           <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => editarVenta(v)}>
                             <FiEdit2 size={14} /> Editar
                           </button>
@@ -1875,7 +1898,7 @@ const Ventas = () => {
                         <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => reimprimirVenta(v)}>
                           Imprimir
                         </button>
-                        {puedeEditarFacturas && (
+                        {puedeEliminarConsumo && (
                           <button className="btn-danger !px-3 !py-2 inline-flex items-center gap-1" onClick={() => eliminarVenta(v)}>
                             <FiTrash2 size={14} /> Eliminar
                           </button>

@@ -6,6 +6,7 @@ import ModalForm from '../components/ModalForm';
 import DraggableSearchKeyboard from '../components/DraggableSearchKeyboard';
 import useAuthStore from '../store/authStore';
 import { canManageCatalog } from '../utils/roles';
+import { getAllowedSubmenuKey, hasSubmenuPermission } from '../utils/permissions';
 
 const INITIAL_FORM = {
   codigo_barras: '',
@@ -88,6 +89,8 @@ const getStockEstado = (producto) => {
 const Productos = () => {
   const { user } = useAuthStore();
   const puedeEditar = canManageCatalog(user);
+  const puedeVerInventario = hasSubmenuPermission(user, 'productos', 'inventario', 'view');
+  const puedeVerServicios = hasSubmenuPermission(user, 'productos', 'servicios', 'view');
   const [modoVista, setModoVista] = useState('inventario');
   const [productos, setProductos] = useState([]);
   const [serviciosCatalogo, setServiciosCatalogo] = useState([]);
@@ -125,6 +128,13 @@ const Productos = () => {
   useEffect(() => {
     cargarProductos();
   }, []);
+
+  useEffect(() => {
+    const next = getAllowedSubmenuKey(user, 'productos', modoVista);
+    if (next && next !== modoVista) {
+      setModoVista(next);
+    }
+  }, [user, modoVista]);
 
   useEffect(() => {
     const q = codigoBusqueda.trim().toLowerCase();
@@ -418,7 +428,7 @@ const Productos = () => {
           <button className="btn-secondary inline-flex items-center gap-2" onClick={cargarProductos} disabled={loading}>
             <FiRefreshCw className={loading ? 'animate-spin' : ''} /> Actualizar
           </button>
-          {modoVista === 'inventario' && (
+          {modoVista === 'inventario' && puedeVerInventario && (
             <button
               className="btn-primary inline-flex items-center gap-2"
               onClick={() => {
@@ -436,21 +446,25 @@ const Productos = () => {
 
       <div className="card p-2">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          <button className={modoVista === 'inventario' ? 'btn-primary' : 'btn-secondary'} onClick={() => setModoVista('inventario')}>
-            Inventario
-          </button>
-          <button
-            className={modoVista === 'servicios' ? 'btn-primary' : 'btn-secondary'}
-            onClick={() => {
-              setModoVista('servicios');
-              if (!showServicioForm) {
-                setServicioEditingId(null);
-                setServicioForm({ nombre: '', descripcion: '', precio: '0', duracion_minutos: '', es_adicional: false });
-              }
-            }}
-          >
-            Servicios
-          </button>
+          {puedeVerInventario && (
+            <button className={modoVista === 'inventario' ? 'btn-primary' : 'btn-secondary'} onClick={() => setModoVista('inventario')}>
+              Inventario
+            </button>
+          )}
+          {puedeVerServicios && (
+            <button
+              className={modoVista === 'servicios' ? 'btn-primary' : 'btn-secondary'}
+              onClick={() => {
+                setModoVista('servicios');
+                if (!showServicioForm) {
+                  setServicioEditingId(null);
+                  setServicioForm({ nombre: '', descripcion: '', precio: '0', duracion_minutos: '', es_adicional: false });
+                }
+              }}
+            >
+              Servicios
+            </button>
+          )}
         </div>
       </div>
 

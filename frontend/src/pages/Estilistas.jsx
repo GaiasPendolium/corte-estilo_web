@@ -3,6 +3,8 @@ import { FiEdit2, FiPlus, FiRefreshCw, FiTrash2 } from 'react-icons/fi';
 import { toast } from 'react-toastify';
 import { estilistasService } from '../services/api';
 import ModalForm from '../components/ModalForm';
+import useAuthStore from '../store/authStore';
+import { hasMenuPermission } from '../utils/permissions';
 
 const INITIAL_FORM = {
   nombre: '',
@@ -34,6 +36,10 @@ const getApiErrorMessage = (error, fallback) => {
 };
 
 const Estilistas = () => {
+  const { user } = useAuthStore();
+  const puedeCrear = hasMenuPermission(user, 'estilistas', 'create');
+  const puedeEditar = hasMenuPermission(user, 'estilistas', 'edit');
+  const puedeEliminar = hasMenuPermission(user, 'estilistas', 'delete');
   const [form, setForm] = useState(INITIAL_FORM);
   const [estilistas, setEstilistas] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -66,6 +72,11 @@ const Estilistas = () => {
     e.preventDefault();
 
     if (saving) {
+      return;
+    }
+
+    if ((editingId && !puedeEditar) || (!editingId && !puedeCrear)) {
+      toast.warning('No tienes permiso para guardar empleados');
       return;
     }
 
@@ -123,6 +134,10 @@ const Estilistas = () => {
   };
 
   const editarEstilista = (item) => {
+    if (!puedeEditar) {
+      toast.warning('No tienes permiso para editar empleados');
+      return;
+    }
     setEditingId(item.id);
     setForm({
       nombre: item.nombre || '',
@@ -137,6 +152,10 @@ const Estilistas = () => {
   };
 
   const eliminarEstilista = async (item) => {
+    if (!puedeEliminar) {
+      toast.warning('No tienes permiso para eliminar empleados');
+      return;
+    }
     const ok = window.confirm(`¿Eliminar empleado "${item.nombre}"?\nSi tiene historial de servicios será desactivado en lugar de eliminado, preservando sus registros.`);
     if (!ok) return;
 
@@ -169,16 +188,18 @@ const Estilistas = () => {
             <FiRefreshCw className={loading ? 'animate-spin' : ''} />
             Actualizar
           </button>
-          <button
-            className="btn-primary inline-flex items-center gap-2"
-            onClick={() => {
-              setEditingId(null);
-              setForm(INITIAL_FORM);
-              setShowForm(true);
-            }}
-          >
-            <FiPlus /> Nuevo empleado
-          </button>
+          {puedeCrear && (
+            <button
+              className="btn-primary inline-flex items-center gap-2"
+              onClick={() => {
+                setEditingId(null);
+                setForm(INITIAL_FORM);
+                setShowForm(true);
+              }}
+            >
+              <FiPlus /> Nuevo empleado
+            </button>
+          )}
         </div>
       </div>
 
@@ -317,12 +338,16 @@ const Estilistas = () => {
                     <td className="table-cell">{Number(item.comision_ventas_productos || 0).toFixed(2)}%</td>
                     <td className="table-cell">
                       <div className="flex justify-end gap-2">
-                        <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => editarEstilista(item)}>
-                          <FiEdit2 size={14} /> Editar
-                        </button>
-                        <button className="btn-danger !px-3 !py-2 inline-flex items-center gap-1" onClick={() => eliminarEstilista(item)}>
-                          <FiTrash2 size={14} /> Eliminar
-                        </button>
+                        {puedeEditar && (
+                          <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => editarEstilista(item)}>
+                            <FiEdit2 size={14} /> Editar
+                          </button>
+                        )}
+                        {puedeEliminar && (
+                          <button className="btn-danger !px-3 !py-2 inline-flex items-center gap-1" onClick={() => eliminarEstilista(item)}>
+                            <FiTrash2 size={14} /> Eliminar
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

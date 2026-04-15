@@ -4,12 +4,14 @@ import { toast } from 'react-toastify';
 import { usuariosService } from '../services/api';
 import useAuthStore from '../store/authStore';
 import ModalForm from '../components/ModalForm';
-import { ROLES, roleLabel } from '../utils/roles';
+import { ROLES, roleLabel, isAdminRole } from '../utils/roles';
+import { ACTION_LABELS, MENU_PERMISSION_DEFINITIONS, getDefaultPermissionsForRole, sanitizePermissionsForSave } from '../utils/permissions';
 
 const INITIAL_FORM = {
   username: '',
   nombre_completo: '',
   rol: 'recepcion',
+  permisos_ui: getDefaultPermissionsForRole('recepcion'),
   activo: true,
   password: '',
 };
@@ -22,6 +24,7 @@ const extractRows = (payload) => {
 
 const Usuarios = () => {
   const { user: currentUser } = useAuthStore();
+  const puedeAdministrarPermisos = isAdminRole(currentUser?.rol);
 
   const [usuarios, setUsuarios] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -83,6 +86,10 @@ const Usuarios = () => {
       activo: form.activo,
     };
 
+    if (puedeAdministrarPermisos) {
+      payload.permisos_ui = sanitizePermissionsForSave(form.permisos_ui, form.rol);
+    }
+
     if (form.password.trim()) {
       payload.password = form.password;
     }
@@ -119,8 +126,29 @@ const Usuarios = () => {
       username: usuario.username || '',
       nombre_completo: usuario.nombre_completo || '',
       rol: usuario.rol || 'recepcion',
+      permisos_ui: sanitizePermissionsForSave(usuario.permisos_ui || {}, usuario.rol || 'recepcion'),
       activo: Boolean(usuario.activo),
       password: '',
+    });
+  };
+
+  const onRoleChange = (value) => {
+    setForm((prev) => ({
+      ...prev,
+      rol: value,
+      permisos_ui: sanitizePermissionsForSave(prev.permisos_ui, value),
+    }));
+  };
+
+  const onPermissionChange = (menuKey, action, checked, submenuKey = null) => {
+    setForm((prev) => {
+      const permisos = sanitizePermissionsForSave(prev.permisos_ui, prev.rol);
+      if (submenuKey) {
+        permisos[menuKey].submenus[submenuKey][action] = checked;
+      } else {
+        permisos[menuKey][action] = checked;
+      }
+      return { ...prev, permisos_ui: permisos };
     });
   };
 
@@ -209,7 +237,7 @@ const Usuarios = () => {
             <select
               className="input-field"
               value={form.rol}
-              onChange={(e) => onInputChange('rol', e.target.value)}
+              onChange={(e) => onRoleChange(e.target.value)}
             >
               {ROLES.map((rol) => (
                 <option key={rol.value} value={rol.value}>
@@ -231,6 +259,64 @@ const Usuarios = () => {
               placeholder={isEditing ? 'Dejar vacío para no cambiar' : 'Mínimo 8 caracteres'}
             />
           </div>
+
+          {puedeAdministrarPermisos && (
+            <div className="md:col-span-2 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                <div>
+                  <label className="block text-sm text-gray-700 font-semibold">Permisos por menú</label>
+                  <p className="text-xs text-gray-500 mt-1">Controla acceso a menú, submenú y acciones del usuario.</p>
+                </div>
+                <button
+                  type="button"
+                  className="btn-secondary !py-2 !px-3"
+                  onClick={() => onInputChange('permisos_ui', getDefaultPermissionsForRole(form.rol))}
+                >
+                  Restablecer por rol
+                </button>
+              </div>
+
+              <div className="space-y-4 max-h-[420px] overflow-y-auto pr-1">
+                {MENU_PERMISSION_DEFINITIONS.map((menu) => (
+                  <div key={`perm-${menu.key}`} className="rounded-xl border border-slate-200 bg-white p-3">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <p className="min-w-[180px] text-sm font-semibold text-slate-900">{menu.label}</p>
+                      {(menu.actions || ['view']).map((action) => (
+                        <label key={`perm-${menu.key}-${action}`} className="inline-flex items-center gap-2 text-sm text-slate-700">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(form.permisos_ui?.[menu.key]?.[action])}
+                            onChange={(e) => onPermissionChange(menu.key, action, e.target.checked)}
+                          />
+                          {ACTION_LABELS[action] || action}
+                        </label>
+                      ))}
+                    </div>
+
+                    {menu.submenus?.length > 0 && (
+                      <div className="mt-3 space-y-2 border-t border-slate-100 pt-3">
+                        {menu.submenus.map((submenu) => (
+                          <div key={`perm-${menu.key}-${submenu.key}`} className="flex flex-wrap items-center gap-3 rounded-lg bg-slate-50 px-3 py-2">
+                            <p className="min-w-[180px] text-xs font-semibold uppercase tracking-wide text-slate-500">{submenu.label}</p>
+                            {(submenu.actions || []).map((action) => (
+                              <label key={`perm-${menu.key}-${submenu.key}-${action}`} className="inline-flex items-center gap-2 text-sm text-slate-700">
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(form.permisos_ui?.[menu.key]?.submenus?.[submenu.key]?.[action])}
+                                  onChange={(e) => onPermissionChange(menu.key, action, e.target.checked, submenu.key)}
+                                />
+                                {ACTION_LABELS[action] || action}
+                              </label>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="md:col-span-2 flex items-center gap-2">
             <input
@@ -277,6 +363,7 @@ const Usuarios = () => {
                   <th className="px-6 py-3 text-left">Usuario</th>
                   <th className="px-6 py-3 text-left">Nombre</th>
                   <th className="px-6 py-3 text-left">Rol</th>
+                  <th className="px-6 py-3 text-left">Permisos</th>
                   <th className="px-6 py-3 text-left">Estado</th>
                   <th className="px-6 py-3 text-right">Acciones</th>
                 </tr>
@@ -287,6 +374,7 @@ const Usuarios = () => {
                     <td className="table-cell font-medium">{usuario.username}</td>
                     <td className="table-cell">{usuario.nombre_completo}</td>
                     <td className="table-cell">{roleLabel(usuario.rol)}</td>
+                    <td className="table-cell text-xs text-slate-500">{isAdminRole(usuario.rol) ? 'Acceso total' : 'Personalizado / por rol'}</td>
                     <td className="table-cell">
                       {usuario.activo ? (
                         <span className="px-2 py-1 rounded-full text-xs bg-green-100 text-green-800">Activo</span>

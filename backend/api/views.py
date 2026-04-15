@@ -625,6 +625,25 @@ class UsuarioViewSet(viewsets.ModelViewSet):
     search_fields = ['username', 'nombre_completo']
     ordering_fields = ['username', 'fecha_creacion']
     ordering = ['-fecha_creacion']
+
+    def _validar_edicion_permisos_ui(self, request):
+        if 'permisos_ui' not in request.data:
+            return
+        rol_user = (getattr(request.user, 'rol', '') or '').strip().lower()
+        if rol_user != 'administrador':
+            raise PermissionDenied('Solo administrador puede modificar permisos por menú.')
+
+    def create(self, request, *args, **kwargs):
+        self._validar_edicion_permisos_ui(request)
+        return super().create(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        self._validar_edicion_permisos_ui(request)
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        self._validar_edicion_permisos_ui(request)
+        return super().partial_update(request, *args, **kwargs)
     
     @action(detail=False, methods=['get'])
     def me(self, request):
