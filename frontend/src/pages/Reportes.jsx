@@ -1235,6 +1235,14 @@ const aplicarLiquidacionSimple = async ({
     return;
   }
 
+  // DEBUG: Log para ver el estado
+  console.log('DEBUG aplicarLiquidacionSimple:', {
+    estilistaId,
+    skipDescuentoPuestoPorEstilista,
+    skipValue: skipDescuentoPuestoPorEstilista[estilistaId],
+    allKeys: Object.keys(skipDescuentoPuestoPorEstilista),
+  });
+
   const fechaLiquidacion = fechaFin || format(new Date(), 'yyyy-MM-dd');
   if (String(fechaInicio || '') !== String(fechaLiquidacion || '')) {
     toast.warning('La liquidación simple opera por día. Usa el mismo valor en fecha inicio y fecha fin.');
