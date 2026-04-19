@@ -28,46 +28,55 @@ const MODULO_META = {
     accent: 'from-emerald-500/20 to-teal-500/10',
     border: 'border-emerald-300/60',
   },
-  liquidacion: {
-    subtitle: 'Pago empleado, puesto y consumo en una sola vista',
-    accent: 'from-indigo-500/20 to-blue-500/10',
-    border: 'border-indigo-300/60',
-  },
-  cartera: {
-    subtitle: 'Control de facturas, abonos y saldos pendientes',
-    accent: 'from-amber-500/20 to-orange-500/10',
-    border: 'border-amber-300/60',
-  },
-  agotarse: {
-    subtitle: 'Productos críticos con stock bajo',
-    accent: 'from-rose-500/20 to-red-500/10',
-    border: 'border-rose-300/60',
-  },
-};
+                          <select
+                            className="input-field"
+                            value={modoCobroPuesto}
+                            onChange={(e) => setModoCobroPuestoPorEstilista((prev) => ({ ...prev, [estId]: e.target.value }))}
+                          >
+                            <option value="fijo">Valor fijo</option>
+                            <option value="porcentaje">Porcentaje del generado del día</option>
+                            <option value="omitido">No paga puesto (se suma a deuda)</option>
+                          </select>
 
-const MEDIOS_PAGO = [
-  { value: 'todos', label: 'Todos los medios' },
-  { value: 'efectivo', label: 'Efectivo' },
-  { value: 'nequi', label: 'Nequi' },
-  { value: 'daviplata', label: 'Daviplata' },
-  { value: 'otros', label: 'Otros' },
-];
+                          {modoCobroPuesto === 'fijo' ? (
+                            <>
+                              <button
+                                type="button"
+                                className="btn-secondary !py-1 !px-2 text-xs mt-2"
+                                onClick={() => setAbonoPuestoPorEstilista((prev) => ({ ...prev, [estId]: String(puestoPendienteSimple) }))}
+                              >
+                                Usar pendiente completo
+                              </button>
+                              <label className="block text-xs text-slate-600 mt-2 mb-1">Valor a descontar</label>
+                              <input
+                                className="input-field"
+                                type="number"
+                                min="0"
+                                value={abonoPuestoPorEstilista[estId] || ''}
+                                onChange={(e) => setAbonoPuestoPorEstilista((prev) => ({ ...prev, [estId]: e.target.value }))}
+                                disabled={modoCobroPuesto === 'omitido'}
+                              />
+                            </>
+                          ) : modoCobroPuesto === 'porcentaje' ? (
+                            <>
+                              <label className="block text-xs text-slate-600 mt-2 mb-1">Porcentaje a descontar (%)</label>
+                              <input
+                                className="input-field"
+                                type="number"
+                                min="0"
+                                max="100"
+                                value={porcentajePuestoPorEstilista[estId] || ''}
+                                onChange={(e) => setPorcentajePuestoPorEstilista((prev) => ({ ...prev, [estId]: e.target.value }))}
+                                disabled={modoCobroPuesto === 'omitido'}
+                              />
+                            </>
+                          ) : null}
 
-const MEDIOS_PAGO_OPERACION = [
-  { value: 'efectivo', label: 'Efectivo' },
-  { value: 'nequi', label: 'Nequi' },
-  { value: 'daviplata', label: 'Daviplata' },
-  { value: 'otros', label: 'Otros' },
-];
-
-const moneyFormatter = new Intl.NumberFormat('es-CO', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
-const formatMoney = (value) => `$${moneyFormatter.format(Number(value || 0))}`;
-
-const KpiCard = ({ title, value, hint, tone = 'slate' }) => {
-  const tones = {
-    slate: 'from-slate-900 to-slate-700 text-white',
-    emerald: 'from-emerald-600 to-teal-500 text-white',
-    sky: 'from-sky-600 to-blue-600 text-white',
+                          {modoCobroPuesto === 'omitido' && (
+                            <div className="mt-2 p-2 rounded bg-yellow-100 text-yellow-900 text-xs">
+                              El empleado recibirá el 100% de sus ganancias hoy y el costo de puesto se sumará automáticamente a su deuda pendiente.
+                            </div>
+                          )}
     amber: 'from-amber-500 to-orange-500 text-white',
   };
 

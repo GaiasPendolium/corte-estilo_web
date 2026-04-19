@@ -3422,7 +3422,7 @@ def _liquidar_dia_v2_core(request):
     # El payload trae el abono de esta operación; luego se acumula con lo ya registrado en el día.
     abono_operacion_puesto = abono_puesto
     puesto_modo = str(request.data.get('puesto_modo') or 'fijo').strip().lower()
-    if puesto_modo not in {'fijo', 'porcentaje'}:
+    if puesto_modo not in {'fijo', 'porcentaje', 'omitido'}:
         puesto_modo = 'fijo'
     puesto_porcentaje = _to_decimal(request.data.get('puesto_porcentaje'))
     if puesto_porcentaje > Decimal(100):
@@ -3458,6 +3458,12 @@ def _liquidar_dia_v2_core(request):
         descuento_override = max((ganancias * puesto_porcentaje) / Decimal(100), Decimal(0))
         calc['descuento_puesto'] = descuento_override
         calc['total_pagable'] = max(ganancias - descuento_override, Decimal(0))
+    elif puesto_modo == 'omitido':
+        # No se descuenta el puesto, pero el costo se suma a la deuda
+        descuento_omitido = calc['descuento_puesto']
+        calc['descuento_puesto'] = Decimal(0)
+        calc['total_pagable'] = ganancias
+        # El costo de puesto de ese día se suma a la deuda pendiente más adelante
     descuento = calc['descuento_puesto']
     pagable = calc['total_pagable']
     
@@ -3510,7 +3516,11 @@ def _liquidar_dia_v2_core(request):
     abono_puesto = abono_operacion_puesto if forzar_reemplazo_dia else (abono_puesto_previo_dia + abono_operacion_puesto)
     
     # ============ [3] SALDO PENDIENTE ACUMULADO DE PUESTO ============
-    deuda_total_puesto = deuda_anterior_puesto + descuento
+    if puesto_modo == 'omitido':
+        # Sumar el costo de puesto original a la deuda, aunque no se descuente
+        deuda_total_puesto = deuda_anterior_puesto + descuento_omitido
+    else:
+        deuda_total_puesto = deuda_anterior_puesto + descuento
     abono_aplicado_total_puesto = min(abono_puesto, deuda_total_puesto)
     saldo_puesto = max(deuda_total_puesto - abono_aplicado_total_puesto, Decimal(0))
     pendiente_liquidacion = max(pagable - total_pagado, Decimal(0))
