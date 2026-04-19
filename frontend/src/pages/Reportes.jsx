@@ -28,7 +28,36 @@ const MODULO_META = {
     accent: 'from-emerald-500/20 to-teal-500/10',
     border: 'border-emerald-300/60',
   },
-// ...existing code...
+                          <select
+                            className="input-field"
+                            value={modoCobroPuesto}
+                            onChange={(e) => setModoCobroPuestoPorEstilista((prev) => ({ ...prev, [estId]: e.target.value }))}
+                          >
+                            <option value="fijo">Valor fijo</option>
+                            <option value="porcentaje">Porcentaje del generado del día</option>
+                            <option value="omitido">No paga puesto (se suma a deuda)</option>
+                          </select>
+
+                          {modoCobroPuesto === 'fijo' ? (
+                            <>
+                              <button
+                                type="button"
+                                className="btn-secondary !py-1 !px-2 text-xs mt-2"
+                                onClick={() => setAbonoPuestoPorEstilista((prev) => ({ ...prev, [estId]: String(puestoPendienteSimple) }))}
+                              >
+                                Usar pendiente completo
+                              </button>
+                              <label className="block text-xs text-slate-600 mt-2 mb-1">Valor a descontar</label>
+                              <input
+                                className="input-field"
+                                type="number"
+                                min="0"
+                                value={abonoPuestoPorEstilista[estId] || ''}
+                                onChange={(e) => setAbonoPuestoPorEstilista((prev) => ({ ...prev, [estId]: e.target.value }))}
+                                disabled={modoCobroPuesto === 'omitido'}
+                              />
+                            </>
+                          ) : modoCobroPuesto === 'porcentaje' ? (
                             <>
                               <label className="block text-xs text-slate-600 mt-2 mb-1">Porcentaje a descontar (%)</label>
                               <input
