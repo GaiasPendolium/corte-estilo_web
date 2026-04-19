@@ -18,6 +18,7 @@ class Command(BaseCommand):
             "ALTER TABLE estado_pago_estilista_dia ADD COLUMN IF NOT EXISTS saldo_puesto_pendiente numeric(12,2) NOT NULL DEFAULT 0",
             "ALTER TABLE estado_pago_estilista_dia ADD COLUMN IF NOT EXISTS neto_dia numeric(12,2) NULL DEFAULT 0",
             "ALTER TABLE estado_pago_estilista_dia ADD COLUMN IF NOT EXISTS pendiente_puesto numeric(12,2) NULL DEFAULT 0",
+            "ALTER TABLE estado_pago_estilista_dia ADD COLUMN IF NOT EXISTS skip_descuento_puesto boolean NOT NULL DEFAULT false",
             "ALTER TABLE estado_pago_estilista_dia ADD COLUMN IF NOT EXISTS usuario_liquida_id bigint NULL",
             "ALTER TABLE estado_pago_estilista_historial ADD COLUMN IF NOT EXISTS monto_liquidado numeric(12,2) NOT NULL DEFAULT 0",
             "ALTER TABLE estado_pago_estilista_historial ADD COLUMN IF NOT EXISTS abono_puesto numeric(12,2) NOT NULL DEFAULT 0",

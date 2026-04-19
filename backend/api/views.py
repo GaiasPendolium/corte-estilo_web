@@ -3590,124 +3590,85 @@ def _liquidar_dia_v2_core(request):
             estado_resultante = 'cancelado'
         try:
             with connection.cursor() as cursor:
-                # 1) Intentar update de fila existente (set completo).
-                try:
-                    cursor.execute(
-                        """
+                cursor.execute(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'estado_pago_estilista_dia'
+                    """
+                )
+                columnas_disponibles = {row[0] for row in cursor.fetchall()}
+                if 'skip_descuento_puesto' not in columnas_disponibles:
+                    logger.warning('Tabla legacy sin columna skip_descuento_puesto; se guardará sin ese campo.')
+
+                columnas_update = [
+                    ('estado', estado_resultante),
+                    ('pago_efectivo', pago_efectivo),
+                    ('pago_nequi', pago_nequi),
+                    ('pago_daviplata', pago_daviplata),
+                    ('pago_otros', pago_otros),
+                    ('abono_puesto', abono_puesto),
+                ]
+                if 'medio_abono_puesto' in columnas_disponibles:
+                    columnas_update.append(('medio_abono_puesto', medio_abono_puesto))
+                if 'saldo_puesto_pendiente' in columnas_disponibles:
+                    columnas_update.append(('saldo_puesto_pendiente', saldo_puesto))
+                if 'pendiente_puesto' in columnas_disponibles:
+                    columnas_update.append(('pendiente_puesto', saldo_puesto))
+                if 'skip_descuento_puesto' in columnas_disponibles:
+                    columnas_update.append(('skip_descuento_puesto', skip_descuento_puesto))
+                if 'notas' in columnas_disponibles:
+                    columnas_update.append(('notas', notas))
+                if 'actualizado_en' in columnas_disponibles:
+                    columnas_update.append(('actualizado_en', timezone.now()))
+
+                set_clause = ',\n                            '.join(
+                    f"{columna}=%s" for columna, _ in columnas_update
+                )
+                cursor.execute(
+                    f"""
                         UPDATE estado_pago_estilista_dia
-                        SET estado=%s,
-                            pago_efectivo=%s,
-                            pago_nequi=%s,
-                            pago_daviplata=%s,
-                            pago_otros=%s,
-                            abono_puesto=%s,
-                            medio_abono_puesto=%s,
-                            pendiente_puesto=%s,
-                            skip_descuento_puesto=%s,
-                            notas=%s,
-                            actualizado_en=%s
+                        SET {set_clause}
                         WHERE estilista_id=%s AND fecha=%s
-                        """,
-                        [
-                            estado_resultante,
-                            pago_efectivo,
-                            pago_nequi,
-                            pago_daviplata,
-                            pago_otros,
-                            abono_puesto,
-                            medio_abono_puesto,
-                            saldo_puesto,
-                            skip_descuento_puesto,
-                            notas,
-                            timezone.now(),
-                            estilista.id,
-                            fecha,
-                        ],
-                    )
-                except Exception as e1:
-                    logger.warning(f"First SQL update attempt failed: {str(e1)}, trying alternative...")
-                    cursor.execute(
-                        """
-                        UPDATE estado_pago_estilista_dia
-                        SET estado=%s,
-                            pago_efectivo=%s,
-                            pago_nequi=%s,
-                            pago_daviplata=%s,
-                            pago_otros=%s,
-                            abono_puesto=%s,
-                            medio_abono_puesto=%s,
-                            saldo_puesto_pendiente=%s,
-                            pendiente_puesto=%s,
-                            skip_descuento_puesto=%s,
-                            notas=%s,
-                            actualizado_en=%s
-                        WHERE estilista_id=%s AND fecha=%s
-                        """,
-                        [
-                            estado_resultante,
-                            pago_efectivo,
-                            pago_nequi,
-                            pago_daviplata,
-                            pago_otros,
-                            abono_puesto,
-                            medio_abono_puesto,
-                            saldo_puesto,
-                            saldo_puesto,
-                            skip_descuento_puesto,
-                            notas,
-                            timezone.now(),
-                            estilista.id,
-                            fecha,
-                        ],
-                    )
+                    """,
+                    [valor for _, valor in columnas_update] + [estilista.id, fecha],
+                )
 
                 # 2) Si no existía, insertar.
                 if cursor.rowcount == 0:
-                    try:
-                        cursor.execute(
-                            """
-                            INSERT INTO estado_pago_estilista_dia
-                            (estilista_id, fecha, estado, pago_efectivo, pago_nequi, pago_daviplata, pago_otros,
-                             abono_puesto, medio_abono_puesto, pendiente_puesto, skip_descuento_puesto, notas, actualizado_en)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                            """,
-                            [
-                                estilista.id,
-                                fecha,
-                                estado_resultante,
-                                pago_efectivo,
-                                pago_nequi,
-                                pago_daviplata,
-                                pago_otros,
-                                abono_puesto,
-                                medio_abono_puesto,
-                                saldo_puesto,
-                                skip_descuento_puesto,
-                                notas,
-                                timezone.now(),
-                            ],
-                        )
-                    except Exception as e_insert:
-                        logger.warning(f"Insert with skip_descuento_puesto failed: {str(e_insert)}, trying without...")
-                        cursor.execute(
-                            """
-                            INSERT INTO estado_pago_estilista_dia
-                            (estilista_id, fecha, estado, pago_efectivo, pago_nequi, pago_daviplata, pago_otros,
-                             notas, actualizado_en)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                            """,
-                            [
-                                estilista.id,
-                                fecha,
-                                estado_resultante,
-                                pago_efectivo,
-                                pago_nequi,
-                                pago_daviplata,
-                                pago_otros,
-                                notas,
-                                timezone.now(),
-                            ],
-                        )
+                    columnas_insert = [
+                        ('estilista_id', estilista.id),
+                        ('fecha', fecha),
+                        ('estado', estado_resultante),
+                        ('pago_efectivo', pago_efectivo),
+                        ('pago_nequi', pago_nequi),
+                        ('pago_daviplata', pago_daviplata),
+                        ('pago_otros', pago_otros),
+                    ]
+                    if 'abono_puesto' in columnas_disponibles:
+                        columnas_insert.append(('abono_puesto', abono_puesto))
+                    if 'medio_abono_puesto' in columnas_disponibles:
+                        columnas_insert.append(('medio_abono_puesto', medio_abono_puesto))
+                    if 'saldo_puesto_pendiente' in columnas_disponibles:
+                        columnas_insert.append(('saldo_puesto_pendiente', saldo_puesto))
+                    if 'pendiente_puesto' in columnas_disponibles:
+                        columnas_insert.append(('pendiente_puesto', saldo_puesto))
+                    if 'skip_descuento_puesto' in columnas_disponibles:
+                        columnas_insert.append(('skip_descuento_puesto', skip_descuento_puesto))
+                    if 'notas' in columnas_disponibles:
+                        columnas_insert.append(('notas', notas))
+                    if 'actualizado_en' in columnas_disponibles:
+                        columnas_insert.append(('actualizado_en', timezone.now()))
+
+                    columnas_sql = ', '.join(columna for columna, _ in columnas_insert)
+                    valores_sql = ', '.join(['%s'] * len(columnas_insert))
+                    cursor.execute(
+                        f"""
+                            INSERT INTO estado_pago_estilista_dia ({columnas_sql})
+                            VALUES ({valores_sql})
+                        """,
+                        [valor for _, valor in columnas_insert],
+                    )
             guardado_legacy_sql = True
         except Exception as e:
             return Response(
