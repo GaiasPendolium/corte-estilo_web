@@ -2081,9 +2081,12 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
             const tieneValorPuestoDigitado = String(abonoPuestoPorEstilista[estId] || '').trim().length > 0;
             const tienePorcentajeDigitado = String(porcentajePuestoPorEstilista[estId] || '').trim().length > 0;
             const tienePuestoManual = modoCobroPuesto === 'porcentaje' ? tienePorcentajeDigitado : tieneValorPuestoDigitado;
-            const descuentoPuestoAplicado = tienePuestoManual
-              ? Math.max(abonoPuestoCalculado, 0)
-              : descuentoPuestoDiaSimple;
+            const skipPuestoEstilista = Boolean(skipDescuentoPuestoPorEstilista[estId] || false);
+            const descuentoPuestoAplicado = skipPuestoEstilista
+              ? 0  // No aplicar descuento si skip está marcado
+              : (tienePuestoManual
+                  ? Math.max(abonoPuestoCalculado, 0)
+                  : descuentoPuestoDiaSimple);
             const descuentoConsumoAplicado = cobroConsumoAplicado;
             const totalDescuentosSimple = descuentoPuestoAplicado;
             const totalPagarFinalSimple = Math.max(generadoEmpleadoSimple - totalDescuentosSimple, 0);
