@@ -3437,6 +3437,10 @@ def _liquidar_dia_v2_core(request):
         skip_descuento_puesto = skip_descuento_puesto_raw.strip().lower() in {'1', 'true', 'si', 'sí', 'yes'}
     else:
         skip_descuento_puesto = bool(skip_descuento_puesto_raw)
+    # DEBUG: Log para verificar que se recibe correctamente
+    import sys
+    print(f"DEBUG skip_descuento_puesto: {skip_descuento_puesto} (raw: {skip_descuento_puesto_raw}, type: {type(skip_descuento_puesto_raw)})", file=sys.stderr)
+
     medio_abono_puesto = (request.data.get('medio_abono_puesto') or 'efectivo').strip().lower()
     aplica_comision_ventas = _to_bool_flag(request.data.get('aplica_comision_ventas'), default=True)
     if medio_abono_puesto not in {'efectivo', 'nequi', 'daviplata', 'otros'}:
@@ -3493,6 +3497,9 @@ def _liquidar_dia_v2_core(request):
 
     # 1) Tope principal: valor a liquidar no puede superar el total ganado por el empleado.
     if total_pagado > pagable:
+        import sys
+        print(f"DEBUG ERROR: total_pagado={float(total_pagado):.2f} > pagable={float(pagable):.2f}", file=sys.stderr)
+        print(f"DEBUG: ganancias={float(ganancias):.2f}, descuento={float(descuento):.2f}, skip_descuento_puesto={skip_descuento_puesto}", file=sys.stderr)
         return Response({
             'error': (
                 f'El valor a liquidar (${float(total_pagado):.2f}) no puede superar '
