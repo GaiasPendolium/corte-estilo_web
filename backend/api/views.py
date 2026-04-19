@@ -3432,12 +3432,17 @@ def _liquidar_dia_v2_core(request):
         forzar_reemplazo_dia = forzar_reemplazo_dia_raw.strip().lower() in {'1', 'true', 'si', 'sí', 'yes'}
     else:
         forzar_reemplazo_dia = bool(forzar_reemplazo_dia_raw)
+    skip_descuento_puesto_raw = request.data.get('skip_descuento_puesto', False)
+    if isinstance(skip_descuento_puesto_raw, str):
+        skip_descuento_puesto = skip_descuento_puesto_raw.strip().lower() in {'1', 'true', 'si', 'sí', 'yes'}
+    else:
+        skip_descuento_puesto = bool(skip_descuento_puesto_raw)
     medio_abono_puesto = (request.data.get('medio_abono_puesto') or 'efectivo').strip().lower()
     aplica_comision_ventas = _to_bool_flag(request.data.get('aplica_comision_ventas'), default=True)
     if medio_abono_puesto not in {'efectivo', 'nequi', 'daviplata', 'otros'}:
         medio_abono_puesto = 'efectivo'
     notas = request.data.get('notas', '').strip()[:255]
-    
+
     total_pagado = pago_efectivo + pago_nequi + pago_daviplata + pago_otros
     
     # ============ [1] CALCULAR LIQUIDACIÓN ============
@@ -3460,6 +3465,13 @@ def _liquidar_dia_v2_core(request):
         calc['total_pagable'] = max(ganancias - descuento_override, Decimal(0))
     descuento = calc['descuento_puesto']
     pagable = calc['total_pagable']
+
+    # ============ LÓGICA SKIP_DESCUENTO_PUESTO ============
+    # Si skip_descuento_puesto es True, NO descontar puesto del pago.
+    # El empleado recibe el 100% ganado, y el descuento se suma a la deuda.
+    if skip_descuento_puesto:
+        pagable = ganancias  # Pago sin descuento
+        abono_operacion_puesto = Decimal(0)  # NO permitir abono ese día
     
     # ============ [2] VALIDAR REGLAS DE NEGOCIO ============
     # Deuda anterior de puesto (saldo arrastrado del último día liquidado)
@@ -3540,6 +3552,7 @@ def _liquidar_dia_v2_core(request):
         estado_diaria.medio_abono_puesto = medio_abono_puesto
         estado_diaria.saldo_puesto_pendiente = saldo_puesto
         estado_diaria.pendiente_puesto = saldo_puesto  # compatibilidad legacy
+        estado_diaria.skip_descuento_puesto = skip_descuento_puesto
         estado_diaria.notas = notas
         estado_diaria.usuario_liquida = request.user
         
@@ -3582,6 +3595,7 @@ def _liquidar_dia_v2_core(request):
                             abono_puesto=%s,
                             medio_abono_puesto=%s,
                             pendiente_puesto=%s,
+                            skip_descuento_puesto=%s,
                             notas=%s,
                             actualizado_en=%s
                         WHERE estilista_id=%s AND fecha=%s
@@ -3595,6 +3609,7 @@ def _liquidar_dia_v2_core(request):
                             abono_puesto,
                             medio_abono_puesto,
                             saldo_puesto,
+                            skip_descuento_puesto,
                             notas,
                             timezone.now(),
                             estilista.id,
@@ -3614,6 +3629,7 @@ def _liquidar_dia_v2_core(request):
                             medio_abono_puesto=%s,
                             saldo_puesto_pendiente=%s,
                             pendiente_puesto=%s,
+                            skip_descuento_puesto=%s,
                             notas=%s,
                             actualizado_en=%s
                         WHERE estilista_id=%s AND fecha=%s
@@ -3628,6 +3644,7 @@ def _liquidar_dia_v2_core(request):
                             medio_abono_puesto,
                             saldo_puesto,
                             saldo_puesto,
+                            skip_descuento_puesto,
                             notas,
                             timezone.now(),
                             estilista.id,
@@ -3642,8 +3659,8 @@ def _liquidar_dia_v2_core(request):
                             """
                             INSERT INTO estado_pago_estilista_dia
                             (estilista_id, fecha, estado, pago_efectivo, pago_nequi, pago_daviplata, pago_otros,
-                             abono_puesto, medio_abono_puesto, pendiente_puesto, notas, actualizado_en)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                             abono_puesto, medio_abono_puesto, pendiente_puesto, skip_descuento_puesto, notas, actualizado_en)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             """,
                             [
                                 estilista.id,
@@ -3656,6 +3673,7 @@ def _liquidar_dia_v2_core(request):
                                 abono_puesto,
                                 medio_abono_puesto,
                                 saldo_puesto,
+                                skip_descuento_puesto,
                                 notas,
                                 timezone.now(),
                             ],
@@ -3868,6 +3886,136 @@ def liquidar_operacion_integral(request):
         return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
     except Exception as e:
         return Response({'error': f'No se pudo completar la operación integral: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def cargar_deuda_puesto_dia(request):
+    """
+    Carga manual de deuda de puesto para un día específico.
+
+    POST /api/reportes/estilistas/cargar-deuda-puesto/
+
+    Body:
+    {
+        "estilista_id": 5,
+        "fecha": "2026-04-15",
+        "monto_deuda": 45000,
+        "notas": "No laboró este día"
+    }
+
+    Lógica:
+    1. Validar que la fecha NO tenga liquidación previa
+    2. Obtener o crear EstadoPagoEstilistaDia
+    3. Sumar monto_deuda a saldo_puesto_pendiente
+    4. Crear registro en historial
+    5. Retornar estado actualizado
+    """
+
+    if _es_recepcion(request.user):
+        raise PermissionDenied('Recepción no tiene permiso para cargar deuda de puesto.')
+
+    try:
+        estilista_id = int(request.data.get('estilista_id') or 0)
+        estilista = Estilista.objects.get(id=estilista_id, activo=True)
+    except (ValueError, Estilista.DoesNotExist):
+        return Response({'error': 'Estilista no encontrado.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        fecha_str = request.data.get('fecha', '').strip()
+        fecha = datetime.strptime(fecha_str, '%Y-%m-%d').date()
+    except Exception:
+        return Response({'error': 'Formato fecha inválido. Usa YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    def _to_decimal(v):
+        try:
+            d = Decimal(str(v or 0))
+            return max(d, Decimal(0))
+        except:
+            return Decimal(0)
+
+    monto_deuda = _to_decimal(request.data.get('monto_deuda'))
+    if monto_deuda <= Decimal(0):
+        return Response({'error': 'El monto de deuda debe ser mayor a 0.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    notas = request.data.get('notas', '').strip()[:255]
+
+    try:
+        with transaction.atomic():
+            # Verificar que NO exista liquidación previa en esa fecha
+            estado_existente = EstadoPagoEstilistaDia.objects.filter(
+                estilista=estilista,
+                fecha=fecha,
+            ).first()
+
+            if estado_existente and (
+                estado_existente.pago_efectivo > 0 or
+                estado_existente.pago_nequi > 0 or
+                estado_existente.pago_daviplata > 0 or
+                estado_existente.pago_otros > 0
+            ):
+                return Response({
+                    'error': 'No puedes cargar deuda en un día ya liquidado. Usa la opción de corregir liquidación.'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Obtener o crear registro
+            estado_diaria, creado = EstadoPagoEstilistaDia.objects.get_or_create(
+                estilista=estilista,
+                fecha=fecha,
+            )
+
+            estado_anterior = estado_diaria.estado
+            saldo_anterior = estado_diaria.saldo_puesto_pendiente
+
+            # Sumar deuda
+            estado_diaria.saldo_puesto_pendiente = estado_diaria.saldo_puesto_pendiente + monto_deuda
+
+            # Actualizar estado a 'debe' si hay deuda
+            if estado_diaria.saldo_puesto_pendiente > Decimal(0):
+                estado_diaria.estado = 'debe'
+            else:
+                estado_diaria.estado = 'cancelado'
+
+            # Agregar nota
+            notas_actual = str(estado_diaria.notas or '')
+            if notas:
+                notas_actual = f"{notas_actual} | Carga manual: {notas}".lstrip('| ')
+            estado_diaria.notas = notas_actual[:255]
+            estado_diaria.usuario_liquida = request.user
+
+            estado_diaria.save()
+
+            # Crear registro en historial
+            try:
+                EstadoPagoEstilistaHistorial.objects.create(
+                    estilista=estilista,
+                    fecha=fecha,
+                    estado_anterior=estado_anterior,
+                    estado_nuevo=estado_diaria.estado,
+                    usuario=request.user,
+                    notas=f'Carga manual de deuda: ${float(monto_deuda):,.2f}. {notas}',
+                    monto_liquidado=Decimal(0),
+                    abono_puesto_dia=Decimal(0),
+                )
+            except Exception:
+                pass  # Continuar si no se puede crear historial
+
+            return Response({
+                'success': True,
+                'mensaje': f'Deuda de ${float(monto_deuda):,.2f} cargada correctamente.',
+                'estilista_id': estilista.id,
+                'estilista_nombre': estilista.nombre,
+                'fecha': fecha.strftime('%Y-%m-%d'),
+                'monto_cargado': float(monto_deuda),
+                'saldo_anterior': float(saldo_anterior),
+                'saldo_nuevo': float(estado_diaria.saldo_puesto_pendiente),
+                'estado': estado_diaria.estado,
+            }, status=status.HTTP_200_OK)
+
+    except ValueError as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+    except Exception as e:
+        return Response({'error': f'No se pudo cargar la deuda: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @api_view(['GET'])

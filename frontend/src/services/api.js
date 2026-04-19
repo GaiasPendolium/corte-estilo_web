@@ -517,6 +517,16 @@ export const reportesService = {
     return response.data;
   },
 
+  cargarDeudaPuestoDia: async ({ estilista_id, fecha, monto_deuda, notas }) => {
+    const response = await api.post('/reportes/estilistas/cargar-deuda-puesto/', {
+      estilista_id,
+      fecha,
+      monto_deuda,
+      notas: notas || '',
+    });
+    return response.data;
+  },
+
   getConsumoEmpleadoDeudas: async (params) => {
     const response = await api.get('/reportes/consumo-empleado/deudas/', { params });
     return response.data;

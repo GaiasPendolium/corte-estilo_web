@@ -637,6 +637,13 @@ class EstadoPagoEstilistaDia(models.Model):
     neto_dia = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Neto del día (DEPRECATED)', null=True, blank=True)
     pendiente_puesto = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Pendiente puesto (DEPRECATED)', null=True, blank=True)
     
+    # CONFIGURACIÓN DE LIQUIDACIÓN
+    skip_descuento_puesto = models.BooleanField(
+        default=False,
+        verbose_name='Omitir descuento de puesto',
+        help_text='Si es True, ese día NO se descuenta puesto del pago. El descuento se suma a la deuda.'
+    )
+
     # AUDITORÍA
     notas = models.CharField(max_length=255, blank=True, null=True, verbose_name='Notas')
     usuario_liquida = models.ForeignKey(

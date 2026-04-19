@@ -165,6 +165,8 @@ const Reportes = () => {
   const [deudaConsumoSeleccionadasPorEstilista, setDeudaConsumoSeleccionadasPorEstilista] = useState({});
   const [modoCorreccionPorEstilista, setModoCorreccionPorEstilista] = useState({});
   const [savingEstadoByEstilista, setSavingEstadoByEstilista] = useState({});
+  const [skipDescuentoPuestoPorEstilista, setSkipDescuentoPuestoPorEstilista] = useState({});
+  const [deudaPuestoModal, setDeudaPuestoModal] = useState({ open: false, estilista_id: null, fecha: '', monto: '', notas: '', loading: false });
   const [numericPadTarget, setNumericPadTarget] = useState(null);
   const [desgloseLiquidacion, setDesgloseLiquidacion] = useState(null);
   const [loadingDesgloseLiquidacion, setLoadingDesgloseLiquidacion] = useState(false);
@@ -1255,6 +1257,7 @@ const aplicarLiquidacionSimple = async ({
   const medio_abono_puesto = medioAbonoPuestoPorEstilista[estilistaId] || 'efectivo';
   const aplica_comision_ventas = Boolean(aplicaComisionVentasPorEstilista[estilistaId] ?? true);
   const medioCobroConsumo = medioCobroConsumoPorEstilista[estilistaId] || 'efectivo';
+  const skip_puesto = Boolean(skipDescuentoPuestoPorEstilista[estilistaId] || false);
 
   setSavingEstadoByEstilista((prev) => ({ ...prev, [estilistaId]: true }));
   try {
@@ -1265,12 +1268,13 @@ const aplicarLiquidacionSimple = async ({
       pago_nequi: usarAutoEfectivo ? 0 : pago_nequi,
       pago_daviplata: usarAutoEfectivo ? 0 : pago_daviplata,
       pago_otros: usarAutoEfectivo ? 0 : pago_otros,
-      abono_puesto: Number(abonoPuestoAplicado || 0),
+      abono_puesto: skip_puesto ? 0 : Number(abonoPuestoAplicado || 0),
       medio_abono_puesto,
       aplica_comision_ventas,
       puesto_modo,
       puesto_porcentaje,
       forzar_reemplazo_dia: false,
+      skip_descuento_puesto: skip_puesto,
       consumo_monto: cobroConsumoAplicado,
       deuda_ids: deudasConsumoSeleccionadas,
       medio_cobro_consumo: medioCobroConsumo,
@@ -1379,6 +1383,34 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
     }));
 
     toast.info(`Valores precargados para corregir ${registroDia.fecha || 'el día seleccionado'}. Ajusta y vuelve a liquidar.`);
+  };
+
+  const cargarDeudaPuestoManual = async () => {
+    const { estilista_id, fecha, monto, notas } = deudaPuestoModal;
+
+    if (!estilista_id || !fecha || !monto || Number(monto) <= 0) {
+      toast.error('Completa todos los campos requeridos y el monto debe ser mayor a 0.');
+      return;
+    }
+
+    setDeudaPuestoModal((prev) => ({ ...prev, loading: true }));
+    try {
+      const resultado = await reportesService.cargarDeudaPuestoDia({
+        estilista_id: Number(estilista_id),
+        fecha,
+        monto_deuda: Number(monto),
+        notas: String(notas || ''),
+      });
+
+      toast.success(`✓ Deuda cargada: ${resultado.estilista_nombre} - ${formatMoney(Number(resultado.monto_cargado))}`);
+      setDeudaPuestoModal({ open: false, estilista_id: null, fecha: '', monto: '', notas: '', loading: false });
+      await Promise.all([cargarTodo(), cargarCarteraLiquidacionGlobal()]);
+    } catch (error) {
+      const msg = error?.response?.data?.error || error?.message || 'No se pudo cargar la deuda.';
+      toast.error(String(msg));
+    } finally {
+      setDeudaPuestoModal((prev) => ({ ...prev, loading: false }));
+    }
   };
 
   const eliminarRegistroHistorial = async (registro) => {
@@ -1869,20 +1901,27 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
       <section className="rounded-3xl bg-gradient-to-br from-slate-900 via-slate-800 to-emerald-900 p-6 text-white shadow-2xl">
         <h2 className="text-2xl font-black tracking-tight">Liquidación Inteligente</h2>
         <p className="mt-2 text-sm text-slate-200">Vista por día para liquidar lo que gana el empleado con menor complejidad operativa.</p>
-        <div className="mt-3 inline-flex rounded-xl border border-white/30 bg-white/10 p-1">
+        <div className="mt-3 inline-flex flex-wrap gap-1 rounded-xl border border-white/30 bg-white/10 p-1">
           <button
             type="button"
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${vistaSimpleLiquidacion ? 'bg-white text-slate-900' : 'text-white'}`}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${vistaSimpleLiquidacion === true ? 'bg-white text-slate-900' : 'text-white'}`}
             onClick={() => setVistaSimpleLiquidacion(true)}
           >
             Vista simple
           </button>
           <button
             type="button"
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${!vistaSimpleLiquidacion ? 'bg-white text-slate-900' : 'text-white'}`}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${vistaSimpleLiquidacion === false ? 'bg-white text-slate-900' : 'text-white'}`}
             onClick={() => setVistaSimpleLiquidacion(false)}
           >
             Vista avanzada
+          </button>
+          <button
+            type="button"
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${vistaSimpleLiquidacion === 'deuda' ? 'bg-white text-slate-900' : 'text-white'}`}
+            onClick={() => setVistaSimpleLiquidacion('deuda')}
+          >
+            Cargar deuda
           </button>
         </div>
       </section>
@@ -2059,7 +2098,77 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
               ? Math.max(Math.round((Math.max(generadoEmpleadoSimple, 0) * porcentajePuestoDigitado) / 100), 0)
               : abonoPuestoDigitado;
 
-            if (vistaSimpleLiquidacion) {
+            if (vistaSimpleLiquidacion === 'deuda') {
+              return (
+                <>
+                  <div className="card border border-violet-200 bg-violet-50">
+                    <h3 className="card-header mb-3">Cargar deuda de puesto manual</h3>
+                    <p className="text-xs text-slate-600 mb-4">Selecciona un empleado, fecha y monto para cargar deuda de puesto manualmente.</p>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs text-slate-600 mb-2">Empleado</label>
+                        <select
+                          className="input-field"
+                          value={deudaPuestoModal.estilista_id || ''}
+                          onChange={(e) => setDeudaPuestoModal((prev) => ({ ...prev, estilista_id: e.target.value }))}
+                        >
+                          <option value="">Selecciona un empleado</option>
+                          {(biData?.estilistas || []).map((est) => (
+                            <option key={est.estilista_id} value={est.estilista_id}>
+                              {est.estilista_nombre}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs text-slate-600 mb-2">Fecha</label>
+                        <input
+                          type="date"
+                          className="input-field"
+                          value={deudaPuestoModal.fecha}
+                          onChange={(e) => setDeudaPuestoModal((prev) => ({ ...prev, fecha: e.target.value }))}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-slate-600 mb-2">Monto de deuda</label>
+                        <input
+                          type="number"
+                          className="input-field"
+                          min="0"
+                          step="1"
+                          value={deudaPuestoModal.monto}
+                          onChange={(e) => setDeudaPuestoModal((prev) => ({ ...prev, monto: e.target.value }))}
+                          placeholder="0"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-slate-600 mb-2">Notas (opcional)</label>
+                        <input
+                          type="text"
+                          className="input-field"
+                          value={deudaPuestoModal.notas}
+                          onChange={(e) => setDeudaPuestoModal((prev) => ({ ...prev, notas: e.target.value }))}
+                          placeholder="Ej: No laboró"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="mt-4 flex gap-2">
+                      <button
+                        className="btn-primary flex-1"
+                        onClick={cargarDeudaPuestoManual}
+                        disabled={deudaPuestoModal.loading}
+                      >
+                        {deudaPuestoModal.loading ? 'Cargando...' : 'Cargar deuda'}
+                      </button>
+                    </div>
+                  </div>
+                </>
+              );
+            }
+
+            if (vistaSimpleLiquidacion === true) {
               return (
                 <>
                   {String(fechaInicio || '') !== String(fechaFin || '') && (
@@ -2126,7 +2235,26 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                             <p>Valor pendiente: <span className="font-semibold text-amber-800">{formatMoney(puestoPendienteSimple)}</span></p>
                             <p>Valor total (día + pendiente): <span className="font-semibold text-amber-900">{formatMoney(puestoTotalSimple)}</span></p>
                           </div>
-                          <label className="block text-xs text-slate-600 mt-2 mb-1">Tipo de cobro del puesto</label>
+                          <label className="flex items-start gap-2 mt-3 mb-3 p-2 rounded-lg bg-red-50 border border-red-200 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(skipDescuentoPuestoPorEstilista[estId])}
+                              onChange={(e) => {
+                                setSkipDescuentoPuestoPorEstilista((prev) => ({ ...prev, [estId]: e.target.checked }));
+                                if (e.target.checked) {
+                                  setAbonoPuestoPorEstilista((prev) => ({ ...prev, [estId]: '0' }));
+                                }
+                              }}
+                              className="mt-1"
+                            />
+                            <span className="text-xs text-red-800">
+                              <strong>⚠️ No descontar puesto este día</strong>
+                              <br />El costo del puesto se sumará a la deuda del empleado.
+                            </span>
+                          </label>
+                          {!skipDescuentoPuestoPorEstilista[estId] && (
+                            <>
+                              <label className="block text-xs text-slate-600 mb-1">Tipo de cobro del puesto</label>
                           <select
                             className="input-field"
                             value={modoCobroPuesto}
@@ -2191,6 +2319,8 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                           </select>
                           <p className="text-xs text-amber-700 mt-2">Aplicado: {formatMoney(descuentoPuestoAplicado)}</p>
                           <p className="text-[11px] text-slate-600 mt-1">Se registra como abono de puesto y no se vuelve a descontar del pendiente.</p>
+                            </>
+                          )}
                         </div>
 
                         <div className="rounded-xl border border-rose-200 bg-white p-3">
@@ -2824,9 +2954,16 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                           <div key={`hist-dia-${h.fecha}`} className="rounded-xl border border-sky-200 bg-white p-3">
                             <div className="flex justify-between gap-2 items-center">
                               <p className="text-sm font-semibold text-slate-900">{h.fecha || '-'}</p>
-                              <span className={`text-xs font-semibold px-2 py-1 rounded-full border ${estadoPuesto === 'Debe' ? 'bg-rose-100 text-rose-700 border-rose-200' : 'bg-emerald-100 text-emerald-700 border-emerald-200'}`}>
-                                {estadoPuesto}
-                              </span>
+                              <div className="flex gap-1 items-center flex-wrap justify-end">
+                                {h.skip_descuento_puesto && (
+                                  <span className="text-xs font-semibold px-2 py-1 rounded-full border bg-purple-100 text-purple-700 border-purple-200">
+                                    📌 Sin puesto
+                                  </span>
+                                )}
+                                <span className={`text-xs font-semibold px-2 py-1 rounded-full border ${estadoPuesto === 'Debe' ? 'bg-rose-100 text-rose-700 border-rose-200' : 'bg-emerald-100 text-emerald-700 border-emerald-200'}`}>
+                                  {estadoPuesto}
+                                </span>
+                              </div>
                             </div>
                             <p className="text-xs text-slate-500">{h.fecha_cambio || '-'}</p>
                             <p className="text-xs text-emerald-700 mt-1">Pago Empleado: {formatMoney(pagoEmpleadoDia)}</p>
@@ -2836,6 +2973,9 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                             <p className="text-xs text-slate-600">Medio abono: {h.medio_abono_puesto || 'efectivo'}</p>
                             <p className="text-xs text-violet-700">Pago consumo: {formatMoney(pagoConsumoDia)}</p>
                             <p className="text-xs text-violet-700">Valor acumulado pendiente: {formatMoney(consumoPendiente)}</p>
+                            {h.notas && h.notas.includes('Carga manual') && (
+                              <p className="text-xs text-blue-700 mt-1">📝 {h.notas}</p>
+                            )}
                             <p className="text-xs text-slate-500">Usuario: {h.usuario_nombre || 'Sistema'}</p>
                             {puedeCorregirLiquidacion && (
                               <div className="mt-2 flex flex-wrap gap-2">
