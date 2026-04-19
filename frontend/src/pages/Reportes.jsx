@@ -29,25 +29,6 @@ const MODULO_META = {
     border: 'border-emerald-300/60',
   },
 // ...existing code...
-                            <>
-                              <label className="block text-xs text-slate-600 mt-2 mb-1">Porcentaje a descontar (%)</label>
-                              <input
-                                className="input-field"
-                                type="number"
-                                min="0"
-                                max="100"
-                                value={porcentajePuestoPorEstilista[estId] || ''}
-                                onChange={(e) => setPorcentajePuestoPorEstilista((prev) => ({ ...prev, [estId]: e.target.value }))}
-                                disabled={modoCobroPuesto === 'omitido'}
-                              />
-                            </>
-                          ) : null}
-
-                          {modoCobroPuesto === 'omitido' && (
-                            <div className="mt-2 p-2 rounded bg-yellow-100 text-yellow-900 text-xs">
-                              El empleado recibirá el 100% de sus ganancias hoy y el costo de puesto se sumará automáticamente a su deuda pendiente.
-                            </div>
-                          )}
     amber: 'from-amber-500 to-orange-500 text-white',
   };
 
