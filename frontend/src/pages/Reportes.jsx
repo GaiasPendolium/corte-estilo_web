@@ -28,7 +28,17 @@ const MODULO_META = {
     accent: 'from-emerald-500/20 to-teal-500/10',
     border: 'border-emerald-300/60',
   },
+// ...existing code...
     amber: 'from-amber-500 to-orange-500 text-white',
+  };
+
+  return (
+    <div className={`rounded-2xl bg-gradient-to-br ${tones[tone]} p-5 shadow-lg`}>
+      <p className="text-sm opacity-85">{title}</p>
+      <p className="mt-2 text-2xl font-black">{value}</p>
+      <p className="mt-2 text-xs opacity-85">{hint}</p>
+    </div>
+  );
 };
 
 const NumericPad = ({ visible, value, onChange, onClose }) => {
