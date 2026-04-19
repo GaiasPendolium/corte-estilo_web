@@ -1269,7 +1269,7 @@ const aplicarLiquidacionSimple = async ({
 
   setSavingEstadoByEstilista((prev) => ({ ...prev, [estilistaId]: true }));
   try {
-    await reportesService.liquidarOperacionIntegral({
+    const payload = {
       estilista_id: estilistaId,
       fecha: fechaLiquidacion,
       pago_efectivo: usarAutoEfectivo ? pagoFinalEmpleado : pago_efectivo,
@@ -1287,7 +1287,16 @@ const aplicarLiquidacionSimple = async ({
       deuda_ids: deudasConsumoSeleccionadas,
       medio_cobro_consumo: medioCobroConsumo,
       notas: `Liquidación simple ${fechaLiquidacion}`,
-    });
+    };
+
+    console.log('=== LIQUIDACIÓN DEBUG ===');
+    console.log('Payload a enviar:', payload);
+    console.log('skip_puesto:', skip_puesto, '(tipo:', typeof skip_puesto + ')');
+    console.log('abonoPuestoAplicado:', abonoPuestoAplicado);
+    console.log('pagoFinalEmpleado:', pagoFinalEmpleado);
+    console.log('totalPagosDigitados:', totalPagosDigitados);
+
+    await reportesService.liquidarOperacionIntegral(payload);
 
     toast.success(`Liquidación guardada. Pago final empleado: ${formatMoney(pagoFinalEmpleado)}.`);
     setPasoLiquidacion(3);
