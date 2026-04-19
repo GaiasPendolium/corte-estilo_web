@@ -3576,9 +3576,10 @@ def _liquidar_dia_v2_core(request):
         
         estado_diaria.save()
         estado_resultante = estado_diaria.estado
-        
-    except (OperationalError, ProgrammingError):
+
+    except (OperationalError, ProgrammingError) as e:
         # Compatibilidad: intentar persistencia SQL en esquema legacy para no perder datos.
+        logger.error(f"Error saving EstadoPagoEstilistaDia (ORM): {str(e)}")
         tabla_diaria_no_disponible = True
         # Establecer estado segun el saldo del puesto
         if pendiente_liquidacion > 0:
@@ -3623,7 +3624,8 @@ def _liquidar_dia_v2_core(request):
                             fecha,
                         ],
                     )
-                except Exception:
+                except Exception as e1:
+                    logger.warning(f"First SQL update attempt failed: {str(e1)}, trying alternative...")
                     cursor.execute(
                         """
                         UPDATE estado_pago_estilista_dia
@@ -3685,7 +3687,8 @@ def _liquidar_dia_v2_core(request):
                                 timezone.now(),
                             ],
                         )
-                    except Exception:
+                    except Exception as e_insert:
+                        logger.warning(f"Insert with skip_descuento_puesto failed: {str(e_insert)}, trying without...")
                         cursor.execute(
                             """
                             INSERT INTO estado_pago_estilista_dia
@@ -3856,42 +3859,51 @@ def liquidar_operacion_integral(request):
     consumo_sobrante = Decimal(0)
 
     try:
-        with transaction.atomic():
-            if consumo_monto > 0:
-                consumo_aplicaciones, consumo_sobrante = _aplicar_abonos_consumo_interno(
-                    estilista=estilista,
-                    monto_decimal=consumo_monto,
-                    medio_pago=medio_cobro_consumo,
-                    usuario=request.user,
-                    notas=f"Cobro consumo integrado liquidación {fecha_raw or timezone.localdate().strftime('%Y-%m-%d')}",
-                    fecha_abono_dt=fecha_abono_dt,
-                    deuda_objetivo=None,
-                    deuda_ids=deuda_ids,
-                )
+        # Primero: procesar consumo en su propia transacción si aplica
+        consumo_aplicaciones = []
+        consumo_sobrante = Decimal(0)
+        try:
+            with transaction.atomic():
+                if consumo_monto > 0:
+                    consumo_aplicaciones, consumo_sobrante = _aplicar_abonos_consumo_interno(
+                        estilista=estilista,
+                        monto_decimal=consumo_monto,
+                        medio_pago=medio_cobro_consumo,
+                        usuario=request.user,
+                        notas=f"Cobro consumo integrado liquidación {fecha_raw or timezone.localtime().strftime('%Y-%m-%d')}",
+                        fecha_abono_dt=fecha_abono_dt,
+                        deuda_objetivo=None,
+                        deuda_ids=deuda_ids,
+                    )
+        except Exception as e_consumo:
+            logger.warning(f"Advertencia en cobro consumo integrado: {str(e_consumo)}")
+            consumo_aplicaciones = []
+            consumo_sobrante = Decimal(0)
 
-            # Reutilizar core interno evita conflicto HttpRequest vs DRF Request.
-            response_liq = _liquidar_dia_v2_core(request)
-            status_liq = int(getattr(response_liq, 'status_code', 500) or 500)
-            if status_liq >= 400:
-                data_liq = getattr(response_liq, 'data', None) or {}
-                if isinstance(data_liq, dict):
-                    msg = data_liq.get('error') or data_liq.get('detail') or 'No se pudo completar la liquidación.'
-                else:
-                    msg = 'No se pudo completar la liquidación.'
-                raise ValueError(str(msg))
+        # Segundo: ejecutar liquidación en su propia transacción
+        response_liq = _liquidar_dia_v2_core(request)
+        status_liq = int(getattr(response_liq, 'status_code', 500) or 500)
+        if status_liq >= 400:
+            data_liq = getattr(response_liq, 'data', None) or {}
+            if isinstance(data_liq, dict):
+                msg = data_liq.get('error') or data_liq.get('detail') or 'No se pudo completar la liquidación.'
+            else:
+                msg = 'No se pudo completar la liquidación.'
+            return Response({'error': str(msg)}, status=status_liq)
 
-            payload = getattr(response_liq, 'data', {}) or {}
-            payload['consumo_integrado'] = {
-                'monto_solicitado': float(consumo_monto),
-                'monto_aplicado': float(consumo_monto - consumo_sobrante),
-                'monto_sobrante': float(consumo_sobrante),
-                'medio_pago': medio_cobro_consumo,
-                'aplicaciones': consumo_aplicaciones,
-            }
-            return Response(payload, status=status_liq)
+        payload = getattr(response_liq, 'data', {}) or {}
+        payload['consumo_integrado'] = {
+            'monto_solicitado': float(consumo_monto),
+            'monto_aplicado': float(consumo_monto - consumo_sobrante),
+            'monto_sobrante': float(consumo_sobrante),
+            'medio_pago': medio_cobro_consumo,
+            'aplicaciones': consumo_aplicaciones,
+        }
+        return Response(payload, status=status_liq)
     except ValueError as e:
         return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
     except Exception as e:
+        logger.exception("Error en liquidar_operacion_integral")
         return Response({'error': f'No se pudo completar la operación integral: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
