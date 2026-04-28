@@ -482,49 +482,69 @@ const Reportes = () => {
     const reqSeq = ++cargarTodoSeqRef.current;
     try {
       setLoading(true);
-      const [cierreResp, biResp] = await Promise.all([
-        reportesService.getCierreCaja(paramsBase),
-        reportesService.getBIResumen(paramsBase),
-      ]);
+      reportesService.getCierreCaja(paramsBase)
+        .then((cierreResp) => {
+          if (reqSeq !== cargarTodoSeqRef.current) return;
+          setCierreCaja(cierreResp || null);
+        })
+        .catch(() => {
+          if (reqSeq !== cargarTodoSeqRef.current) return;
+          setCierreCaja(null);
+        });
 
-      let carteraResp = null;
+      const promesasCore = [reportesService.getBIResumen(paramsBase)];
       if (!esRecepcion) {
-        [carteraResp] = await Promise.all([
+        promesasCore.push(
           reportesService.getConsumoEmpleadoDeudas({
             periodo,
             fecha_inicio: fechaInicio,
             fecha_fin: fechaFin,
-          }),
-        ]);
+          })
+        );
       }
+
+      const resultadosCore = await Promise.allSettled(promesasCore);
 
       if (reqSeq !== cargarTodoSeqRef.current) return;
 
-      setCierreCaja(cierreResp || null);
-      setBiData(biResp || null);
+      const biResp = resultadosCore[0]?.status === 'fulfilled' ? resultadosCore[0].value : null;
+      const carteraResp = !esRecepcion && resultadosCore[1]?.status === 'fulfilled'
+        ? resultadosCore[1].value
+        : null;
+
       setCarteraData({
         resumen: carteraResp?.resumen || [],
         deudas: carteraResp?.deudas || [],
         abonos_historial: carteraResp?.abonos_historial || [],
       });
-      try {
-        setLoadingHistorial(true);
-        const hist = await reportesService.getEstadoPagoHistorial({
-          fecha_inicio: fechaInicio,
-          fecha_fin: fechaFin,
-          limit: 200,
+      setBiData(biResp || null);
+
+      setLoadingHistorial(true);
+      reportesService.getEstadoPagoHistorial({
+        fecha_inicio: fechaInicio,
+        fecha_fin: fechaFin,
+        limit: 200,
+      })
+        .then((hist) => {
+          if (reqSeq === cargarTodoSeqRef.current) {
+            setHistorialEstados(hist?.items || []);
+          }
+        })
+        .catch(() => {
+          if (reqSeq === cargarTodoSeqRef.current) {
+            setHistorialEstados([]);
+          }
+        })
+        .finally(() => {
+          if (reqSeq === cargarTodoSeqRef.current) {
+            setLoadingHistorial(false);
+          }
         });
-        if (reqSeq === cargarTodoSeqRef.current) {
-          setHistorialEstados(hist?.items || []);
-        }
-      } catch (err) {
-        if (reqSeq === cargarTodoSeqRef.current) {
-          setHistorialEstados([]);
-        }
-      } finally {
-        if (reqSeq === cargarTodoSeqRef.current) {
-          setLoadingHistorial(false);
-        }
+
+      const falloBI = resultadosCore[0]?.status === 'rejected';
+      const falloCartera = !esRecepcion && resultadosCore[1]?.status === 'rejected';
+      if (falloBI && (esRecepcion || falloCartera)) {
+        toast.error('No se pudieron cargar los reportes');
       }
 
       if (moduloActivo !== 'liquidacion') {

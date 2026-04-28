@@ -4,9 +4,10 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.exceptions import PermissionDenied
 from django_filters.rest_framework import DjangoFilterBackend
-from django.db.models import Sum, Count, Q, F
+from django.db.models import Sum, Count, Q, F, Exists, OuterRef, Subquery, DecimalField, IntegerField, Value
 from django.db import transaction, connection
 from django.db.utils import OperationalError, ProgrammingError
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.http import HttpResponse
@@ -2586,10 +2587,39 @@ def reporte_consumo_empleado(request):
     fecha_inicio, fecha_fin = _resolver_rango_fechas(request)
     estilista_id = (request.query_params.get('estilista_id') or '').strip()
 
+    abonos_total_sq = (
+        AbonoDeudaEmpleado.objects
+        .filter(deuda_id=OuterRef('pk'))
+        .values('deuda_id')
+        .annotate(total=Sum('monto'))
+        .values('total')[:1]
+    )
+    abonos_count_sq = (
+        AbonoDeudaEmpleado.objects
+        .filter(deuda_id=OuterRef('pk'))
+        .values('deuda_id')
+        .annotate(total=Count('id'))
+        .values('total')[:1]
+    )
+    ventas_consumo_exists = VentaProducto.objects.filter(
+        deuda_consumo_id=OuterRef('pk'),
+        tipo_operacion='consumo_empleado',
+    )
+
     qs = DeudaConsumoEmpleado.objects.select_related('estilista').filter(
         Q(fecha_hora__date__gte=fecha_inicio, fecha_hora__date__lte=fecha_fin)
         | Q(abonos__isnull=False)
-    ).annotate(abonos_count=Count('abonos', distinct=True)).distinct()
+    ).annotate(
+        total_abonado_real=Coalesce(
+            Subquery(abonos_total_sq, output_field=DecimalField(max_digits=12, decimal_places=2)),
+            Value(Decimal('0.00')),
+        ),
+        abonos_count=Coalesce(
+            Subquery(abonos_count_sq, output_field=IntegerField()),
+            Value(0),
+        ),
+        tiene_consumo=Exists(ventas_consumo_exists),
+    ).distinct()
 
     if estilista_id:
         qs = qs.filter(estilista_id=int(estilista_id))
@@ -2598,19 +2628,12 @@ def reporte_consumo_empleado(request):
     for deuda in list(qs):
         _sincronizar_deuda_desde_items(deuda)
 
-    qs = DeudaConsumoEmpleado.objects.select_related('estilista').filter(
-        Q(fecha_hora__date__gte=fecha_inicio, fecha_hora__date__lte=fecha_fin)
-        | Q(abonos__isnull=False)
-    ).annotate(abonos_count=Count('abonos', distinct=True)).distinct()
-    if estilista_id:
-        qs = qs.filter(estilista_id=int(estilista_id))
-
     # Cartera principal: mantener pendientes y también facturas con abonos
     # para que el usuario vea inmediatamente los pagos registrados en liquidación.
     qs_pendientes = []
     for deuda in qs:
         total_cargo = Decimal(deuda.total_cargo or 0)
-        total_abonado_real = Decimal(deuda.abonos.aggregate(total=Sum('monto'))['total'] or 0)
+        total_abonado_real = Decimal(getattr(deuda, 'total_abonado_real', 0) or 0)
         saldo = max(total_cargo - total_abonado_real, Decimal(0))
 
         estado_real = 'pendiente'
@@ -2636,7 +2659,7 @@ def reporte_consumo_empleado(request):
 
         if saldo <= Decimal('0.5') and not tiene_abono:
             continue
-        if not deuda.ventas_items.filter(tipo_operacion='consumo_empleado').exists():
+        if not bool(getattr(deuda, 'tiene_consumo', False)):
             continue
         qs_pendientes.append(deuda)
 
@@ -2713,10 +2736,20 @@ def reporte_consumo_empleado(request):
                 deuda_item['abonos'].append(item_abono)
 
     consumos_detalle = []
+    items_por_deuda = defaultdict(list)
+    if deuda_ids:
+        items_qs = (
+            VentaProducto.objects
+            .select_related('producto', 'estilista')
+            .filter(deuda_consumo_id__in=deuda_ids, tipo_operacion='consumo_empleado')
+            .order_by('deuda_consumo_id', '-fecha_hora', '-id')
+        )
+        for venta in items_qs:
+            items_por_deuda[int(venta.deuda_consumo_id)].append(venta)
+
     for deuda in qs_pendientes:
         ultimo_abono = abono_map.get(int(deuda.id))
-        items_qs = deuda.ventas_items.select_related('producto', 'estilista').filter(tipo_operacion='consumo_empleado').order_by('-fecha_hora', '-id')
-        for venta in items_qs:
+        for venta in items_por_deuda.get(int(deuda.id), []):
             consumos_detalle.append(
                 {
                     'venta_id': venta.id,
