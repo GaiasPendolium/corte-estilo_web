@@ -5166,6 +5166,7 @@ def reporte_cierre_caja(request):
                     'abono_id': int(ab.id),
                     'fecha_hora': timezone.localtime(ab.fecha_hora).strftime('%Y-%m-%d %H:%M:%S') if ab.fecha_hora else None,
                     'fecha': _fecha_operativa_desde_dt(ab.fecha_hora).strftime('%Y-%m-%d') if ab.fecha_hora else None,
+                    'fecha_consumo': _fecha_operativa_desde_dt(deuda.fecha_hora).strftime('%Y-%m-%d') if deuda.fecha_hora else None,
                     'origen': 'consumo_empleado_abono',
                     'numero_factura': deuda.numero_factura,
                     'medio_pago': ab.medio_pago,

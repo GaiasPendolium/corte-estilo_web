@@ -1767,7 +1767,12 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                     )}
                     {(productos.detalle || []).map((item, idx) => (
                       <tr key={`prod-tab-${item.fecha_hora || item.fecha || 'x'}-${idx}`}>
-                        <td className="table-cell">{item.fecha_hora || item.fecha || '-'}</td>
+                        <td className="table-cell">
+                          {item.fecha_hora || item.fecha || '-'}
+                          {item.origen === 'consumo_empleado_abono' && item.fecha_consumo && item.fecha_consumo !== String(item.fecha || '').slice(0, 10) && (
+                            <p className="text-xs text-amber-600 mt-0.5" title="Fecha de la compra original">Factura: {item.fecha_consumo}</p>
+                          )}
+                        </td>
                         <td className="table-cell">{item.origen || '-'}</td>
                         <td className="table-cell">{item.descripcion || '-'}</td>
                         <td className="table-cell">{item.cantidad || 0}</td>
@@ -2468,18 +2473,28 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                         <p className="text-4xl font-black text-emerald-800 mt-3">{formatMoney(totalPagarFinalSimple)}</p>
                       </div>
 
-                      <div className="mt-3 rounded-2xl border border-slate-200 bg-white p-4">
-                        <p className="text-sm font-semibold text-slate-800">Comisión de ventas al empleado</p>
-                        <p className="text-xs text-slate-600 mt-1">Comisión calculada del día: {formatMoney(comisionVentasSimple)}</p>
+                      <div className={`mt-3 rounded-2xl border-2 p-4 ${comisionVentasSimple > 0 ? 'border-amber-400 bg-amber-50' : 'border-slate-200 bg-white'}`}>
+                        <div className="flex items-center gap-2">
+                          {comisionVentasSimple > 0 && <span className="text-xl">⚠️</span>}
+                          <p className={`text-sm font-bold ${comisionVentasSimple > 0 ? 'text-amber-800' : 'text-slate-800'}`}>Comisión de ventas al empleado</p>
+                        </div>
+                        <p className={`text-xs mt-1 ${comisionVentasSimple > 0 ? 'text-amber-700' : 'text-slate-600'}`}>
+                          Comisión calculada del día: <span className="font-bold">{formatMoney(comisionVentasSimple)}</span>
+                        </p>
+                        {comisionVentasSimple > 0 && (
+                          <p className="text-xs text-amber-700 mt-1 font-medium">
+                            ¡Debes indicar si se paga o no antes de confirmar la liquidación!
+                          </p>
+                        )}
                         <div className="mt-2 max-w-sm">
-                          <label className="block text-xs text-slate-600 mb-1">¿La vas a pagar?</label>
+                          <label className={`block text-xs font-semibold mb-1 ${comisionVentasSimple > 0 ? 'text-amber-800' : 'text-slate-600'}`}>¿La vas a pagar?</label>
                           <select
-                            className="input-field"
+                            className={`input-field ${comisionVentasSimple > 0 ? 'border-amber-400 ring-1 ring-amber-400 font-semibold' : ''}`}
                             value={aplicaComisionSimple ? 'si' : 'no'}
                             onChange={(e) => setAplicaComisionVentasPorEstilista((prev) => ({ ...prev, [estId]: e.target.value === 'si' }))}
                           >
-                            <option value="si">Sí, pagar comisión</option>
-                            <option value="no">No pagar comisión</option>
+                            <option value="si">✅ Sí, pagar comisión</option>
+                            <option value="no">❌ No pagar comisión</option>
                           </select>
                         </div>
                       </div>
