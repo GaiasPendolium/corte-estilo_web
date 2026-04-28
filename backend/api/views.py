@@ -3830,9 +3830,9 @@ def liquidar_operacion_integral(request):
         return Response({'error': 'consumo_monto inválido.'}, status=status.HTTP_400_BAD_REQUEST)
     consumo_monto = max(consumo_monto, Decimal(0))
 
-    deuda_ids = request.data.get('deuda_ids') or []
-    if not isinstance(deuda_ids, list):
-        deuda_ids = []
+    # En liquidación integral, el consumo siempre se aplica automático
+    # a las deudas más antiguas pendientes del empleado.
+    deuda_ids = []
 
     medio_cobro_consumo = (request.data.get('medio_cobro_consumo') or 'efectivo').strip().lower()
     if medio_cobro_consumo not in {'nequi', 'daviplata', 'efectivo', 'otros'}:

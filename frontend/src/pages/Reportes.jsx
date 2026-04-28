@@ -160,9 +160,9 @@ const Reportes = () => {
   const [abonoPuestoAcumuladoPorEstilista, setAbonoPuestoAcumuladoPorEstilista] = useState({});
   const [medioAbonoPuestoPorEstilista, setMedioAbonoPuestoPorEstilista] = useState({});
   const [aplicaComisionVentasPorEstilista, setAplicaComisionVentasPorEstilista] = useState({});
+  const [abonarConsumoPorEstilista, setAbonarConsumoPorEstilista] = useState({});
   const [cobroConsumoPorEstilista, setCobroConsumoPorEstilista] = useState({});
   const [medioCobroConsumoPorEstilista, setMedioCobroConsumoPorEstilista] = useState({});
-  const [deudaConsumoSeleccionadasPorEstilista, setDeudaConsumoSeleccionadasPorEstilista] = useState({});
   const [modoCorreccionPorEstilista, setModoCorreccionPorEstilista] = useState({});
   const [savingEstadoByEstilista, setSavingEstadoByEstilista] = useState({});
   const [skipDescuentoPuestoPorEstilista, setSkipDescuentoPuestoPorEstilista] = useState({});
@@ -555,6 +555,7 @@ const Reportes = () => {
         setPorcentajePuestoPorEstilista({});
         setMedioAbonoPuestoPorEstilista({});
         setAplicaComisionVentasPorEstilista({});
+        setAbonarConsumoPorEstilista({});
         setCobroConsumoPorEstilista({});
         setMedioCobroConsumoPorEstilista({});
       }
@@ -902,27 +903,6 @@ const Reportes = () => {
     }
   };
 
-  const toggleDeudaConsumoSeleccion = (estilistaId, deudaId) => {
-    const idStr = String(deudaId);
-    setDeudaConsumoSeleccionadasPorEstilista((prev) => {
-      const actuales = prev[estilistaId] || [];
-      const existe = actuales.includes(idStr);
-      const siguiente = existe
-        ? actuales.filter((x) => x !== idStr)
-        : [...actuales, idStr];
-      return { ...prev, [estilistaId]: siguiente };
-    });
-  };
-
-  const seleccionarTodasDeudasConsumo = (estilistaId, deudasEmpleado) => {
-    const ids = (deudasEmpleado || []).map((d) => String(d.deuda_id));
-    setDeudaConsumoSeleccionadasPorEstilista((prev) => ({ ...prev, [estilistaId]: ids }));
-  };
-
-  const limpiarSeleccionDeudasConsumo = (estilistaId) => {
-    setDeudaConsumoSeleccionadasPorEstilista((prev) => ({ ...prev, [estilistaId]: [] }));
-  };
-
   const actualizarAjusteDiarioCampo = (key, campo, valor) => {
     setAjusteDiarioEditsByKey((prev) => {
       const actual = prev[key] || {
@@ -1170,12 +1150,12 @@ const aplicarEstadoLiquidacion = async (fila) => {
     : abono_puesto_digitado;
   const medio_abono_puesto = medioAbonoPuestoPorEstilista[estilistaId] || 'efectivo';
   const aplica_comision_ventas = Boolean(aplicaComisionVentasPorEstilista[estilistaId] ?? true);
+  const abonarConsumoActivo = Boolean(abonarConsumoPorEstilista[estilistaId]);
   const saldoConsumoEmpleado = Number(resumenPorEstilistaLiquidacion[estilistaId]?.saldo_pendiente || 0);
   const cobroConsumoDigitado = Number(cobroConsumoPorEstilista[estilistaId] || 0);
-  const cobroConsumoAplicado = Math.min(Math.max(cobroConsumoDigitado, 0), Math.max(saldoConsumoEmpleado, 0));
-  const deudasConsumoSeleccionadas = (deudaConsumoSeleccionadasPorEstilista[estilistaId] || [])
-    .map((x) => Number(x))
-    .filter((x) => Number.isFinite(x) && x > 0);
+  const cobroConsumoAplicado = abonarConsumoActivo
+    ? Math.min(Math.max(cobroConsumoDigitado, 0), Math.max(saldoConsumoEmpleado, 0))
+    : 0;
   const medioCobroConsumo = medioCobroConsumoPorEstilista[estilistaId] || 'efectivo';
   const topePagoEmpleado = (() => {
     const dia = (desgloseLiquidacion?.desglose_por_dia || []).find((d) => String(d.fecha || '') === String(fechaLiquidacion));
@@ -1205,7 +1185,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
       puesto_porcentaje,
       forzar_reemplazo_dia: esCorreccion,
       consumo_monto: cobroConsumoAplicado,
-      deuda_ids: deudasConsumoSeleccionadas,
+      deuda_ids: [],
       medio_cobro_consumo: medioCobroConsumo,
       notas: `Liquidación ${fechaLiquidacion}`,
     });
@@ -1246,7 +1226,6 @@ const aplicarLiquidacionSimple = async ({
   pendientePagoEmpleado,
   abonoPuestoAplicado,
   cobroConsumoAplicado,
-  deudasConsumoSeleccionadas,
   pagosPorMedio = null,
 }) => {
   const estilistaId = Number(fila?.estilista_id || 0);
@@ -1304,7 +1283,7 @@ const aplicarLiquidacionSimple = async ({
       forzar_reemplazo_dia: false,
       skip_descuento_puesto: skip_puesto,
       consumo_monto: cobroConsumoAplicado,
-      deuda_ids: deudasConsumoSeleccionadas,
+      deuda_ids: [],
       medio_cobro_consumo: medioCobroConsumo,
       notas: `Liquidación simple ${fechaLiquidacion}`,
     };
@@ -2098,7 +2077,14 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
               return acc;
             }, {});
             const deudasEmpleado = (carteraDataLiquidacionGlobal?.deudas || []).filter((d) => Number(d.estilista_id) === estId && Number(d.saldo_pendiente || 0) > 0);
-            const deudasConsumoSeleccionadas = deudaConsumoSeleccionadasPorEstilista[estId] || [];
+            const deudaMasAntiguaConsumo = [...deudasEmpleado]
+              .sort((a, b) => {
+                const fechaA = String(a.fecha_hora || '');
+                const fechaB = String(b.fecha_hora || '');
+                if (fechaA !== fechaB) return fechaA.localeCompare(fechaB);
+                return Number(a.deuda_id || 0) - Number(b.deuda_id || 0);
+              })[0] || null;
+            const abonarConsumoActivo = Boolean(abonarConsumoPorEstilista[estId]);
             const cuadrePorFecha = cuadreDiarioByEstilista[estId] || {};
             const fechaOperacionSimple = String(fechaFin || '');
             const diaSeleccionadoSimple = (desgloseLiquidacion?.desglose_por_dia || []).find(
@@ -2124,7 +2110,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
               : (tienePuestoManual
                   ? Math.max(abonoPuestoCalculado, 0)
                   : descuentoPuestoDiaSimple);
-            const descuentoConsumoAplicado = cobroConsumoAplicado;
+            const descuentoConsumoAplicado = abonarConsumoActivo ? cobroConsumoAplicado : 0;
             const totalDescuentosSimple = descuentoPuestoAplicado;
             const totalPagarFinalSimple = Math.max(generadoEmpleadoSimple - totalDescuentosSimple, 0);
             const pagosSimple = pagosPorEstilista[estId] || {};
@@ -2366,29 +2352,40 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                         <div className="rounded-xl border border-rose-200 bg-white p-3">
                           <p className="text-sm font-semibold text-slate-900">Consumo de productos</p>
                           <p className="text-xs text-slate-600 mt-1">Pendiente actual: <span className="font-semibold text-rose-700">{formatMoney(Math.max(consumoPendiente, 0))}</span></p>
+                          <label className="block text-xs text-slate-600 mt-2 mb-1">¿Abonar consumo en esta liquidación?</label>
+                          <select
+                            className="input-field"
+                            value={abonarConsumoActivo ? 'si' : 'no'}
+                            onChange={(e) => {
+                              const activo = e.target.value === 'si';
+                              setAbonarConsumoPorEstilista((prev) => ({ ...prev, [estId]: activo }));
+                              if (!activo) {
+                                setCobroConsumoPorEstilista((prev) => ({ ...prev, [estId]: '' }));
+                              }
+                            }}
+                          >
+                            <option value="no">No</option>
+                            <option value="si">Sí</option>
+                          </select>
+                          <p className="text-[11px] text-slate-600 mt-1">
+                            El abono se aplica automáticamente a la factura más antigua pendiente.
+                          </p>
+                          {deudaMasAntiguaConsumo ? (
+                            <p className="text-[11px] text-rose-700 mt-1">
+                              Factura objetivo: {deudaMasAntiguaConsumo.numero_factura || `Deuda ${deudaMasAntiguaConsumo.deuda_id}`} ({formatMoney(deudaMasAntiguaConsumo.saldo_pendiente)})
+                            </p>
+                          ) : (
+                            <p className="text-[11px] text-slate-500 mt-1">No hay facturas pendientes de consumo.</p>
+                          )}
                           <div className="mt-2 flex items-center gap-2">
-                            <button type="button" className="btn-secondary !py-1 !px-2 text-xs" onClick={() => seleccionarTodasDeudasConsumo(estId, deudasEmpleado)}>Seleccionar todas</button>
-                            <button type="button" className="btn-secondary !py-1 !px-2 text-xs" onClick={() => limpiarSeleccionDeudasConsumo(estId)}>Limpiar</button>
                             <button
                               type="button"
                               className="btn-secondary !py-1 !px-2 text-xs"
                               onClick={() => setCobroConsumoPorEstilista((prev) => ({ ...prev, [estId]: String(Math.max(consumoPendiente, 0)) }))}
+                              disabled={!abonarConsumoActivo}
                             >
                               Usar pendiente consumo
                             </button>
-                          </div>
-                          <div className="mt-2 max-h-40 overflow-y-auto space-y-2 pr-1">
-                            {deudasEmpleado.length === 0 && <p className="text-xs text-slate-500">No hay facturas pendientes.</p>}
-                            {deudasEmpleado.map((d) => (
-                              <label key={`deuda-simple-${d.deuda_id}`} className="flex items-start gap-2 rounded-lg border border-slate-200 p-2 cursor-pointer">
-                                <input
-                                  type="checkbox"
-                                  checked={deudasConsumoSeleccionadas.includes(String(d.deuda_id))}
-                                  onChange={() => toggleDeudaConsumoSeleccion(estId, d.deuda_id)}
-                                />
-                                <span className="text-xs text-slate-700">{d.numero_factura || `Deuda ${d.deuda_id}`} - {formatMoney(d.saldo_pendiente)}</span>
-                              </label>
-                            ))}
                           </div>
                           <label className="block text-xs text-slate-600 mt-2 mb-1">Valor a descontar por consumo</label>
                           <input
@@ -2397,12 +2394,14 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                             min="0"
                             step="1"
                             value={cobroConsumoPorEstilista[estId] || ''}
+                            disabled={!abonarConsumoActivo}
                             onChange={(e) => setCobroConsumoPorEstilista((prev) => ({ ...prev, [estId]: String(e.target.value || '').replace(/[^\d.]/g, '') }))}
                           />
                           <label className="block text-xs text-slate-600 mt-2 mb-1">Medio del cobro consumo</label>
                           <select
                             className="input-field"
                             value={medioCobroConsumoPorEstilista[estId] || 'efectivo'}
+                            disabled={!abonarConsumoActivo}
                             onChange={(e) => setMedioCobroConsumoPorEstilista((prev) => ({ ...prev, [estId]: e.target.value }))}
                           >
                             {MEDIOS_PAGO_OPERACION.map((m) => (
@@ -2496,7 +2495,6 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                             pendientePagoEmpleado: generadoEmpleadoSimple,
                             abonoPuestoAplicado: descuentoPuestoAplicado,
                             cobroConsumoAplicado: descuentoConsumoAplicado,
-                            deudasConsumoSeleccionadas,
                             pagosPorMedio: {
                               efectivo: pagoEfectivoSimple,
                               nequi: pagoNequiSimple,
@@ -2758,39 +2756,31 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                       </div>
 
                       <div>
-                        <label className="block text-xs text-slate-600 mb-1">Facturas de consumo a abonar (puedes elegir varias)</label>
+                        <label className="block text-xs text-slate-600 mb-1">¿Abonar consumo en esta liquidación?</label>
                         <select
                           className="input-field"
-                          multiple
-                          size={Math.min(Math.max(deudasEmpleado.length, 3), 7)}
-                          value={deudasConsumoSeleccionadas}
+                          value={abonarConsumoActivo ? 'si' : 'no'}
                           onChange={(e) => {
-                            const seleccionadas = Array.from(e.target.selectedOptions || []).map((opt) => opt.value);
-                            setDeudaConsumoSeleccionadasPorEstilista((prev) => ({ ...prev, [estId]: seleccionadas }));
+                            const activo = e.target.value === 'si';
+                            setAbonarConsumoPorEstilista((prev) => ({ ...prev, [estId]: activo }));
+                            if (!activo) {
+                              setCobroConsumoPorEstilista((prev) => ({ ...prev, [estId]: '' }));
+                            }
                           }}
                         >
-                          {deudasEmpleado.map((d) => (
-                            <option key={d.deuda_id} value={String(d.deuda_id)}>
-                              {(d.numero_factura || `Deuda ${d.deuda_id}`)} - Saldo {formatMoney(d.saldo_pendiente)}
-                            </option>
-                          ))}
+                          <option value="no">No</option>
+                          <option value="si">Sí</option>
                         </select>
-                        <div className="mt-1 flex items-center justify-between gap-2">
-                          <p className="text-xs text-slate-500">
-                            {deudasConsumoSeleccionadas.length > 0
-                              ? `${deudasConsumoSeleccionadas.length} factura(s) seleccionada(s)`
-                              : 'Si no seleccionas, el sistema distribuye automático (más antigua primero).'}
+                        <p className="text-xs text-slate-500 mt-1">
+                          Se aplica automáticamente a la factura más antigua pendiente.
+                        </p>
+                        {deudaMasAntiguaConsumo ? (
+                          <p className="text-xs text-rose-700 mt-1">
+                            Objetivo: {deudaMasAntiguaConsumo.numero_factura || `Deuda ${deudaMasAntiguaConsumo.deuda_id}`} ({formatMoney(deudaMasAntiguaConsumo.saldo_pendiente)})
                           </p>
-                          {deudasConsumoSeleccionadas.length > 0 && (
-                            <button
-                              type="button"
-                              className="btn-secondary !py-1 !px-2 text-xs"
-                              onClick={() => limpiarSeleccionDeudasConsumo(estId)}
-                            >
-                              Limpiar selección
-                            </button>
-                          )}
-                        </div>
+                        ) : (
+                          <p className="text-xs text-slate-500 mt-1">No hay facturas pendientes.</p>
+                        )}
                       </div>
 
                       <div>
@@ -2801,6 +2791,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                           min="0"
                           step="1"
                           value={cobroConsumoPorEstilista[estId] || ''}
+                          disabled={!abonarConsumoActivo}
                           onFocus={() => setNumericPadTarget({ estilistaId: estId, field: 'cobro_consumo' })}
                           onChange={(e) => setCobroConsumoPorEstilista((prev) => ({ ...prev, [estId]: String(e.target.value || '').replace(/[^\d.]/g, '') }))}
                         />
@@ -2812,6 +2803,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                         <select
                           className="input-field"
                           value={medioCobroConsumoPorEstilista[estId] || 'efectivo'}
+                          disabled={!abonarConsumoActivo}
                           onChange={(e) => setMedioCobroConsumoPorEstilista((prev) => ({ ...prev, [estId]: e.target.value }))}
                         >
                           {MEDIOS_PAGO_OPERACION.map((m) => (
@@ -2930,39 +2922,13 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
                   <div className="card border border-amber-200 bg-amber-50">
                     <div className="mb-2 flex items-center justify-between gap-2">
-                      <h4 className="card-header">Facturas de consumo pendientes</h4>
-                      {deudasEmpleado.length > 0 && (
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            className="btn-secondary !py-1 !px-2 text-xs"
-                            onClick={() => seleccionarTodasDeudasConsumo(estId, deudasEmpleado)}
-                          >
-                            Seleccionar todas
-                          </button>
-                          <button
-                            type="button"
-                            className="btn-secondary !py-1 !px-2 text-xs"
-                            onClick={() => limpiarSeleccionDeudasConsumo(estId)}
-                          >
-                            Limpiar
-                          </button>
-                        </div>
-                      )}
+                      <h4 className="card-header">Facturas de consumo pendientes (informativo)</h4>
                     </div>
                     <div className="space-y-2 max-h-[280px] overflow-y-auto pr-1">
                       {deudasEmpleado.length === 0 && <p className="text-sm text-slate-500">No tiene consumo pendiente.</p>}
                       {deudasEmpleado.map((d) => (
                         <div key={d.deuda_id} className="rounded-xl border border-amber-200 bg-white p-3">
-                          <label className="flex items-start gap-2 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              className="mt-1"
-                              checked={deudasConsumoSeleccionadas.includes(String(d.deuda_id))}
-                              onChange={() => toggleDeudaConsumoSeleccion(estId, d.deuda_id)}
-                            />
-                            <span className="text-sm font-semibold text-slate-900">{d.numero_factura || `Deuda ${d.deuda_id}`}</span>
-                          </label>
+                          <span className="text-sm font-semibold text-slate-900">{d.numero_factura || `Deuda ${d.deuda_id}`}</span>
                           <p className="text-xs text-slate-500">{d.fecha_hora || '-'}</p>
                           <p className="text-xs text-rose-700 mt-1">Saldo: {formatMoney(d.saldo_pendiente)}</p>
                         </div>
