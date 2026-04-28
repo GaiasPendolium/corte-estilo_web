@@ -152,6 +152,13 @@ const Reportes = () => {
   const [deudaActivaHistorial, setDeudaActivaHistorial] = useState(null);
   const [filtroCarteraEstilistaId, setFiltroCarteraEstilistaId] = useState('todos');
   const [mostrarFacturasSaldadas, setMostrarFacturasSaldadas] = useState(false);
+  // Cargo manual empleado
+  const [mostrarFormCargoManual, setMostrarFormCargoManual] = useState(false);
+  const [cargoManualEstilistaId, setCargoManualEstilistaId] = useState('');
+  const [cargoManualMonto, setCargoManualMonto] = useState('');
+  const [cargoManualMotivo, setCargoManualMotivo] = useState('');
+  const [cargoManualFecha, setCargoManualFecha] = useState('');
+  const [savingCargoManual, setSavingCargoManual] = useState(false);
   const [estilistaActivoLiquidacion, setEstilistaActivoLiquidacion] = useState(null);
   const [pagosPorEstilista, setPagosPorEstilista] = useState({});
   const [estadoDiaPorEstilista, setEstadoDiaPorEstilista] = useState({});
@@ -1153,6 +1160,43 @@ const Reportes = () => {
       toast.error(msg);
     } finally {
       setSavingDeleteByAbono((prev) => ({ ...prev, [abonoId]: false }));
+    }
+  };
+
+  const crearCargoManual = async () => {
+    const estilistaId = Number(cargoManualEstilistaId || 0);
+    if (!estilistaId) {
+      toast.error('Selecciona un empleado.');
+      return;
+    }
+    const monto = Number(cargoManualMonto || 0);
+    if (monto <= 0) {
+      toast.error('El monto debe ser mayor a cero.');
+      return;
+    }
+    if (!cargoManualMotivo.trim()) {
+      toast.error('El motivo del cargo es obligatorio.');
+      return;
+    }
+    setSavingCargoManual(true);
+    try {
+      const result = await reportesService.crearCargoManualEmpleado({
+        estilista_id: estilistaId,
+        monto,
+        motivo: cargoManualMotivo.trim(),
+        fecha: cargoManualFecha || undefined,
+      });
+      toast.success(`Cargo creado: ${result.numero_factura} por ${formatMoney(result.monto)} a ${result.estilista_nombre}.`);
+      setCargoManualMonto('');
+      setCargoManualMotivo('');
+      setCargoManualFecha('');
+      setMostrarFormCargoManual(false);
+      await cargarTodo();
+    } catch (error) {
+      const msg = error?.response?.data?.error || 'No se pudo crear el cargo.';
+      toast.error(String(msg));
+    } finally {
+      setSavingCargoManual(false);
     }
   };
 
@@ -3118,6 +3162,84 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
       <div className="card border border-amber-200 bg-amber-50">
         <h2 className="card-header">Cartera Empleado</h2>
         <p className="text-sm text-slate-600">Filtra por empleado, revisa facturas y controla saldos pendientes. Selecciona una fila para ver su histórico.</p>
+
+        {/* Cargo manual sin inventario */}
+        {!esRecepcion && (
+          <div className="mt-4">
+            <button
+              type="button"
+              className="btn-secondary !py-2 !px-4 text-sm"
+              onClick={() => setMostrarFormCargoManual((v) => !v)}
+            >
+              {mostrarFormCargoManual ? '▲ Cancelar cargo manual' : '+ Agregar cargo manual a empleado'}
+            </button>
+
+            {mostrarFormCargoManual && (
+              <div className="mt-3 rounded-2xl border-2 border-rose-300 bg-rose-50 p-4">
+                <p className="text-sm font-bold text-rose-800">Cargo manual al empleado</p>
+                <p className="text-xs text-rose-600 mt-0.5">Suma una deuda al empleado sin afectar el inventario. Úsalo para multas, préstamos u otros descuentos.</p>
+                <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div>
+                    <label className="block text-xs text-slate-600 mb-1">Empleado</label>
+                    <select
+                      className="input-field"
+                      value={cargoManualEstilistaId}
+                      onChange={(e) => setCargoManualEstilistaId(e.target.value)}
+                    >
+                      <option value="">Seleccionar...</option>
+                      {opcionesEstilistaCartera.map((item) => (
+                        <option key={`cm-est-${item.estilista_id}`} value={String(item.estilista_id)}>
+                          {item.estilista_nombre}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-600 mb-1">Monto ($)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="100"
+                      className="input-field"
+                      placeholder="Ej: 62400"
+                      value={cargoManualMonto}
+                      onChange={(e) => setCargoManualMonto(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-600 mb-1">Fecha (opcional)</label>
+                    <input
+                      type="date"
+                      className="input-field"
+                      value={cargoManualFecha}
+                      onChange={(e) => setCargoManualFecha(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-600 mb-1">Motivo / descripción</label>
+                    <input
+                      type="text"
+                      className="input-field"
+                      placeholder="Ej: Préstamo, multa, etc."
+                      value={cargoManualMotivo}
+                      onChange={(e) => setCargoManualMotivo(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div className="mt-3">
+                  <button
+                    type="button"
+                    className="btn-danger !py-2 !px-5"
+                    onClick={crearCargoManual}
+                    disabled={savingCargoManual}
+                  >
+                    {savingCargoManual ? 'Creando cargo...' : 'Crear cargo'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
           <div className="rounded-xl border border-amber-200 bg-white p-3">

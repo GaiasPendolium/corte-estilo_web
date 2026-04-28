@@ -565,4 +565,14 @@ export const reportesService = {
     const response = await api.delete(`/reportes/consumo-empleado/abonos/${abono_id}/`);
     return response.data;
   },
+
+  crearCargoManualEmpleado: async ({ estilista_id, monto, motivo, fecha }) => {
+    const response = await api.post('/reportes/consumo-empleado/cargo-manual/', {
+      estilista_id,
+      monto,
+      motivo,
+      ...(fecha ? { fecha } : {}),
+    });
+    return response.data;
+  },
 };

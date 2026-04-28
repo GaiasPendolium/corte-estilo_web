@@ -2577,6 +2577,84 @@ def _sincronizar_deuda_desde_items(deuda):
     deuda.save(update_fields=['total_cargo', 'saldo_pendiente', 'estado'])
 
 
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def crear_cargo_manual_empleado(request):
+    """
+    Crea un cargo (deuda) manual a un empleado sin afectar el inventario.
+
+    POST /api/reportes/consumo-empleado/cargo-manual/
+    Body: { estilista_id, monto, motivo, fecha (opcional, YYYY-MM-DD) }
+    """
+    if _es_recepcion(request.user):
+        raise PermissionDenied('Recepción no tiene permiso para crear cargos manuales.')
+
+    try:
+        estilista_id = int(request.data.get('estilista_id') or 0)
+        estilista = Estilista.objects.get(id=estilista_id, activo=True)
+    except Exception:
+        return Response({'error': 'Empleado no encontrado.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        monto = Decimal(str(request.data.get('monto') or 0))
+    except Exception:
+        return Response({'error': 'Monto inválido.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if monto <= 0:
+        return Response({'error': 'El monto debe ser mayor a cero.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    motivo = (request.data.get('motivo') or '').strip()
+    if not motivo:
+        return Response({'error': 'El motivo del cargo es obligatorio.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    fecha_raw = (request.data.get('fecha') or '').strip()
+    ahora = timezone.now()
+    if fecha_raw:
+        try:
+            fecha_dt = datetime.strptime(fecha_raw, '%Y-%m-%d')
+            fecha_dt = fecha_dt.replace(hour=12, minute=0, second=0)
+            if timezone.is_naive(fecha_dt):
+                fecha_dt = timezone.make_aware(fecha_dt, timezone.get_current_timezone())
+            ahora = fecha_dt
+        except Exception:
+            return Response({'error': 'Fecha inválida. Usa YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Genera número de factura único con prefijo CARGO-
+    timestamp_str = timezone.localtime(ahora).strftime('%Y%m%d%H%M%S')
+    numero_factura = f"CARGO-{estilista_id}-{timestamp_str}"
+    # Garantiza unicidad en caso de colisión
+    intentos = 0
+    while DeudaConsumoEmpleado.objects.filter(numero_factura=numero_factura).exists():
+        intentos += 1
+        numero_factura = f"CARGO-{estilista_id}-{timestamp_str}-{intentos}"
+
+    try:
+        with transaction.atomic():
+            deuda = DeudaConsumoEmpleado.objects.create(
+                estilista=estilista,
+                numero_factura=numero_factura,
+                total_cargo=monto,
+                total_abonado=Decimal(0),
+                saldo_pendiente=monto,
+                estado='pendiente',
+                fecha_hora=ahora,
+                usuario=request.user,
+                notas=motivo,
+            )
+    except Exception as e:
+        logger.exception('Error creando cargo manual empleado')
+        return Response({'error': f'No se pudo crear el cargo: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    return Response({
+        'ok': True,
+        'deuda_id': deuda.id,
+        'numero_factura': deuda.numero_factura,
+        'monto': float(monto),
+        'estilista_nombre': estilista.nombre,
+        'motivo': motivo,
+    }, status=status.HTTP_201_CREATED)
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def reporte_consumo_empleado(request):
