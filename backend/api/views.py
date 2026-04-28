@@ -2958,7 +2958,7 @@ def _aplicar_abonos_consumo_interno(
     return aplicaciones, restante
 
 
-@api_view(['PUT', 'PATCH'])
+@api_view(['PUT', 'PATCH', 'DELETE'])
 @permission_classes([IsAuthenticated])
 def editar_abono_consumo_empleado(request, abono_id):
     """Permite corregir un abono registrado por error y recalcula la deuda asociada."""
@@ -2969,6 +2969,35 @@ def editar_abono_consumo_empleado(request, abono_id):
         abono = AbonoDeudaEmpleado.objects.select_related('deuda').get(id=int(abono_id))
     except Exception:
         return Response({'error': 'Abono no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+
+    if request.method == 'DELETE':
+        with transaction.atomic():
+            deuda = DeudaConsumoEmpleado.objects.select_for_update().get(id=abono.deuda_id)
+            abono_eliminado = Decimal(abono.monto or 0)
+            abono.delete()
+
+            total_restante = Decimal(deuda.abonos.aggregate(total=Sum('monto'))['total'] or 0)
+            deuda.total_abonado = total_restante
+            _recalcular_estado_deuda(deuda)
+            deuda.save(update_fields=['total_abonado', 'saldo_pendiente', 'estado'])
+
+        return Response(
+            {
+                'ok': True,
+                'abono_eliminado': {
+                    'abono_id': int(abono_id),
+                    'monto': float(abono_eliminado),
+                },
+                'deuda': {
+                    'deuda_id': deuda.id,
+                    'numero_factura': deuda.numero_factura,
+                    'total_cargo': float(deuda.total_cargo or 0),
+                    'total_abonado': float(deuda.total_abonado or 0),
+                    'saldo_pendiente': float(deuda.saldo_pendiente or 0),
+                    'estado': deuda.estado,
+                },
+            }
+        )
 
     monto_raw = request.data.get('monto', abono.monto)
     medio_pago = (request.data.get('medio_pago') or abono.medio_pago or 'efectivo').strip().lower()

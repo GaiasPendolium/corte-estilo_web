@@ -148,6 +148,7 @@ const Reportes = () => {
   const [editFechaByAbono, setEditFechaByAbono] = useState({});
   const [editNotasByAbono, setEditNotasByAbono] = useState({});
   const [savingEditByAbono, setSavingEditByAbono] = useState({});
+  const [savingDeleteByAbono, setSavingDeleteByAbono] = useState({});
   const [deudaActivaHistorial, setDeudaActivaHistorial] = useState(null);
   const [filtroCarteraEstilistaId, setFiltroCarteraEstilistaId] = useState('todos');
   const [mostrarFacturasSaldadas, setMostrarFacturasSaldadas] = useState(false);
@@ -1131,6 +1132,30 @@ const Reportes = () => {
     }
   };
 
+  const eliminarAbonoCartera = async (abono, deuda) => {
+    const abonoId = Number(abono?.abono_id || 0);
+    if (!abonoId) {
+      toast.error('Abono inválido.');
+      return;
+    }
+
+    const confirmado = window.confirm('¿Seguro que deseas eliminar este abono? Esta acción recalculará el saldo de la factura.');
+    if (!confirmado) return;
+
+    setSavingDeleteByAbono((prev) => ({ ...prev, [abonoId]: true }));
+    try {
+      await reportesService.deleteAbonoConsumoEmpleado(abonoId);
+      toast.success('Abono eliminado correctamente.');
+      await cargarTodo();
+      setDeudaActivaHistorial(deuda?.deuda_id || null);
+    } catch (error) {
+      const msg = error?.response?.data?.error || 'No se pudo eliminar el abono.';
+      toast.error(msg);
+    } finally {
+      setSavingDeleteByAbono((prev) => ({ ...prev, [abonoId]: false }));
+    }
+  };
+
 const aplicarEstadoLiquidacion = async (fila) => {
   const estilistaId = fila.estilista_id;
   const fechaLiquidacion = fechaFin || format(new Date(), 'yyyy-MM-dd');
@@ -2090,9 +2115,15 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
             const diaSeleccionadoSimple = (desgloseLiquidacion?.desglose_por_dia || []).find(
               (d) => String(d.fecha || '') === fechaOperacionSimple
             );
-            const generadoEmpleadoSimple = diaSeleccionadoSimple
+            const baseServicioSimple = diaSeleccionadoSimple
               ? Math.max(Number(diaSeleccionadoSimple.base_servicio || 0), 0)
               : Math.max(Number(empleado?.valor_total_empleado || 0), 0);
+            const comisionVentasSimple = diaSeleccionadoSimple
+              ? Math.max(Number(diaSeleccionadoSimple.comision_productos || 0), 0)
+              : Math.max(Number(empleado?.comision_ventas_producto || 0), 0);
+            const aplicaComisionSimple = Boolean(aplicaComisionVentasPorEstilista[estId] ?? true);
+            const comisionAplicadaSimple = aplicaComisionSimple ? comisionVentasSimple : 0;
+            const generadoEmpleadoSimple = Math.max(baseServicioSimple + comisionAplicadaSimple, 0);
             const descuentoPuestoDiaSimple = diaSeleccionadoSimple
               ? Math.max(Number(diaSeleccionadoSimple.descuento_espacio || 0), 0)
               : 0;
@@ -2207,7 +2238,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                       <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4">
                         <p className="text-xs uppercase tracking-wide text-sky-700 font-semibold">Total generado</p>
                         <p className="text-2xl font-black text-sky-900 mt-1">{formatMoney(generadoEmpleadoSimple)}</p>
-                        <p className="text-[11px] text-sky-700 mt-1">Base empleado por servicios del día. Fecha operativa: {fechaOperacionSimple || '-'}</p>
+                        <p className="text-[11px] text-sky-700 mt-1">Base: {formatMoney(baseServicioSimple)} + Comisión aplicada: {formatMoney(comisionAplicadaSimple)}.</p>
                       </div>
                       <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4">
                         <p className="text-xs uppercase tracking-wide text-rose-700 font-semibold">Total descuentos</p>
@@ -2426,13 +2457,31 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                     <div className="card border border-emerald-200 bg-emerald-50">
                       <h4 className="card-header mb-2">Paso 2: Total final a pagar</h4>
                       <div className="rounded-2xl border border-emerald-300 bg-white p-4">
-                        <p className="text-sm text-slate-700">Total generado base</p>
+                        <p className="text-sm text-slate-700">Total generado del día</p>
                         <p className="text-lg font-bold text-slate-900">{formatMoney(generadoEmpleadoSimple)}</p>
+                        <p className="text-xs text-slate-600 mt-1">Base servicios: {formatMoney(baseServicioSimple)}</p>
+                        <p className="text-xs text-slate-600">Comisión ventas del día: {formatMoney(comisionVentasSimple)} ({aplicaComisionSimple ? 'pagada' : 'no pagada'})</p>
                         <p className="text-sm text-rose-700 mt-2">(-) Descuentos: {formatMoney(totalDescuentosSimple)}</p>
                         <p className="text-sm text-slate-700 mt-2">Pagos digitados por medios: {formatMoney(totalPagosDigitadosSimple)}</p>
                         <p className="text-sm text-amber-700 mt-1">Saldo operativo por pagar: {formatMoney(saldoOperativoSimple)}</p>
                         <p className="text-xs text-slate-500">Puesto aplicado: {formatMoney(descuentoPuestoAplicado)}. Cobro consumo (registro aparte): {formatMoney(descuentoConsumoAplicado)}.</p>
                         <p className="text-4xl font-black text-emerald-800 mt-3">{formatMoney(totalPagarFinalSimple)}</p>
+                      </div>
+
+                      <div className="mt-3 rounded-2xl border border-slate-200 bg-white p-4">
+                        <p className="text-sm font-semibold text-slate-800">Comisión de ventas al empleado</p>
+                        <p className="text-xs text-slate-600 mt-1">Comisión calculada del día: {formatMoney(comisionVentasSimple)}</p>
+                        <div className="mt-2 max-w-sm">
+                          <label className="block text-xs text-slate-600 mb-1">¿La vas a pagar?</label>
+                          <select
+                            className="input-field"
+                            value={aplicaComisionSimple ? 'si' : 'no'}
+                            onChange={(e) => setAplicaComisionVentasPorEstilista((prev) => ({ ...prev, [estId]: e.target.value === 'si' }))}
+                          >
+                            <option value="si">Sí, pagar comisión</option>
+                            <option value="no">No pagar comisión</option>
+                          </select>
+                        </div>
                       </div>
 
                       <div className="mt-3 rounded-2xl border border-slate-200 bg-white p-4">
@@ -3212,7 +3261,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                 <th className="px-4 py-3 text-left">Fecha</th>
                 <th className="px-4 py-3 text-left">Medio</th>
                 <th className="px-4 py-3 text-left">Valor abonado</th>
-                <th className="px-4 py-3 text-left">Editar datos del abono</th>
+                <th className="px-4 py-3 text-left">Editar / eliminar abono</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
@@ -3229,6 +3278,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
               {deudaSeleccionada && (deudaSeleccionada.abonos || []).map((abono) => {
                 const abonoId = Number(abono.abono_id);
                 const savingEdit = !!savingEditByAbono[abonoId];
+                const savingDelete = !!savingDeleteByAbono[abonoId];
                 const editValue = editMontoByAbono[abonoId] ?? String(Number(abono.monto || 0));
                 const editMedio = editMedioByAbono[abonoId] ?? (abono.medio_pago || 'efectivo');
                 const editFecha = editFechaByAbono[abonoId] ?? String(abono.fecha_hora || '').slice(0, 10);
@@ -3276,6 +3326,13 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                           disabled={savingEdit}
                         >
                           {savingEdit ? 'Guardando...' : 'Guardar'}
+                        </button>
+                        <button
+                          className="btn-danger !px-3 !py-2"
+                          onClick={() => eliminarAbonoCartera(abono, deudaSeleccionada)}
+                          disabled={savingDelete}
+                        >
+                          {savingDelete ? 'Eliminando...' : 'Eliminar'}
                         </button>
                       </div>
                     </td>
@@ -3403,6 +3460,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                   toMontoNoNegativo(edit.pago_otros);
                 const generadoConComision = Number((fila.generado_total_con_comision ?? fila.generado_total) || 0);
                 const generadoSinComision = Number((fila.generado_total_sin_comision ?? fila.generado_total) || 0);
+                const comisionDia = Math.max(generadoConComision - generadoSinComision, 0);
                 const generado = Math.max(aplicaComisionRow ? generadoConComision : generadoSinComision, 0);
                 const pendientePreview = Math.max(generado - totalPago, 0);
                 return (
@@ -3422,6 +3480,8 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                       </select>
                     </td>
                     <td className="table-cell">
+                      <p className="text-xs font-semibold text-indigo-700 mb-1">{formatMoney(comisionDia)}</p>
+                      <p className="text-[11px] text-slate-500 mb-1">{aplicaComisionRow ? 'Pagada' : 'No pagada'}</p>
                       <select className="input-field !py-2 !w-44" value={Boolean(edit.aplica_comision_ventas ?? true) ? 'si' : 'no'} onChange={(e) => actualizarAjusteDiarioCampo(key, 'aplica_comision_ventas', e.target.value === 'si')}>
                         <option value="si">Sí aplica</option>
                         <option value="no">No aplica</option>

@@ -560,4 +560,9 @@ export const reportesService = {
     });
     return response.data;
   },
+
+  deleteAbonoConsumoEmpleado: async (abono_id) => {
+    const response = await api.delete(`/reportes/consumo-empleado/abonos/${abono_id}/`);
+    return response.data;
+  },
 };
