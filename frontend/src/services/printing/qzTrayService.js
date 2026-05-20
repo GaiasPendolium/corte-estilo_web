@@ -43,7 +43,7 @@ const normalizeError = (error, fallbackMessage) => {
   const message = rawMessage.toLowerCase();
 
   if (message.includes('origin no autorizado') || message.includes('qz_allowed_origins')) {
-    return 'QZ fue bloqueado por el backend para este dominio. Agrega la URL actual a QZ_ALLOWED_ORIGINS.';
+    return 'QZ fue bloqueado por Railway para este dominio. Agrega la URL actual a QZ_ALLOWED_ORIGINS.';
   }
   if (message.includes('unable to establish connection') || message.includes('websocket')) {
     return 'No se pudo conectar con QZ Tray. Verifica que este ejecutandose en Windows.';
@@ -61,7 +61,7 @@ const fetchQzText = async (url, options = {}, defaultMessage) => {
 
   if (!response.ok) {
     if (response.status === 403) {
-      throw new Error(text || 'Origin no autorizado para firma QZ. Revisa QZ_ALLOWED_ORIGINS en el backend.');
+      throw new Error(text || 'Origin no autorizado para firma QZ. Revisa QZ_ALLOWED_ORIGINS en Railway.');
     }
     throw new Error(text || defaultMessage || 'No se pudo completar la operacion con QZ');
   }
