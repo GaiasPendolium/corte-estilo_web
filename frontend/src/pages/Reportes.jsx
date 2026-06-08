@@ -148,29 +148,24 @@ const Reportes = () => {
   const [editFechaByAbono, setEditFechaByAbono] = useState({});
   const [editNotasByAbono, setEditNotasByAbono] = useState({});
   const [savingEditByAbono, setSavingEditByAbono] = useState({});
-  const [savingDeleteByAbono, setSavingDeleteByAbono] = useState({});
   const [deudaActivaHistorial, setDeudaActivaHistorial] = useState(null);
   const [filtroCarteraEstilistaId, setFiltroCarteraEstilistaId] = useState('todos');
   const [mostrarFacturasSaldadas, setMostrarFacturasSaldadas] = useState(false);
-  // Cargo manual empleado
-  const [mostrarFormCargoManual, setMostrarFormCargoManual] = useState(false);
-  const [cargoManualEstilistaId, setCargoManualEstilistaId] = useState('');
-  const [cargoManualMonto, setCargoManualMonto] = useState('');
-  const [cargoManualMotivo, setCargoManualMotivo] = useState('');
-  const [cargoManualFecha, setCargoManualFecha] = useState('');
-  const [savingCargoManual, setSavingCargoManual] = useState(false);
   const [estilistaActivoLiquidacion, setEstilistaActivoLiquidacion] = useState(null);
   const [pagosPorEstilista, setPagosPorEstilista] = useState({});
   const [estadoDiaPorEstilista, setEstadoDiaPorEstilista] = useState({});
+  const [cargoPuestoPorEstilista, setCargoPuestoPorEstilista] = useState({});
   const [abonoPuestoPorEstilista, setAbonoPuestoPorEstilista] = useState({});
   const [modoCobroPuestoPorEstilista, setModoCobroPuestoPorEstilista] = useState({});
   const [porcentajePuestoPorEstilista, setPorcentajePuestoPorEstilista] = useState({});
   const [abonoPuestoAcumuladoPorEstilista, setAbonoPuestoAcumuladoPorEstilista] = useState({});
   const [medioAbonoPuestoPorEstilista, setMedioAbonoPuestoPorEstilista] = useState({});
   const [aplicaComisionVentasPorEstilista, setAplicaComisionVentasPorEstilista] = useState({});
-  const [abonarConsumoPorEstilista, setAbonarConsumoPorEstilista] = useState({});
   const [cobroConsumoPorEstilista, setCobroConsumoPorEstilista] = useState({});
+  const [cancelarDeudaPuestoPorEstilista, setCancelarDeudaPuestoPorEstilista] = useState({});
+  const [cancelarDeudaConsumoPorEstilista, setCancelarDeudaConsumoPorEstilista] = useState({});
   const [medioCobroConsumoPorEstilista, setMedioCobroConsumoPorEstilista] = useState({});
+  const [deudaConsumoSeleccionadasPorEstilista, setDeudaConsumoSeleccionadasPorEstilista] = useState({});
   const [modoCorreccionPorEstilista, setModoCorreccionPorEstilista] = useState({});
   const [savingEstadoByEstilista, setSavingEstadoByEstilista] = useState({});
   const [skipDescuentoPuestoPorEstilista, setSkipDescuentoPuestoPorEstilista] = useState({});
@@ -193,6 +188,12 @@ const Reportes = () => {
   const [savingAjusteDiarioByKey, setSavingAjusteDiarioByKey] = useState({});
   const [filtroAjusteTexto, setFiltroAjusteTexto] = useState('');
   const [soloPendientesAjuste, setSoloPendientesAjuste] = useState(false);
+  const [ocultarDiasSaldadosAjuste, setOcultarDiasSaldadosAjuste] = useState(true);
+  const [estilistaActivoAjuste, setEstilistaActivoAjuste] = useState(null);
+  const [diasPagoSeleccionadosByEstilista, setDiasPagoSeleccionadosByEstilista] = useState({});
+  const [diasDeudaPuestoSeleccionadosByEstilista, setDiasDeudaPuestoSeleccionadosByEstilista] = useState({});
+  const [facturasDeudaSeleccionadasByEstilista, setFacturasDeudaSeleccionadasByEstilista] = useState({});
+  const [aplicandoPagoMasivo, setAplicandoPagoMasivo] = useState(false);
   const [vistaSimpleLiquidacion, setVistaSimpleLiquidacion] = useState(true);
   const [pasoLiquidacion, setPasoLiquidacion] = useState(1);
   const [cierreTabActiva, setCierreTabActiva] = useState('medios');
@@ -328,14 +329,20 @@ const Reportes = () => {
   const ajusteDiarioRowsFiltradas = useMemo(() => {
     const q = String(filtroAjusteTexto || '').trim().toLowerCase();
     return (ajusteDiarioRows || []).filter((fila) => {
-      if (soloPendientesAjuste && Number(fila.pendiente_pago_empleado || 0) <= 0) return false;
+      const pendienteEmpleado = Number(fila.pendiente_pago_empleado || 0);
+      const deudaDiaPendiente = Number(fila.deuda_puesto_dia_pendiente || 0);
+      const consumoDia = Number(fila.cobro_consumo_dia || 0);
+
+      if (soloPendientesAjuste && pendienteEmpleado <= 0 && deudaDiaPendiente <= 0) return false;
+      if (ocultarDiasSaldadosAjuste && pendienteEmpleado <= 0 && deudaDiaPendiente <= 0 && consumoDia <= 0) return false;
+
       if (!q) return true;
       return (
         String(fila.estilista_nombre || '').toLowerCase().includes(q)
         || String(fila.fecha || '').toLowerCase().includes(q)
       );
     });
-  }, [ajusteDiarioRows, filtroAjusteTexto, soloPendientesAjuste]);
+  }, [ajusteDiarioRows, filtroAjusteTexto, soloPendientesAjuste, ocultarDiasSaldadosAjuste]);
 
   const resumenAjusteDiario = useMemo(() => {
     let generado = 0;
@@ -367,6 +374,246 @@ const Reportes = () => {
 
     return { generado, pendiente, consumo, abonoPuesto, filasModificadas };
   }, [ajusteDiarioRowsFiltradas, ajusteDiarioEditsByKey]);
+
+  const detallePendientesAjuste = useMemo(() => {
+    const map = new Map();
+    const filas = ajusteDiarioRowsFiltradas || [];
+
+    filas.forEach((fila) => {
+      const estId = Number(fila.estilista_id || 0);
+      if (!estId) return;
+
+      if (!map.has(estId)) {
+        map.set(estId, {
+          estilista_id: estId,
+          estilista_nombre: fila.estilista_nombre || `Empleado ${estId}`,
+          total_pendiente_pago: 0,
+          total_pendiente_puesto_dias: 0,
+          dias_no_liquidados: [],
+          dias_deuda_puesto: [],
+          facturas_deuda: [],
+        });
+      }
+
+      const item = map.get(estId);
+      const pendientePago = Math.max(Number(fila.pendiente_pago_empleado || 0), 0);
+      const deudaPuestoDia = Math.max(Number(fila.deuda_puesto_dia_pendiente || 0), 0);
+      const generadoDia = Math.max(Number(fila.generado_total || 0), 0);
+      const pagadoDia = Math.max(Number(fila.pagado_total || 0), 0);
+
+      if (pendientePago > 0) {
+        item.total_pendiente_pago += pendientePago;
+        item.dias_no_liquidados.push({
+          fecha: fila.fecha,
+          generado: generadoDia,
+          pagado: pagadoDia,
+          pendiente: pendientePago,
+        });
+      }
+
+      if (deudaPuestoDia > 0) {
+        item.total_pendiente_puesto_dias += deudaPuestoDia;
+        item.dias_deuda_puesto.push({
+          fecha: fila.fecha,
+          deuda_puesto_dia: deudaPuestoDia,
+        });
+      }
+    });
+
+    (carteraData?.deudas || []).forEach((d) => {
+      const estId = Number(d.estilista_id || 0);
+      if (!estId) return;
+
+      if (!map.has(estId)) {
+        map.set(estId, {
+          estilista_id: estId,
+          estilista_nombre: d.estilista_nombre || `Empleado ${estId}`,
+          total_pendiente_pago: 0,
+          total_pendiente_puesto_dias: 0,
+          dias_no_liquidados: [],
+          dias_deuda_puesto: [],
+          facturas_deuda: [],
+        });
+      }
+
+      const saldo = Math.max(Number(d.saldo_pendiente || 0), 0);
+      if (saldo <= 0) return;
+
+      map.get(estId).facturas_deuda.push({
+        deuda_id: Number(d.deuda_id || 0),
+        numero_factura: d.numero_factura || `Deuda ${d.deuda_id}`,
+        fecha_hora: d.fecha_hora || '',
+        motivo: d.notas || d.motivo || 'Consumo interno pendiente',
+        total_cargo: Math.max(Number(d.total_cargo || 0), 0),
+        saldo_pendiente: saldo,
+      });
+    });
+
+    const out = Array.from(map.values())
+      .map((x) => ({
+        ...x,
+        dias_no_liquidados: (x.dias_no_liquidados || []).sort((a, b) => String(a.fecha || '').localeCompare(String(b.fecha || ''))),
+        dias_deuda_puesto: (x.dias_deuda_puesto || []).sort((a, b) => String(a.fecha || '').localeCompare(String(b.fecha || ''))),
+        facturas_deuda: (x.facturas_deuda || []).sort((a, b) => String(a.fecha_hora || '').localeCompare(String(b.fecha_hora || ''))),
+      }))
+      .filter((x) => x.total_pendiente_pago > 0 || x.total_pendiente_puesto_dias > 0 || (x.facturas_deuda || []).length > 0)
+      .sort((a, b) => (b.total_pendiente_pago + b.total_pendiente_puesto_dias) - (a.total_pendiente_pago + a.total_pendiente_puesto_dias));
+
+    return out;
+  }, [ajusteDiarioRowsFiltradas, carteraData]);
+
+  const detallePendienteActivoAjuste = useMemo(
+    () => detallePendientesAjuste.find((x) => Number(x.estilista_id) === Number(estilistaActivoAjuste)) || null,
+    [detallePendientesAjuste, estilistaActivoAjuste]
+  );
+
+  useEffect(() => {
+    if ((detallePendientesAjuste || []).length === 0) {
+      setEstilistaActivoAjuste(null);
+      return;
+    }
+    const existe = (detallePendientesAjuste || []).some((x) => Number(x.estilista_id) === Number(estilistaActivoAjuste));
+    if (!existe) {
+      setEstilistaActivoAjuste(Number(detallePendientesAjuste[0].estilista_id));
+    }
+  }, [detallePendientesAjuste, estilistaActivoAjuste]);
+
+  const toggleDiaPagoSeleccionado = (estilistaId, fecha) => {
+    const estId = Number(estilistaId || 0);
+    const f = String(fecha || '');
+    if (!estId || !f) return;
+
+    setDiasPagoSeleccionadosByEstilista((prev) => {
+      const actuales = prev[estId] || [];
+      const existe = actuales.includes(f);
+      return {
+        ...prev,
+        [estId]: existe ? actuales.filter((x) => x !== f) : [...actuales, f],
+      };
+    });
+  };
+
+  const limpiarDiasPagoSeleccionados = (estilistaId) => {
+    const estId = Number(estilistaId || 0);
+    if (!estId) return;
+    setDiasPagoSeleccionadosByEstilista((prev) => ({ ...prev, [estId]: [] }));
+  };
+
+  const toggleDiaDeudaPuestoSeleccionado = (estilistaId, fecha) => {
+    const estId = Number(estilistaId || 0);
+    const f = String(fecha || '');
+    if (!estId || !f) return;
+
+    setDiasDeudaPuestoSeleccionadosByEstilista((prev) => {
+      const actuales = prev[estId] || [];
+      const existe = actuales.includes(f);
+      return {
+        ...prev,
+        [estId]: existe ? actuales.filter((x) => x !== f) : [...actuales, f],
+      };
+    });
+  };
+
+  const seleccionarTodosDiasDeudaPuesto = (estilistaId, dias) => {
+    const estId = Number(estilistaId || 0);
+    if (!estId) return;
+    const fechas = (dias || []).map((d) => String(d.fecha || '')).filter(Boolean);
+    setDiasDeudaPuestoSeleccionadosByEstilista((prev) => ({ ...prev, [estId]: fechas }));
+  };
+
+  const limpiarDiasDeudaPuestoSeleccionados = (estilistaId) => {
+    const estId = Number(estilistaId || 0);
+    if (!estId) return;
+    setDiasDeudaPuestoSeleccionadosByEstilista((prev) => ({ ...prev, [estId]: [] }));
+  };
+
+  const toggleFacturaDeudaSeleccionada = (estilistaId, deudaId) => {
+    const estId = Number(estilistaId || 0);
+    const id = String(deudaId || '');
+    if (!estId || !id) return;
+
+    setFacturasDeudaSeleccionadasByEstilista((prev) => {
+      const actuales = prev[estId] || [];
+      const existe = actuales.includes(id);
+      return {
+        ...prev,
+        [estId]: existe ? actuales.filter((x) => x !== id) : [...actuales, id],
+      };
+    });
+  };
+
+  const seleccionarTodasFacturasDeuda = (estilistaId, facturas) => {
+    const estId = Number(estilistaId || 0);
+    if (!estId) return;
+    const ids = (facturas || []).map((f) => String(f.deuda_id || '')).filter(Boolean);
+    setFacturasDeudaSeleccionadasByEstilista((prev) => ({ ...prev, [estId]: ids }));
+  };
+
+  const limpiarFacturasDeudaSeleccionadas = (estilistaId) => {
+    const estId = Number(estilistaId || 0);
+    if (!estId) return;
+    setFacturasDeudaSeleccionadasByEstilista((prev) => ({ ...prev, [estId]: [] }));
+  };
+
+  const marcarDiasSeleccionadosComoPago = async () => {
+    const estId = Number(estilistaActivoAjuste || 0);
+    if (!estId) {
+      toast.info('Selecciona un empleado en el panel izquierdo.');
+      return;
+    }
+
+    const fechasSeleccionadas = diasPagoSeleccionadosByEstilista[estId] || [];
+    if (fechasSeleccionadas.length === 0) {
+      toast.info('Selecciona al menos un día no liquidado para marcarlo como pago.');
+      return;
+    }
+
+    setAplicandoPagoMasivo(true);
+    try {
+      for (const fechaSel of fechasSeleccionadas) {
+        const fila = (ajusteDiarioRows || []).find(
+          (r) => Number(r.estilista_id) === estId && String(r.fecha || '') === String(fechaSel || '')
+        );
+        if (!fila) continue;
+
+        const key = `${fila.estilista_id}|${fila.fecha}`;
+        const edit = ajusteDiarioEditsByKey[key] || {};
+        const aplicaComisionRow = Boolean(edit.aplica_comision_ventas ?? fila.aplica_comision_ventas ?? true);
+        const generadoConComision = Number((fila.generado_total_con_comision ?? fila.generado_total) || 0);
+        const generadoSinComision = Number((fila.generado_total_sin_comision ?? fila.generado_total) || 0);
+        const generadoObjetivo = Math.max(aplicaComisionRow ? generadoConComision : generadoSinComision, 0);
+        const consumoActual = Math.max(Number(fila.cobro_consumo_dia || 0), 0);
+        const consumoObjetivo = toMontoNoNegativo(edit.cobro_consumo_objetivo ?? fila.cobro_consumo_dia ?? 0);
+        const extraConsumo = Math.max(consumoObjetivo - consumoActual, 0);
+
+        await reportesService.liquidarOperacionIntegral({
+          estilista_id: fila.estilista_id,
+          fecha: fila.fecha,
+          pago_efectivo: generadoObjetivo,
+          pago_nequi: 0,
+          pago_daviplata: 0,
+          pago_otros: 0,
+          abono_puesto: toMontoNoNegativo(edit.abono_puesto ?? fila.abono_puesto),
+          medio_abono_puesto: edit.medio_abono_puesto || fila.medio_abono_puesto || 'efectivo',
+          aplica_comision_ventas: aplicaComisionRow,
+          forzar_reemplazo_dia: true,
+          consumo_monto: extraConsumo,
+          deuda_ids: [],
+          medio_cobro_consumo: edit.medio_cobro_consumo || 'efectivo',
+          notas: `Marcado como pago desde ajuste diario ${fila.fecha}`,
+        });
+      }
+
+      limpiarDiasPagoSeleccionados(estId);
+      toast.success('Días seleccionados actualizados como pago.');
+      await Promise.all([cargarTodo(), cargarCarteraLiquidacionGlobal(), cargarAjusteDiarioUnificado()]);
+    } catch (error) {
+      const msg = error?.response?.data?.error || error?.message || 'No se pudo aplicar el cambio masivo a pago.';
+      toast.error(String(msg));
+    } finally {
+      setAplicandoPagoMasivo(false);
+    }
+  };
 
   const actualizarCuadreDiaCampo = (estilistaId, fecha, campo, valor) => {
     setCuadreDiarioByEstilista((prev) => {
@@ -457,6 +704,7 @@ const Reportes = () => {
         periodo,
         fecha_inicio: fechaInicio,
         fecha_fin: fechaFin,
+        solo_deuda_abierta: ocultarDiasSaldadosAjuste ? '1' : '0',
       });
       const filas = resp?.items || [];
       setAjusteDiarioRows(filas);
@@ -484,87 +732,69 @@ const Reportes = () => {
     } finally {
       setLoadingAjusteDiario(false);
     }
-  }, [esRecepcion, periodo, fechaInicio, fechaFin]);
+  }, [esRecepcion, periodo, fechaInicio, fechaFin, ocultarDiasSaldadosAjuste]);
 
   const cargarTodo = useCallback(async () => {
     const reqSeq = ++cargarTodoSeqRef.current;
     try {
       setLoading(true);
-      reportesService.getCierreCaja(paramsBase)
-        .then((cierreResp) => {
-          if (reqSeq !== cargarTodoSeqRef.current) return;
-          setCierreCaja(cierreResp || null);
-        })
-        .catch(() => {
-          if (reqSeq !== cargarTodoSeqRef.current) return;
-          setCierreCaja(null);
-        });
+      const [cierreResp, biResp] = await Promise.all([
+        reportesService.getCierreCaja(paramsBase),
+        reportesService.getBIResumen(paramsBase),
+      ]);
 
-      const promesasCore = [reportesService.getBIResumen(paramsBase)];
+      let carteraResp = null;
       if (!esRecepcion) {
-        promesasCore.push(
+        [carteraResp] = await Promise.all([
           reportesService.getConsumoEmpleadoDeudas({
             periodo,
             fecha_inicio: fechaInicio,
             fecha_fin: fechaFin,
-          })
-        );
+          }),
+        ]);
       }
-
-      const resultadosCore = await Promise.allSettled(promesasCore);
 
       if (reqSeq !== cargarTodoSeqRef.current) return;
 
-      const biResp = resultadosCore[0]?.status === 'fulfilled' ? resultadosCore[0].value : null;
-      const carteraResp = !esRecepcion && resultadosCore[1]?.status === 'fulfilled'
-        ? resultadosCore[1].value
-        : null;
-
+      setCierreCaja(cierreResp || null);
+      setBiData(biResp || null);
       setCarteraData({
         resumen: carteraResp?.resumen || [],
         deudas: carteraResp?.deudas || [],
         abonos_historial: carteraResp?.abonos_historial || [],
       });
-      setBiData(biResp || null);
-
-      setLoadingHistorial(true);
-      reportesService.getEstadoPagoHistorial({
-        fecha_inicio: fechaInicio,
-        fecha_fin: fechaFin,
-        limit: 200,
-      })
-        .then((hist) => {
-          if (reqSeq === cargarTodoSeqRef.current) {
-            setHistorialEstados(hist?.items || []);
-          }
-        })
-        .catch(() => {
-          if (reqSeq === cargarTodoSeqRef.current) {
-            setHistorialEstados([]);
-          }
-        })
-        .finally(() => {
-          if (reqSeq === cargarTodoSeqRef.current) {
-            setLoadingHistorial(false);
-          }
+      try {
+        setLoadingHistorial(true);
+        const hist = await reportesService.getEstadoPagoHistorial({
+          fecha_inicio: fechaInicio,
+          fecha_fin: fechaFin,
+          limit: 200,
         });
-
-      const falloBI = resultadosCore[0]?.status === 'rejected';
-      const falloCartera = !esRecepcion && resultadosCore[1]?.status === 'rejected';
-      if (falloBI && (esRecepcion || falloCartera)) {
-        toast.error('No se pudieron cargar los reportes');
+        if (reqSeq === cargarTodoSeqRef.current) {
+          setHistorialEstados(hist?.items || []);
+        }
+      } catch (err) {
+        if (reqSeq === cargarTodoSeqRef.current) {
+          setHistorialEstados([]);
+        }
+      } finally {
+        if (reqSeq === cargarTodoSeqRef.current) {
+          setLoadingHistorial(false);
+        }
       }
 
       if (moduloActivo !== 'liquidacion') {
         setPagosPorEstilista({});
         setEstadoDiaPorEstilista({});
+        setCargoPuestoPorEstilista({});
         setAbonoPuestoPorEstilista({});
         setModoCobroPuestoPorEstilista({});
         setPorcentajePuestoPorEstilista({});
         setMedioAbonoPuestoPorEstilista({});
         setAplicaComisionVentasPorEstilista({});
-        setAbonarConsumoPorEstilista({});
         setCobroConsumoPorEstilista({});
+        setCancelarDeudaPuestoPorEstilista({});
+        setCancelarDeudaConsumoPorEstilista({});
         setMedioCobroConsumoPorEstilista({});
       }
     } catch (error) {
@@ -639,10 +869,13 @@ const Reportes = () => {
         if (cancelado) return;
         setPagosPorEstilista({});
         setEstadoDiaPorEstilista({});
+        setCargoPuestoPorEstilista({});
         setAbonoPuestoPorEstilista({});
         setAbonoPuestoAcumuladoPorEstilista({});
         setMedioAbonoPuestoPorEstilista({});
         setAplicaComisionVentasPorEstilista({});
+        setCancelarDeudaPuestoPorEstilista({});
+        setCancelarDeudaConsumoPorEstilista({});
       }
     };
 
@@ -738,7 +971,7 @@ const Reportes = () => {
 
   useEffect(() => {
     if (moduloActivo !== 'liquidacion') return;
-    if (!vistaSimpleLiquidacion) return;
+    if (vistaSimpleLiquidacion !== true) return;
     if (Number(pasoLiquidacion) !== 3) return;
 
     const estId = Number(estilistaActivoLiquidacion || 0);
@@ -750,6 +983,15 @@ const Reportes = () => {
     const sugeridoPuesto = Math.max(Number(empleado.deuda_total_acumulada || 0), 0);
     const resumenEstilista = (carteraDataLiquidacionGlobal?.resumen || []).find((x) => Number(x.estilista_id) === estId);
     const sugeridoConsumo = Math.max(Number(resumenEstilista?.saldo_pendiente || 0), 0);
+
+    setCargoPuestoPorEstilista((prev) => {
+      const actual = String(prev?.[estId] ?? '').trim();
+      if (actual !== '') return prev;
+      return {
+        ...prev,
+        [estId]: '',
+      };
+    });
 
     setAbonoPuestoPorEstilista((prev) => {
       const actual = String(prev?.[estId] ?? '').trim();
@@ -778,7 +1020,7 @@ const Reportes = () => {
   ]);
 
   useEffect(() => {
-    if (!vistaSimpleLiquidacion) return;
+    if (vistaSimpleLiquidacion !== true) return;
     if (pasoLiquidacion === 3 || pasoLiquidacion === 4) return;
     setPasoLiquidacion(3);
   }, [vistaSimpleLiquidacion, pasoLiquidacion]);
@@ -909,6 +1151,27 @@ const Reportes = () => {
     if (field === 'cobro_consumo') {
       setCobroConsumoPorEstilista((prev) => ({ ...prev, [estId]: limpio }));
     }
+  };
+
+  const toggleDeudaConsumoSeleccion = (estilistaId, deudaId) => {
+    const idStr = String(deudaId);
+    setDeudaConsumoSeleccionadasPorEstilista((prev) => {
+      const actuales = prev[estilistaId] || [];
+      const existe = actuales.includes(idStr);
+      const siguiente = existe
+        ? actuales.filter((x) => x !== idStr)
+        : [...actuales, idStr];
+      return { ...prev, [estilistaId]: siguiente };
+    });
+  };
+
+  const seleccionarTodasDeudasConsumo = (estilistaId, deudasEmpleado) => {
+    const ids = (deudasEmpleado || []).map((d) => String(d.deuda_id));
+    setDeudaConsumoSeleccionadasPorEstilista((prev) => ({ ...prev, [estilistaId]: ids }));
+  };
+
+  const limpiarSeleccionDeudasConsumo = (estilistaId) => {
+    setDeudaConsumoSeleccionadasPorEstilista((prev) => ({ ...prev, [estilistaId]: [] }));
   };
 
   const actualizarAjusteDiarioCampo = (key, campo, valor) => {
@@ -1139,67 +1402,6 @@ const Reportes = () => {
     }
   };
 
-  const eliminarAbonoCartera = async (abono, deuda) => {
-    const abonoId = Number(abono?.abono_id || 0);
-    if (!abonoId) {
-      toast.error('Abono inválido.');
-      return;
-    }
-
-    const confirmado = window.confirm('¿Seguro que deseas eliminar este abono? Esta acción recalculará el saldo de la factura.');
-    if (!confirmado) return;
-
-    setSavingDeleteByAbono((prev) => ({ ...prev, [abonoId]: true }));
-    try {
-      await reportesService.deleteAbonoConsumoEmpleado(abonoId);
-      toast.success('Abono eliminado correctamente.');
-      await cargarTodo();
-      setDeudaActivaHistorial(deuda?.deuda_id || null);
-    } catch (error) {
-      const msg = error?.response?.data?.error || 'No se pudo eliminar el abono.';
-      toast.error(msg);
-    } finally {
-      setSavingDeleteByAbono((prev) => ({ ...prev, [abonoId]: false }));
-    }
-  };
-
-  const crearCargoManual = async () => {
-    const estilistaId = Number(cargoManualEstilistaId || 0);
-    if (!estilistaId) {
-      toast.error('Selecciona un empleado.');
-      return;
-    }
-    const monto = Number(cargoManualMonto || 0);
-    if (monto <= 0) {
-      toast.error('El monto debe ser mayor a cero.');
-      return;
-    }
-    if (!cargoManualMotivo.trim()) {
-      toast.error('El motivo del cargo es obligatorio.');
-      return;
-    }
-    setSavingCargoManual(true);
-    try {
-      const result = await reportesService.crearCargoManualEmpleado({
-        estilista_id: estilistaId,
-        monto,
-        motivo: cargoManualMotivo.trim(),
-        fecha: cargoManualFecha || undefined,
-      });
-      toast.success(`Cargo creado: ${result.numero_factura} por ${formatMoney(result.monto)} a ${result.estilista_nombre}.`);
-      setCargoManualMonto('');
-      setCargoManualMotivo('');
-      setCargoManualFecha('');
-      setMostrarFormCargoManual(false);
-      await cargarTodo();
-    } catch (error) {
-      const msg = error?.response?.data?.error || 'No se pudo crear el cargo.';
-      toast.error(String(msg));
-    } finally {
-      setSavingCargoManual(false);
-    }
-  };
-
 const aplicarEstadoLiquidacion = async (fila) => {
   const estilistaId = fila.estilista_id;
   const fechaLiquidacion = fechaFin || format(new Date(), 'yyyy-MM-dd');
@@ -1219,12 +1421,12 @@ const aplicarEstadoLiquidacion = async (fila) => {
     : abono_puesto_digitado;
   const medio_abono_puesto = medioAbonoPuestoPorEstilista[estilistaId] || 'efectivo';
   const aplica_comision_ventas = Boolean(aplicaComisionVentasPorEstilista[estilistaId] ?? true);
-  const abonarConsumoActivo = Boolean(abonarConsumoPorEstilista[estilistaId]);
   const saldoConsumoEmpleado = Number(resumenPorEstilistaLiquidacion[estilistaId]?.saldo_pendiente || 0);
   const cobroConsumoDigitado = Number(cobroConsumoPorEstilista[estilistaId] || 0);
-  const cobroConsumoAplicado = abonarConsumoActivo
-    ? Math.min(Math.max(cobroConsumoDigitado, 0), Math.max(saldoConsumoEmpleado, 0))
-    : 0;
+  const cobroConsumoAplicado = Math.min(Math.max(cobroConsumoDigitado, 0), Math.max(saldoConsumoEmpleado, 0));
+  const deudasConsumoSeleccionadas = (deudaConsumoSeleccionadasPorEstilista[estilistaId] || [])
+    .map((x) => Number(x))
+    .filter((x) => Number.isFinite(x) && x > 0);
   const medioCobroConsumo = medioCobroConsumoPorEstilista[estilistaId] || 'efectivo';
   const topePagoEmpleado = (() => {
     const dia = (desgloseLiquidacion?.desglose_por_dia || []).find((d) => String(d.fecha || '') === String(fechaLiquidacion));
@@ -1254,7 +1456,7 @@ const aplicarEstadoLiquidacion = async (fila) => {
       puesto_porcentaje,
       forzar_reemplazo_dia: esCorreccion,
       consumo_monto: cobroConsumoAplicado,
-      deuda_ids: [],
+      deuda_ids: deudasConsumoSeleccionadas,
       medio_cobro_consumo: medioCobroConsumo,
       notas: `Liquidación ${fechaLiquidacion}`,
     });
@@ -1292,9 +1494,11 @@ const aplicarEstadoLiquidacion = async (fila) => {
 
 const aplicarLiquidacionSimple = async ({
   fila,
-  pendientePagoEmpleado,
-  abonoPuestoAplicado,
-  cobroConsumoAplicado,
+  valorLiquidarHoy,
+  cargoPuestoDia,
+  abonoPuestoDeuda,
+  abonoConsumo,
+  deudasConsumoSeleccionadas,
   pagosPorMedio = null,
 }) => {
   const estilistaId = Number(fila?.estilista_id || 0);
@@ -1303,21 +1507,17 @@ const aplicarLiquidacionSimple = async ({
     return;
   }
 
-  // DEBUG: Log para ver el estado
-  console.log('DEBUG aplicarLiquidacionSimple:', {
-    estilistaId,
-    skipDescuentoPuestoPorEstilista,
-    skipValue: skipDescuentoPuestoPorEstilista[estilistaId],
-    allKeys: Object.keys(skipDescuentoPuestoPorEstilista),
-  });
-
   const fechaLiquidacion = fechaFin || format(new Date(), 'yyyy-MM-dd');
   if (String(fechaInicio || '') !== String(fechaLiquidacion || '')) {
     toast.warning('La liquidación simple opera por día. Usa el mismo valor en fecha inicio y fecha fin.');
     return;
   }
-  const totalDescuentos = Math.max(Number(abonoPuestoAplicado || 0), 0);
-  const pagoFinalEmpleado = Math.max(Number(pendientePagoEmpleado || 0) - totalDescuentos, 0);
+  const valorLiquidarHoySeguro = Math.max(Number(valorLiquidarHoy || 0), 0);
+  const cargoPuestoDiaSeguro = Math.max(Number(cargoPuestoDia || 0), 0);
+  const abonoPuestoDeudaSeguro = Math.max(Number(abonoPuestoDeuda || 0), 0);
+  const abonoConsumoSeguro = Math.max(Number(abonoConsumo || 0), 0);
+  const totalDescuentos = cargoPuestoDiaSeguro + abonoPuestoDeudaSeguro + abonoConsumoSeguro;
+  const pagoFinalEmpleado = Math.max(valorLiquidarHoySeguro - abonoPuestoDeudaSeguro - abonoConsumoSeguro, 0);
   const pago_efectivo = Math.max(Number(pagosPorMedio?.efectivo || 0), 0);
   const pago_nequi = Math.max(Number(pagosPorMedio?.nequi || 0), 0);
   const pago_daviplata = Math.max(Number(pagosPorMedio?.daviplata || 0), 0);
@@ -1344,25 +1544,18 @@ const aplicarLiquidacionSimple = async ({
       pago_nequi: usarAutoEfectivo ? 0 : pago_nequi,
       pago_daviplata: usarAutoEfectivo ? 0 : pago_daviplata,
       pago_otros: usarAutoEfectivo ? 0 : pago_otros,
-      abono_puesto: skip_puesto ? 0 : Number(abonoPuestoAplicado || 0),
+      abono_puesto: skip_puesto ? 0 : Number(abonoPuestoDeudaSeguro || 0),
       medio_abono_puesto,
       aplica_comision_ventas,
       puesto_modo,
       puesto_porcentaje,
       forzar_reemplazo_dia: false,
       skip_descuento_puesto: skip_puesto,
-      consumo_monto: cobroConsumoAplicado,
-      deuda_ids: [],
+      consumo_monto: abonoConsumoSeguro,
+      deuda_ids: deudasConsumoSeleccionadas,
       medio_cobro_consumo: medioCobroConsumo,
-      notas: `Liquidación simple ${fechaLiquidacion}`,
+      notas: `Liquidación simple ${fechaLiquidacion} | Cargo día ${cargoPuestoDiaSeguro} | Abono espacio ${abonoPuestoDeudaSeguro} | Abono consumo ${abonoConsumoSeguro}`,
     };
-
-    console.log('=== LIQUIDACIÓN DEBUG ===');
-    console.log('Payload a enviar:', payload);
-    console.log('skip_puesto:', skip_puesto, '(tipo:', typeof skip_puesto + ')');
-    console.log('abonoPuestoAplicado:', abonoPuestoAplicado);
-    console.log('pagoFinalEmpleado:', pagoFinalEmpleado);
-    console.log('totalPagosDigitados:', totalPagosDigitados);
 
     await reportesService.liquidarOperacionIntegral(payload);
 
@@ -1811,12 +2004,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                     )}
                     {(productos.detalle || []).map((item, idx) => (
                       <tr key={`prod-tab-${item.fecha_hora || item.fecha || 'x'}-${idx}`}>
-                        <td className="table-cell">
-                          {item.fecha_hora || item.fecha || '-'}
-                          {item.origen === 'consumo_empleado_abono' && item.fecha_consumo && item.fecha_consumo !== String(item.fecha || '').slice(0, 10) && (
-                            <p className="text-xs text-amber-600 mt-0.5" title="Fecha de la compra original">Factura: {item.fecha_consumo}</p>
-                          )}
-                        </td>
+                        <td className="table-cell">{item.fecha_hora || item.fecha || '-'}</td>
                         <td className="table-cell">{item.origen || '-'}</td>
                         <td className="table-cell">{item.descripcion || '-'}</td>
                         <td className="table-cell">{item.cantidad || 0}</td>
@@ -1989,8 +2177,11 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
   const renderModuloLiquidacion = () => (
     <div className="space-y-6">
       <section className="rounded-3xl bg-gradient-to-br from-slate-900 via-slate-800 to-emerald-900 p-6 text-white shadow-2xl">
-        <h2 className="text-2xl font-black tracking-tight">Liquidación Inteligente</h2>
-        <p className="mt-2 text-sm text-slate-200">Vista por día para liquidar lo que gana el empleado con menor complejidad operativa.</p>
+        <div className="inline-flex items-center gap-2 rounded-full border border-emerald-300/40 bg-emerald-400/15 px-3 py-1 text-xs font-bold uppercase tracking-[0.2em] text-emerald-100">
+          Nuevo flujo visual
+        </div>
+        <h2 className="mt-3 text-3xl font-black tracking-tight">Liquidación guiada por pasos</h2>
+        <p className="mt-2 text-sm text-slate-200">Ahora primero ves lo ganado hoy, luego decides qué deuda cobrar y al final confirmas el pago al empleado.</p>
         <div className="mt-3 inline-flex flex-wrap gap-1 rounded-xl border border-white/30 bg-white/10 p-1">
           <button
             type="button"
@@ -1999,22 +2190,26 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
           >
             Vista simple
           </button>
-          <button
-            type="button"
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${vistaSimpleLiquidacion === false ? 'bg-white text-slate-900' : 'text-white'}`}
-            onClick={() => setVistaSimpleLiquidacion(false)}
-          >
-            Vista avanzada
-          </button>
-          <button
-            type="button"
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${vistaSimpleLiquidacion === 'deuda' ? 'bg-white text-slate-900' : 'text-white'}`}
-            onClick={() => setVistaSimpleLiquidacion('deuda')}
-          >
-            Cargar deuda
-          </button>
         </div>
       </section>
+
+      <div className="rounded-2xl border-2 border-emerald-300 bg-emerald-50 p-4 shadow-sm">
+        <p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">Qué cambió</p>
+        <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-3 text-sm text-slate-700">
+          <div className="rounded-xl bg-white p-3 border border-emerald-200">
+            <p className="font-semibold text-slate-900">1. Valor a liquidar hoy</p>
+            <p className="mt-1">Se muestra arriba como tarjeta principal.</p>
+          </div>
+          <div className="rounded-xl bg-white p-3 border border-emerald-200">
+            <p className="font-semibold text-slate-900">2. Deudas separadas</p>
+            <p className="mt-1">Espacio y consumo se deciden por separado.</p>
+          </div>
+          <div className="rounded-xl bg-white p-3 border border-emerald-200">
+            <p className="font-semibold text-slate-900">3. Resumen final claro</p>
+            <p className="mt-1">Antes de guardar ves exactamente cuánto recibe el empleado.</p>
+          </div>
+        </div>
+      </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-[320px_1fr] gap-6">
         <aside className="card border border-slate-200 bg-slate-50">
@@ -2038,7 +2233,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                   type="button"
                   onClick={() => {
                     setEstilistaActivoLiquidacion(estId);
-                    setPasoLiquidacion(vistaSimpleLiquidacion ? 3 : 1);
+                    setPasoLiquidacion(vistaSimpleLiquidacion === true ? 3 : 1);
                   }}
                   className={`w-full rounded-2xl border p-3 text-left transition ${activo ? 'border-emerald-400 bg-emerald-50 shadow-md' : 'border-slate-200 bg-white hover:border-slate-300'}`}
                 >
@@ -2073,6 +2268,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
             const consumoPendiente = Number(resumenPorEstilistaLiquidacion[estId]?.saldo_pendiente || 0);
             const cobroConsumoDigitado = Number(cobroConsumoPorEstilista[estId] || 0);
             const cobroConsumoAplicado = Math.min(Math.max(cobroConsumoDigitado, 0), Math.max(consumoPendiente, 0));
+            const cargoPuestoDigitado = Math.max(Number(cargoPuestoPorEstilista[estId] || 0), 0);
             const abonoPuestoDigitado = Math.max(Number(abonoPuestoPorEstilista[estId] || 0), 0);
             const modoCobroPuesto = modoCobroPuestoPorEstilista[estId] || 'fijo';
             const porcentajePuestoDigitado = Math.max(Number(porcentajePuestoPorEstilista[estId] || 0), 0);
@@ -2151,28 +2347,15 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
               return acc;
             }, {});
             const deudasEmpleado = (carteraDataLiquidacionGlobal?.deudas || []).filter((d) => Number(d.estilista_id) === estId && Number(d.saldo_pendiente || 0) > 0);
-            const deudaMasAntiguaConsumo = [...deudasEmpleado]
-              .sort((a, b) => {
-                const fechaA = String(a.fecha_hora || '');
-                const fechaB = String(b.fecha_hora || '');
-                if (fechaA !== fechaB) return fechaA.localeCompare(fechaB);
-                return Number(a.deuda_id || 0) - Number(b.deuda_id || 0);
-              })[0] || null;
-            const abonarConsumoActivo = Boolean(abonarConsumoPorEstilista[estId]);
+            const deudasConsumoSeleccionadas = deudaConsumoSeleccionadasPorEstilista[estId] || [];
             const cuadrePorFecha = cuadreDiarioByEstilista[estId] || {};
             const fechaOperacionSimple = String(fechaFin || '');
             const diaSeleccionadoSimple = (desgloseLiquidacion?.desglose_por_dia || []).find(
               (d) => String(d.fecha || '') === fechaOperacionSimple
             );
-            const baseServicioSimple = diaSeleccionadoSimple
+            const generadoEmpleadoSimple = diaSeleccionadoSimple
               ? Math.max(Number(diaSeleccionadoSimple.base_servicio || 0), 0)
               : Math.max(Number(empleado?.valor_total_empleado || 0), 0);
-            const comisionVentasSimple = diaSeleccionadoSimple
-              ? Math.max(Number(diaSeleccionadoSimple.comision_productos || 0), 0)
-              : Math.max(Number(empleado?.comision_ventas_producto || 0), 0);
-            const aplicaComisionSimple = Boolean(aplicaComisionVentasPorEstilista[estId] ?? true);
-            const comisionAplicadaSimple = aplicaComisionSimple ? comisionVentasSimple : 0;
-            const generadoEmpleadoSimple = Math.max(baseServicioSimple + comisionAplicadaSimple, 0);
             const descuentoPuestoDiaSimple = diaSeleccionadoSimple
               ? Math.max(Number(diaSeleccionadoSimple.descuento_espacio || 0), 0)
               : 0;
@@ -2180,19 +2363,25 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
             const puestoTotalSimple = Math.max(descuentoPuestoDiaSimple + puestoPendienteSimple, 0);
             const abonoPuestoCalculado = modoCobroPuesto === 'porcentaje'
               ? Math.round((Math.max(generadoEmpleadoSimple, 0) * porcentajePuestoDigitado) / 100)
-              : abonoPuestoDigitado;
-            const tieneValorPuestoDigitado = String(abonoPuestoPorEstilista[estId] || '').trim().length > 0;
+              : cargoPuestoDigitado;
+            const tieneValorPuestoDigitado = String(cargoPuestoPorEstilista[estId] || '').trim().length > 0;
             const tienePorcentajeDigitado = String(porcentajePuestoPorEstilista[estId] || '').trim().length > 0;
             const tienePuestoManual = modoCobroPuesto === 'porcentaje' ? tienePorcentajeDigitado : tieneValorPuestoDigitado;
             const skipPuestoEstilista = Boolean(skipDescuentoPuestoPorEstilista[estId] || false);
-            const descuentoPuestoAplicado = skipPuestoEstilista
+            const cancelarDeudaPuesto = Boolean(cancelarDeudaPuestoPorEstilista[estId] || false);
+            const cancelarDeudaConsumo = Boolean(cancelarDeudaConsumoPorEstilista[estId] || false);
+            const cargoPuestoDiaAplicado = skipPuestoEstilista
               ? 0  // No aplicar descuento si skip está marcado
               : (tienePuestoManual
                   ? Math.max(abonoPuestoCalculado, 0)
                   : descuentoPuestoDiaSimple);
-            const descuentoConsumoAplicado = abonarConsumoActivo ? cobroConsumoAplicado : 0;
-            const totalDescuentosSimple = descuentoPuestoAplicado;
-            const totalPagarFinalSimple = Math.max(generadoEmpleadoSimple - totalDescuentosSimple, 0);
+            const abonoPuestoDeudaAplicado = (!skipPuestoEstilista && cancelarDeudaPuesto)
+              ? Math.min(Math.max(abonoPuestoDigitado, 0), puestoPendienteSimple)
+              : 0;
+            const descuentoConsumoAplicado = cancelarDeudaConsumo ? cobroConsumoAplicado : 0;
+            const valorLiquidarHoySimple = Math.max(generadoEmpleadoSimple - cargoPuestoDiaAplicado, 0);
+            const totalDescuentosSimple = cargoPuestoDiaAplicado + abonoPuestoDeudaAplicado + descuentoConsumoAplicado;
+            const totalPagarFinalSimple = Math.max(valorLiquidarHoySimple - abonoPuestoDeudaAplicado - descuentoConsumoAplicado, 0);
             const pagosSimple = pagosPorEstilista[estId] || {};
             const pagoEfectivoSimple = Math.max(Number(pagosSimple.efectivo || 0), 0);
             const pagoNequiSimple = Math.max(Number(pagosSimple.nequi || 0), 0);
@@ -2200,9 +2389,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
             const pagoOtrosSimple = Math.max(Number(pagosSimple.otros || 0), 0);
             const totalPagosDigitadosSimple = pagoEfectivoSimple + pagoNequiSimple + pagoDaviplataSimple + pagoOtrosSimple;
             const saldoOperativoSimple = Math.max(totalPagarFinalSimple - totalPagosDigitadosSimple, 0);
-            const abonoPuestoAvanzadoCalculado = modoCobroPuesto === 'porcentaje'
-              ? Math.max(Math.round((Math.max(generadoEmpleadoSimple, 0) * porcentajePuestoDigitado) / 100), 0)
-              : abonoPuestoDigitado;
+            const abonoPuestoAvanzadoCalculado = abonoPuestoDeudaAplicado;
 
             if (vistaSimpleLiquidacion === 'deuda') {
               return (
@@ -2282,327 +2469,396 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                       Esta vista liquida un solo día. Para evitar diferencias, usa la misma fecha en inicio y fin.
                     </div>
                   )}
-                  <div className="card border border-slate-200 bg-white">
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                      <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4">
-                        <p className="text-xs uppercase tracking-wide text-sky-700 font-semibold">Total generado</p>
-                        <p className="text-2xl font-black text-sky-900 mt-1">{formatMoney(generadoEmpleadoSimple)}</p>
-                        <p className="text-[11px] text-sky-700 mt-1">Base: {formatMoney(baseServicioSimple)} + Comisión aplicada: {formatMoney(comisionAplicadaSimple)}.</p>
-                      </div>
-                      <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4">
-                        <p className="text-xs uppercase tracking-wide text-rose-700 font-semibold">Total descuentos</p>
-                        <p className="text-2xl font-black text-rose-900 mt-1">{formatMoney(totalDescuentosSimple)}</p>
-                        <p className="text-[11px] text-rose-700 mt-1">Solo descuento de puesto del día o valor ingresado en Paso 1.</p>
-                      </div>
-                      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
-                        <p className="text-xs uppercase tracking-wide text-emerald-700 font-semibold">Total a pagar final</p>
-                        <p className="text-3xl font-black text-emerald-900 mt-1">{formatMoney(totalPagarFinalSimple)}</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="card border border-slate-200 bg-white">
-                    <div className="flex flex-wrap gap-2">
-                      {[3, 4].map((paso, idx) => {
-                        const activo = pasoLiquidacion === paso;
-                        const completado = pasoLiquidacion > paso;
-                        return (
-                          <button
-                            key={`paso-${paso}`}
-                            type="button"
-                            className={`px-3 py-2 rounded-xl border text-sm font-semibold ${activo ? 'border-sky-400 bg-sky-100 text-sky-900' : completado ? 'border-emerald-300 bg-emerald-50 text-emerald-800' : 'border-slate-200 bg-slate-50 text-slate-700'}`}
-                            onClick={() => setPasoLiquidacion(paso)}
-                          >
-                            Paso {idx + 1}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {pasoLiquidacion === 3 && (
-                    <div className="card border border-rose-200 bg-rose-50">
-                      <h4 className="card-header mb-2">Paso 1: Aplicar descuentos</h4>
-                      <div className="mb-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-                        <div className="rounded-xl border border-amber-300 bg-amber-50 p-3">
-                          <p className="text-xs text-amber-800">Pendiente cobro puesto</p>
-                          <p className="text-2xl font-black text-amber-900">{formatMoney(Math.max(deudaPuestoAcumulada, 0))}</p>
-                        </div>
-                        <div className="rounded-xl border border-rose-300 bg-rose-100 p-3">
-                          <p className="text-xs text-rose-800">Pendiente consumo cartera</p>
-                          <p className="text-2xl font-black text-rose-900">{formatMoney(Math.max(consumoPendiente, 0))}</p>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                        <div className="rounded-xl border border-amber-200 bg-white p-3">
-                          <p className="text-sm font-semibold text-slate-900">Alquiler del puesto</p>
-                          <div className="mt-1 space-y-1 text-xs text-slate-700">
-                            <p>Valor puesto día filtrado: <span className="font-semibold text-amber-800">{formatMoney(descuentoPuestoDiaSimple)}</span></p>
-                            <p>Valor pendiente: <span className="font-semibold text-amber-800">{formatMoney(puestoPendienteSimple)}</span></p>
-                            <p>Valor total (día + pendiente): <span className="font-semibold text-amber-900">{formatMoney(puestoTotalSimple)}</span></p>
+                  <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-6 items-start">
+                    <div className="space-y-5">
+                      <div className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+                        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+                          <div>
+                            <p className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500">Liquidación diaria</p>
+                            <h3 className="mt-2 text-3xl font-black tracking-tight text-slate-950">{empleado.estilista_nombre}</h3>
+                            <p className="mt-2 text-sm text-slate-600">Flujo simple de liquidación para la fecha {fechaOperacionSimple || '-'}. La lógica sigue: gané, me descuentan, abono deudas y veo cuánto recibo.</p>
                           </div>
-                          <label className="flex items-start gap-2 mt-3 mb-3 p-2 rounded-lg bg-red-50 border border-red-200 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={Boolean(skipDescuentoPuestoPorEstilista[estId])}
-                              onChange={(e) => {
-                                setSkipDescuentoPuestoPorEstilista((prev) => ({ ...prev, [estId]: e.target.checked }));
-                                if (e.target.checked) {
-                                  setAbonoPuestoPorEstilista((prev) => ({ ...prev, [estId]: '0' }));
-                                }
-                              }}
-                              className="mt-1"
-                            />
-                            <span className="text-xs text-red-800">
-                              <strong>⚠️ No descontar puesto este día</strong>
-                              <br />El costo del puesto se sumará a la deuda del empleado.
-                            </span>
-                          </label>
-                          {!skipDescuentoPuestoPorEstilista[estId] && (
-                            <>
-                              <label className="block text-xs text-slate-600 mb-1">Tipo de cobro del puesto</label>
-                          <select
-                            className="input-field"
-                            value={modoCobroPuesto}
-                            onChange={(e) => setModoCobroPuestoPorEstilista((prev) => ({ ...prev, [estId]: e.target.value }))}
-                          >
-                            <option value="fijo">Valor fijo</option>
-                            <option value="porcentaje">Porcentaje del generado del día</option>
-                          </select>
+                          <div className="rounded-2xl bg-slate-50 px-4 py-3 ring-1 ring-slate-200">
+                            <p className="text-xs uppercase tracking-wide text-slate-500">Disponible para pagar hoy</p>
+                            <p className="mt-1 text-2xl font-black text-slate-950">{formatMoney(totalPagarFinalSimple)}</p>
+                          </div>
+                        </div>
+                      </div>
 
-                          {modoCobroPuesto === 'fijo' ? (
-                            <>
+                      <section className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-xs font-bold uppercase tracking-[0.2em] text-sky-700">Ganancia del día</p>
+                            <h4 className="mt-2 text-5xl font-black tracking-tight text-slate-950">{formatMoney(generadoEmpleadoSimple)}</h4>
+                          </div>
+                          <div className="rounded-2xl bg-sky-50 px-4 py-3 text-right ring-1 ring-sky-100">
+                            <p className="text-xs uppercase tracking-wide text-sky-700">Fecha operativa</p>
+                            <p className="mt-1 text-lg font-bold text-sky-950">{fechaOperacionSimple || '-'}</p>
+                          </div>
+                        </div>
+                        <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div className="rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200">
+                            <p className="text-xs uppercase tracking-wide text-slate-500">Ventas / base del día</p>
+                            <p className="mt-2 text-2xl font-black text-slate-900">{formatMoney(generadoEmpleadoSimple)}</p>
+                          </div>
+                          <div className="rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200">
+                            <p className="text-xs uppercase tracking-wide text-slate-500">Comisión ventas empleado</p>
+                            <p className="mt-2 text-2xl font-black text-slate-900">{formatMoney(0)}</p>
+                            <p className="mt-1 text-xs text-slate-500">Este valor queda listo para ampliarse cuando existan comisiones de ventas separadas en backend.</p>
+                          </div>
+                        </div>
+                      </section>
+
+                      <section className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500">Me descuentan</p>
+                            <h4 className="mt-2 text-2xl font-black text-slate-950">Descuentos del día</h4>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-xs uppercase tracking-wide text-slate-500">Subtotal descuentos</p>
+                            <p className="mt-1 text-2xl font-black text-slate-900">{formatMoney(0)}</p>
+                          </div>
+                        </div>
+                        <div className="mt-4 rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="font-semibold text-slate-900">Descuentos adicionales del día</p>
+                              <p className="mt-1 text-sm text-slate-600">No hay descuentos diarios configurados aparte del cobro del puesto. El puesto se decide en la siguiente tarjeta para no mezclarlo con deudas.</p>
+                            </div>
+                            <div className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-500 ring-1 ring-slate-200">
+                              Sin descuentos extra
+                            </div>
+                          </div>
+                        </div>
+                      </section>
+
+                      <section className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-xs font-bold uppercase tracking-[0.2em] text-amber-700">Pago del puesto</p>
+                            <h4 className="mt-2 text-2xl font-black text-slate-950">Definir cobro del puesto</h4>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-xs uppercase tracking-wide text-slate-500">Cargo aplicado hoy</p>
+                            <p className="mt-1 text-2xl font-black text-amber-800">{formatMoney(cargoPuestoDiaAplicado)}</p>
+                          </div>
+                        </div>
+
+                        <div className="mt-5 grid grid-cols-1 lg:grid-cols-2 gap-4">
+                          <div className="rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200">
+                            <p className="text-sm font-semibold text-slate-900">Modo de cobro</p>
+                            <div className="mt-3 grid grid-cols-2 gap-2">
                               <button
                                 type="button"
-                                className="btn-secondary !py-1 !px-2 text-xs mt-2"
-                                onClick={() => setAbonoPuestoPorEstilista((prev) => ({ ...prev, [estId]: String(puestoPendienteSimple) }))}
+                                className={`rounded-2xl px-4 py-3 text-sm font-semibold ring-1 transition ${modoCobroPuesto === 'fijo' ? 'bg-slate-900 text-white ring-slate-900' : 'bg-white text-slate-700 ring-slate-200'}`}
+                                onClick={() => setModoCobroPuestoPorEstilista((prev) => ({ ...prev, [estId]: 'fijo' }))}
                               >
-                                Usar pendiente completo
+                                Valor fijo
                               </button>
-                              <label className="block text-xs text-slate-600 mt-2 mb-1">Valor a descontar</label>
-                              <input
-                                className="input-field"
-                                type="number"
-                                min="0"
-                                step="1"
-                                value={abonoPuestoPorEstilista[estId] || ''}
-                                onChange={(e) => setAbonoPuestoPorEstilista((prev) => ({ ...prev, [estId]: String(e.target.value || '').replace(/[^\d.]/g, '') }))}
-                              />
-                            </>
-                          ) : (
-                            <>
-                              <label className="block text-xs text-slate-600 mt-2 mb-1">Porcentaje (%)</label>
-                              <input
-                                className="input-field"
-                                type="number"
-                                min="0"
-                                step="0.1"
-                                value={porcentajePuestoPorEstilista[estId] || ''}
-                                onChange={(e) => setPorcentajePuestoPorEstilista((prev) => ({ ...prev, [estId]: String(e.target.value || '').replace(/[^\d.]/g, '') }))}
-                              />
-                              <p className="text-[11px] text-slate-600 mt-1">Base: generado del día {formatMoney(Math.max(generadoEmpleadoSimple, 0))}</p>
-                              <p className="text-[11px] text-amber-700 mt-1">Calculado hoy: {formatMoney(abonoPuestoCalculado)}</p>
-                            </>
-                          )}
-                          <label className="block text-xs text-slate-600 mt-2 mb-1">Medio del abono</label>
-                          <select
-                            className="input-field"
-                            value={medioAbonoPuestoPorEstilista[estId] || 'efectivo'}
-                            onChange={(e) => setMedioAbonoPuestoPorEstilista((prev) => ({ ...prev, [estId]: e.target.value }))}
-                          >
-                            {MEDIOS_PAGO_OPERACION.map((m) => (
-                              <option key={`medio-puesto-${m.value}`} value={m.value}>{m.label}</option>
-                            ))}
-                          </select>
-                          <label className="block text-xs text-slate-600 mt-2 mb-1">Comisión de ventas al empleado</label>
-                          <select
-                            className="input-field"
-                            value={Boolean(aplicaComisionVentasPorEstilista[estId] ?? true) ? 'si' : 'no'}
-                            onChange={(e) => setAplicaComisionVentasPorEstilista((prev) => ({ ...prev, [estId]: e.target.value === 'si' }))}
-                          >
-                            <option value="si">Sí, aplica</option>
-                            <option value="no">No aplica (ingreso establecimiento)</option>
-                          </select>
-                          <p className="text-xs text-amber-700 mt-2">Aplicado: {formatMoney(descuentoPuestoAplicado)}</p>
-                          <p className="text-[11px] text-slate-600 mt-1">Se registra como abono de puesto y no se vuelve a descontar del pendiente.</p>
-                            </>
-                          )}
-                        </div>
+                              <button
+                                type="button"
+                                className={`rounded-2xl px-4 py-3 text-sm font-semibold ring-1 transition ${modoCobroPuesto === 'porcentaje' ? 'bg-slate-900 text-white ring-slate-900' : 'bg-white text-slate-700 ring-slate-200'}`}
+                                onClick={() => setModoCobroPuestoPorEstilista((prev) => ({ ...prev, [estId]: 'porcentaje' }))}
+                              >
+                                Porcentaje
+                              </button>
+                            </div>
 
-                        <div className="rounded-xl border border-rose-200 bg-white p-3">
-                          <p className="text-sm font-semibold text-slate-900">Consumo de productos</p>
-                          <p className="text-xs text-slate-600 mt-1">Pendiente actual: <span className="font-semibold text-rose-700">{formatMoney(Math.max(consumoPendiente, 0))}</span></p>
-                          <label className="block text-xs text-slate-600 mt-2 mb-1">¿Abonar consumo en esta liquidación?</label>
-                          <select
-                            className="input-field"
-                            value={abonarConsumoActivo ? 'si' : 'no'}
-                            onChange={(e) => {
-                              const activo = e.target.value === 'si';
-                              setAbonarConsumoPorEstilista((prev) => ({ ...prev, [estId]: activo }));
-                              if (!activo) {
-                                setCobroConsumoPorEstilista((prev) => ({ ...prev, [estId]: '' }));
-                              }
-                            }}
-                          >
-                            <option value="no">No</option>
-                            <option value="si">Sí</option>
-                          </select>
-                          <p className="text-[11px] text-slate-600 mt-1">
-                            El abono se aplica automáticamente a la factura más antigua pendiente.
-                          </p>
-                          {deudaMasAntiguaConsumo ? (
-                            <p className="text-[11px] text-rose-700 mt-1">
-                              Factura objetivo: {deudaMasAntiguaConsumo.numero_factura || `Deuda ${deudaMasAntiguaConsumo.deuda_id}`} ({formatMoney(deudaMasAntiguaConsumo.saldo_pendiente)})
-                            </p>
-                          ) : (
-                            <p className="text-[11px] text-slate-500 mt-1">No hay facturas pendientes de consumo.</p>
-                          )}
-                          <div className="mt-2 flex items-center gap-2">
-                            <button
-                              type="button"
-                              className="btn-secondary !py-1 !px-2 text-xs"
-                              onClick={() => setCobroConsumoPorEstilista((prev) => ({ ...prev, [estId]: String(Math.max(consumoPendiente, 0)) }))}
-                              disabled={!abonarConsumoActivo}
+                            {modoCobroPuesto === 'fijo' ? (
+                              <div className="mt-4">
+                                <label className="block text-xs uppercase tracking-wide text-slate-500">Valor fijo a cobrar hoy</label>
+                                <input
+                                  className="input-field mt-2"
+                                  type="number"
+                                  min="0"
+                                  step="1"
+                                  value={cargoPuestoPorEstilista[estId] || ''}
+                                  onChange={(e) => setCargoPuestoPorEstilista((prev) => ({ ...prev, [estId]: String(e.target.value || '').replace(/[^\d.]/g, '') }))}
+                                />
+                              </div>
+                            ) : (
+                              <div className="mt-4">
+                                <label className="block text-xs uppercase tracking-wide text-slate-500">Porcentaje del día</label>
+                                <input
+                                  className="input-field mt-2"
+                                  type="number"
+                                  min="0"
+                                  step="0.1"
+                                  value={porcentajePuestoPorEstilista[estId] || ''}
+                                  onChange={(e) => setPorcentajePuestoPorEstilista((prev) => ({ ...prev, [estId]: String(e.target.value || '').replace(/[^\d.]/g, '') }))}
+                                />
+                                <p className="mt-2 text-sm text-slate-600">{porcentajePuestoDigitado || 0}% de {formatMoney(Math.max(generadoEmpleadoSimple, 0))} = <span className="font-semibold text-amber-800">{formatMoney(abonoPuestoCalculado)}</span></p>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200">
+                            <p className="text-sm font-semibold text-slate-900">Decisión de hoy</p>
+                            <label className="mt-3 flex items-start gap-3 rounded-2xl bg-white p-3 ring-1 ring-slate-200 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={!Boolean(skipDescuentoPuestoPorEstilista[estId])}
+                                onChange={(e) => {
+                                  const cobrarHoy = e.target.checked;
+                                  setSkipDescuentoPuestoPorEstilista((prev) => ({ ...prev, [estId]: !cobrarHoy }));
+                                  if (!cobrarHoy) {
+                                    setAbonoPuestoPorEstilista((prev) => ({ ...prev, [estId]: '0' }));
+                                  }
+                                }}
+                                className="mt-1"
+                              />
+                              <span>
+                                <span className="block text-sm font-semibold text-slate-900">Cobrar hoy</span>
+                                <span className="block text-xs text-slate-600">Se descuenta del dinero del día.</span>
+                              </span>
+                            </label>
+                            <label className="mt-3 flex items-start gap-3 rounded-2xl bg-white p-3 ring-1 ring-slate-200 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={Boolean(skipDescuentoPuestoPorEstilista[estId])}
+                                onChange={(e) => {
+                                  setSkipDescuentoPuestoPorEstilista((prev) => ({ ...prev, [estId]: e.target.checked }));
+                                  if (e.target.checked) {
+                                    setAbonoPuestoPorEstilista((prev) => ({ ...prev, [estId]: '0' }));
+                                  }
+                                }}
+                                className="mt-1"
+                              />
+                              <span>
+                                <span className="block text-sm font-semibold text-slate-900">Dejar pendiente</span>
+                                <span className="block text-xs text-slate-600">El valor del puesto se acumula como deuda histórica.</span>
+                              </span>
+                            </label>
+                            <label className="block text-xs uppercase tracking-wide text-slate-500 mt-4">Comisión de ventas al empleado</label>
+                            <select
+                              className="input-field mt-2"
+                              value={Boolean(aplicaComisionVentasPorEstilista[estId] ?? true) ? 'si' : 'no'}
+                              onChange={(e) => setAplicaComisionVentasPorEstilista((prev) => ({ ...prev, [estId]: e.target.value === 'si' }))}
                             >
-                              Usar pendiente consumo
-                            </button>
+                              <option value="si">Sí aplica</option>
+                              <option value="no">No aplica</option>
+                            </select>
                           </div>
-                          <label className="block text-xs text-slate-600 mt-2 mb-1">Valor a descontar por consumo</label>
-                          <input
-                            className="input-field"
-                            type="number"
-                            min="0"
-                            step="1"
-                            value={cobroConsumoPorEstilista[estId] || ''}
-                            disabled={!abonarConsumoActivo}
-                            onChange={(e) => setCobroConsumoPorEstilista((prev) => ({ ...prev, [estId]: String(e.target.value || '').replace(/[^\d.]/g, '') }))}
-                          />
-                          <label className="block text-xs text-slate-600 mt-2 mb-1">Medio del cobro consumo</label>
-                          <select
-                            className="input-field"
-                            value={medioCobroConsumoPorEstilista[estId] || 'efectivo'}
-                            disabled={!abonarConsumoActivo}
-                            onChange={(e) => setMedioCobroConsumoPorEstilista((prev) => ({ ...prev, [estId]: e.target.value }))}
-                          >
-                            {MEDIOS_PAGO_OPERACION.map((m) => (
-                              <option key={`medio-consumo-${m.value}`} value={m.value}>{m.label}</option>
-                            ))}
-                          </select>
-                          <p className="text-xs text-rose-700 mt-2">Aplicado: {formatMoney(descuentoConsumoAplicado)}</p>
                         </div>
-                      </div>
-                      <div className="mt-3 rounded-xl border border-rose-200 bg-white p-3">
-                        <p className="text-sm text-slate-700">Descuento total en tiempo real</p>
-                        <p className="text-2xl font-black text-rose-700">{formatMoney(totalDescuentosSimple)}</p>
-                        <p className="text-[11px] text-slate-600 mt-1">El descuento de puesto ya está incluido en el pendiente mostrado.</p>
-                      </div>
-                      <div className="mt-3 flex gap-2">
-                        <button className="btn-primary" onClick={() => setPasoLiquidacion(4)}>Siguiente</button>
-                      </div>
+                      </section>
+
+                      <section className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-xs font-bold uppercase tracking-[0.2em] text-rose-700">Abono deudas</p>
+                            <h4 className="mt-2 text-2xl font-black text-slate-950">Deudas acumuladas</h4>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-xs uppercase tracking-wide text-slate-500">Disponible tras puesto del día</p>
+                            <p className="mt-1 text-2xl font-black text-slate-900">{formatMoney(valorLiquidarHoySimple)}</p>
+                          </div>
+                        </div>
+
+                        <div className="mt-5 grid grid-cols-1 lg:grid-cols-2 gap-4">
+                          <div className="rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200">
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <p className="text-sm font-semibold text-slate-900">Deuda de puesto</p>
+                                <p className="mt-1 text-xs text-slate-500">Saldo pendiente acumulado</p>
+                              </div>
+                              <p className="text-2xl font-black text-amber-800">{formatMoney(Math.max(puestoPendienteSimple, 0))}</p>
+                            </div>
+                            <label className="mt-4 flex items-start gap-3 rounded-2xl bg-white p-3 ring-1 ring-slate-200 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={cancelarDeudaPuesto}
+                                onChange={(e) => setCancelarDeudaPuestoPorEstilista((prev) => ({ ...prev, [estId]: e.target.checked }))}
+                                className="mt-1"
+                              />
+                              <span>
+                                <span className="block text-sm font-semibold text-slate-900">Abonar hoy</span>
+                                <span className="block text-xs text-slate-600">El sistema descuenta este valor de lo disponible del día.</span>
+                              </span>
+                            </label>
+                            <label className="block text-xs uppercase tracking-wide text-slate-500 mt-4">Abonar hoy</label>
+                            <input
+                              className="input-field mt-2"
+                              type="number"
+                              min="0"
+                              step="1"
+                              value={abonoPuestoPorEstilista[estId] || ''}
+                              onChange={(e) => setAbonoPuestoPorEstilista((prev) => ({ ...prev, [estId]: String(e.target.value || '').replace(/[^\d.]/g, '') }))}
+                              disabled={!cancelarDeudaPuesto}
+                            />
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {[0.25, 0.5, 0.75, 1].map((pct) => (
+                                <button
+                                  key={`puesto-pct-${pct}`}
+                                  type="button"
+                                  className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 ring-1 ring-slate-200 disabled:opacity-40"
+                                  onClick={() => setAbonoPuestoPorEstilista((prev) => ({ ...prev, [estId]: String(Math.round(puestoPendienteSimple * pct)) }))}
+                                  disabled={!cancelarDeudaPuesto}
+                                >
+                                  {Math.round(pct * 100)}%
+                                </button>
+                              ))}
+                            </div>
+                            <label className="block text-xs uppercase tracking-wide text-slate-500 mt-4">Medio del abono</label>
+                            <select
+                              className="input-field mt-2"
+                              value={medioAbonoPuestoPorEstilista[estId] || 'efectivo'}
+                              onChange={(e) => setMedioAbonoPuestoPorEstilista((prev) => ({ ...prev, [estId]: e.target.value }))}
+                            >
+                              {MEDIOS_PAGO_OPERACION.map((m) => (
+                                <option key={`medio-puesto-${m.value}`} value={m.value}>{m.label}</option>
+                              ))}
+                            </select>
+                            <p className="mt-3 text-xs text-slate-500">Aplicado hoy: {formatMoney(abonoPuestoDeudaAplicado)}</p>
+                          </div>
+
+                          <div className="rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200">
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <p className="text-sm font-semibold text-slate-900">Consumo interno</p>
+                                <p className="mt-1 text-xs text-slate-500">Saldo pendiente en cartera</p>
+                              </div>
+                              <p className="text-2xl font-black text-rose-800">{formatMoney(Math.max(consumoPendiente, 0))}</p>
+                            </div>
+                            <label className="mt-4 flex items-start gap-3 rounded-2xl bg-white p-3 ring-1 ring-slate-200 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={cancelarDeudaConsumo}
+                                onChange={(e) => setCancelarDeudaConsumoPorEstilista((prev) => ({ ...prev, [estId]: e.target.checked }))}
+                                className="mt-1"
+                              />
+                              <span>
+                                <span className="block text-sm font-semibold text-slate-900">Abonar hoy</span>
+                                <span className="block text-xs text-slate-600">Solo se cobra a las facturas seleccionadas.</span>
+                              </span>
+                            </label>
+                            <label className="block text-xs uppercase tracking-wide text-slate-500 mt-4">Abonar hoy</label>
+                            <input
+                              className="input-field mt-2"
+                              type="number"
+                              min="0"
+                              step="1"
+                              value={cobroConsumoPorEstilista[estId] || ''}
+                              onChange={(e) => setCobroConsumoPorEstilista((prev) => ({ ...prev, [estId]: String(e.target.value || '').replace(/[^\d.]/g, '') }))}
+                              disabled={!cancelarDeudaConsumo}
+                            />
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {[0.25, 0.5, 0.75, 1].map((pct) => (
+                                <button
+                                  key={`consumo-pct-${pct}`}
+                                  type="button"
+                                  className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 ring-1 ring-slate-200 disabled:opacity-40"
+                                  onClick={() => setCobroConsumoPorEstilista((prev) => ({ ...prev, [estId]: String(Math.round(consumoPendiente * pct)) }))}
+                                  disabled={!cancelarDeudaConsumo}
+                                >
+                                  {Math.round(pct * 100)}%
+                                </button>
+                              ))}
+                            </div>
+                            <label className="block text-xs uppercase tracking-wide text-slate-500 mt-4">Facturas a incluir</label>
+                            <div className="mt-2 max-h-40 space-y-2 overflow-y-auto pr-1">
+                              {deudasEmpleado.length === 0 && <p className="rounded-2xl bg-white p-3 text-xs text-slate-500 ring-1 ring-slate-200">No hay facturas pendientes.</p>}
+                              {deudasEmpleado.map((d) => (
+                                <label key={`deuda-simple-${d.deuda_id}`} className="flex items-start gap-2 rounded-2xl bg-white p-3 ring-1 ring-slate-200 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={deudasConsumoSeleccionadas.includes(String(d.deuda_id))}
+                                    onChange={() => toggleDeudaConsumoSeleccion(estId, d.deuda_id)}
+                                  />
+                                  <span className="text-xs text-slate-700">{d.numero_factura || `Deuda ${d.deuda_id}`} · {formatMoney(d.saldo_pendiente)}</span>
+                                </label>
+                              ))}
+                            </div>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <button type="button" className="btn-secondary !py-1.5 !px-3 text-xs" onClick={() => seleccionarTodasDeudasConsumo(estId, deudasEmpleado)}>Seleccionar todas</button>
+                              <button type="button" className="btn-secondary !py-1.5 !px-3 text-xs" onClick={() => limpiarSeleccionDeudasConsumo(estId)}>Limpiar</button>
+                            </div>
+                            <label className="block text-xs uppercase tracking-wide text-slate-500 mt-4">Medio del cobro</label>
+                            <select
+                              className="input-field mt-2"
+                              value={medioCobroConsumoPorEstilista[estId] || 'efectivo'}
+                              onChange={(e) => setMedioCobroConsumoPorEstilista((prev) => ({ ...prev, [estId]: e.target.value }))}
+                              disabled={!cancelarDeudaConsumo}
+                            >
+                              {MEDIOS_PAGO_OPERACION.map((m) => (
+                                <option key={`medio-consumo-${m.value}`} value={m.value}>{m.label}</option>
+                              ))}
+                            </select>
+                            <p className="mt-3 text-xs text-slate-500">Aplicado hoy: {formatMoney(descuentoConsumoAplicado)}</p>
+                          </div>
+                        </div>
+                      </section>
                     </div>
-                  )}
 
-                  {pasoLiquidacion === 4 && (
-                    <div className="card border border-emerald-200 bg-emerald-50">
-                      <h4 className="card-header mb-2">Paso 2: Total final a pagar</h4>
-                      <div className="rounded-2xl border border-emerald-300 bg-white p-4">
-                        <p className="text-sm text-slate-700">Total generado del día</p>
-                        <p className="text-lg font-bold text-slate-900">{formatMoney(generadoEmpleadoSimple)}</p>
-                        <p className="text-xs text-slate-600 mt-1">Base servicios: {formatMoney(baseServicioSimple)}</p>
-                        <p className="text-xs text-slate-600">Comisión ventas del día: {formatMoney(comisionVentasSimple)} ({aplicaComisionSimple ? 'pagada' : 'no pagada'})</p>
-                        <p className="text-sm text-rose-700 mt-2">(-) Descuentos: {formatMoney(totalDescuentosSimple)}</p>
-                        <p className="text-sm text-slate-700 mt-2">Pagos digitados por medios: {formatMoney(totalPagosDigitadosSimple)}</p>
-                        <p className="text-sm text-amber-700 mt-1">Saldo operativo por pagar: {formatMoney(saldoOperativoSimple)}</p>
-                        <p className="text-xs text-slate-500">Puesto aplicado: {formatMoney(descuentoPuestoAplicado)}. Cobro consumo (registro aparte): {formatMoney(descuentoConsumoAplicado)}.</p>
-                        <p className="text-4xl font-black text-emerald-800 mt-3">{formatMoney(totalPagarFinalSimple)}</p>
-                      </div>
-
-                      <div className={`mt-3 rounded-2xl border-2 p-4 ${comisionVentasSimple > 0 ? 'border-amber-400 bg-amber-50' : 'border-slate-200 bg-white'}`}>
-                        <div className="flex items-center gap-2">
-                          {comisionVentasSimple > 0 && <span className="text-xl">⚠️</span>}
-                          <p className={`text-sm font-bold ${comisionVentasSimple > 0 ? 'text-amber-800' : 'text-slate-800'}`}>Comisión de ventas al empleado</p>
-                        </div>
-                        <p className={`text-xs mt-1 ${comisionVentasSimple > 0 ? 'text-amber-700' : 'text-slate-600'}`}>
-                          Comisión calculada del día: <span className="font-bold">{formatMoney(comisionVentasSimple)}</span>
-                        </p>
-                        {comisionVentasSimple > 0 && (
-                          <p className="text-xs text-amber-700 mt-1 font-medium">
-                            ¡Debes indicar si se paga o no antes de confirmar la liquidación!
-                          </p>
-                        )}
-                        <div className="mt-2 max-w-sm">
-                          <label className={`block text-xs font-semibold mb-1 ${comisionVentasSimple > 0 ? 'text-amber-800' : 'text-slate-600'}`}>¿La vas a pagar?</label>
-                          <select
-                            className={`input-field ${comisionVentasSimple > 0 ? 'border-amber-400 ring-1 ring-amber-400 font-semibold' : ''}`}
-                            value={aplicaComisionSimple ? 'si' : 'no'}
-                            onChange={(e) => setAplicaComisionVentasPorEstilista((prev) => ({ ...prev, [estId]: e.target.value === 'si' }))}
-                          >
-                            <option value="si">✅ Sí, pagar comisión</option>
-                            <option value="no">❌ No pagar comisión</option>
-                          </select>
-                        </div>
-                      </div>
-
-                      <div className="mt-3 rounded-2xl border border-slate-200 bg-white p-4">
-                        <p className="text-sm font-semibold text-slate-800">Medios de pago del total final</p>
-                        <p className="text-xs text-slate-600 mt-1">Si no llenas estos campos, al confirmar se registra todo en efectivo.</p>
-                        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
-                          <div>
-                            <label className="block text-xs text-slate-600 mb-1">Efectivo</label>
-                            <input
-                              className="input-field"
-                              type="number"
-                              min="0"
-                              step="1"
-                              value={pagosPorEstilista[estId]?.efectivo || ''}
-                              onChange={(e) => actualizarPagoMedio(estId, 'efectivo', e.target.value)}
-                            />
+                    <aside className="xl:sticky xl:top-6">
+                      <div className="rounded-3xl bg-slate-950 p-5 text-white shadow-2xl">
+                        <p className="text-xs font-bold uppercase tracking-[0.2em] text-slate-400">Resumen de liquidación</p>
+                        <div className="mt-5 space-y-4">
+                          <div className="flex items-center justify-between gap-3 text-sm">
+                            <span className="text-slate-300">Ganancia del día</span>
+                            <span className="font-semibold">{formatMoney(generadoEmpleadoSimple)}</span>
                           </div>
-                          <div>
-                            <label className="block text-xs text-slate-600 mb-1">Nequi</label>
-                            <input
-                              className="input-field"
-                              type="number"
-                              min="0"
-                              step="1"
-                              value={pagosPorEstilista[estId]?.nequi || ''}
-                              onChange={(e) => actualizarPagoMedio(estId, 'nequi', e.target.value)}
-                            />
+                          <div className="flex items-center justify-between gap-3 text-sm">
+                            <span className="text-slate-300">Descuentos del día</span>
+                            <span className="font-semibold">{formatMoney(0)}</span>
                           </div>
-                          <div>
-                            <label className="block text-xs text-slate-600 mb-1">Daviplata</label>
-                            <input
-                              className="input-field"
-                              type="number"
-                              min="0"
-                              step="1"
-                              value={pagosPorEstilista[estId]?.daviplata || ''}
-                              onChange={(e) => actualizarPagoMedio(estId, 'daviplata', e.target.value)}
-                            />
+                          <div className="flex items-center justify-between gap-3 text-sm">
+                            <span className="text-slate-300">Puesto del día</span>
+                            <span className="font-semibold text-amber-300">-{formatMoney(cargoPuestoDiaAplicado)}</span>
                           </div>
-                          <div>
-                            <label className="block text-xs text-slate-600 mb-1">Otros</label>
-                            <input
-                              className="input-field"
-                              type="number"
-                              min="0"
-                              step="1"
-                              value={pagosPorEstilista[estId]?.otros || ''}
-                              onChange={(e) => actualizarPagoMedio(estId, 'otros', e.target.value)}
-                            />
+                          <div className="flex items-center justify-between gap-3 text-sm">
+                            <span className="text-slate-300">Abonos deuda</span>
+                            <span className="font-semibold text-rose-300">-{formatMoney(abonoPuestoDeudaAplicado + descuentoConsumoAplicado)}</span>
+                          </div>
+                          <div className="rounded-2xl bg-white/5 p-4 ring-1 ring-white/10">
+                            <p className="text-xs uppercase tracking-wide text-slate-400">Total a pagar</p>
+                            <p className="mt-2 text-4xl font-black tracking-tight text-white">{formatMoney(totalPagarFinalSimple)}</p>
+                            <p className="mt-2 text-xs text-slate-400">Se actualiza al instante con cada cambio de cobro o abono.</p>
                           </div>
                         </div>
-                      </div>
 
-                      <div className="mt-3 flex gap-2">
-                        <button className="btn-secondary" onClick={() => setPasoLiquidacion(3)}>Anterior</button>
+                        <div className="mt-5 rounded-2xl bg-white p-4 text-slate-900">
+                          <p className="text-sm font-semibold">Medios de pago</p>
+                          <p className="mt-1 text-xs text-slate-500">Si no llenas nada, el sistema registra todo en efectivo.</p>
+                          <div className="mt-3 grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="block text-xs text-slate-500 mb-1">Efectivo</label>
+                              <input className="input-field" type="number" min="0" step="1" value={pagosPorEstilista[estId]?.efectivo || ''} onChange={(e) => actualizarPagoMedio(estId, 'efectivo', e.target.value)} />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-slate-500 mb-1">Nequi</label>
+                              <input className="input-field" type="number" min="0" step="1" value={pagosPorEstilista[estId]?.nequi || ''} onChange={(e) => actualizarPagoMedio(estId, 'nequi', e.target.value)} />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-slate-500 mb-1">Daviplata</label>
+                              <input className="input-field" type="number" min="0" step="1" value={pagosPorEstilista[estId]?.daviplata || ''} onChange={(e) => actualizarPagoMedio(estId, 'daviplata', e.target.value)} />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-slate-500 mb-1">Otros</label>
+                              <input className="input-field" type="number" min="0" step="1" value={pagosPorEstilista[estId]?.otros || ''} onChange={(e) => actualizarPagoMedio(estId, 'otros', e.target.value)} />
+                            </div>
+                          </div>
+                          <div className="mt-3 rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-200">
+                            <div className="flex items-center justify-between gap-3 text-sm">
+                              <span>Pagos digitados</span>
+                              <span className="font-semibold">{formatMoney(totalPagosDigitadosSimple)}</span>
+                            </div>
+                            <div className="mt-2 flex items-center justify-between gap-3 text-sm">
+                              <span>Saldo operativo</span>
+                              <span className="font-semibold text-amber-700">{formatMoney(saldoOperativoSimple)}</span>
+                            </div>
+                          </div>
+                        </div>
+
                         <button
-                          className="btn-primary"
+                          className="btn-primary mt-5 !w-full !py-3"
                           onClick={() => aplicarLiquidacionSimple({
                             fila: empleado,
-                            pendientePagoEmpleado: generadoEmpleadoSimple,
-                            abonoPuestoAplicado: descuentoPuestoAplicado,
-                            cobroConsumoAplicado: descuentoConsumoAplicado,
+                            valorLiquidarHoy: valorLiquidarHoySimple,
+                            cargoPuestoDia: cargoPuestoDiaAplicado,
+                            abonoPuestoDeuda: abonoPuestoDeudaAplicado,
+                            abonoConsumo: descuentoConsumoAplicado,
+                            deudasConsumoSeleccionadas: cancelarDeudaConsumo ? deudasConsumoSeleccionadas : [],
                             pagosPorMedio: {
                               efectivo: pagoEfectivoSimple,
                               nequi: pagoNequiSimple,
@@ -2615,8 +2871,8 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                           {savingEstadoByEstilista[estId] ? 'Guardando...' : 'Confirmar liquidación'}
                         </button>
                       </div>
-                    </div>
-                  )}
+                    </aside>
+                  </div>
                 </>
               );
             }
@@ -2864,31 +3120,39 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                       </div>
 
                       <div>
-                        <label className="block text-xs text-slate-600 mb-1">¿Abonar consumo en esta liquidación?</label>
+                        <label className="block text-xs text-slate-600 mb-1">Facturas de consumo a abonar (puedes elegir varias)</label>
                         <select
                           className="input-field"
-                          value={abonarConsumoActivo ? 'si' : 'no'}
+                          multiple
+                          size={Math.min(Math.max(deudasEmpleado.length, 3), 7)}
+                          value={deudasConsumoSeleccionadas}
                           onChange={(e) => {
-                            const activo = e.target.value === 'si';
-                            setAbonarConsumoPorEstilista((prev) => ({ ...prev, [estId]: activo }));
-                            if (!activo) {
-                              setCobroConsumoPorEstilista((prev) => ({ ...prev, [estId]: '' }));
-                            }
+                            const seleccionadas = Array.from(e.target.selectedOptions || []).map((opt) => opt.value);
+                            setDeudaConsumoSeleccionadasPorEstilista((prev) => ({ ...prev, [estId]: seleccionadas }));
                           }}
                         >
-                          <option value="no">No</option>
-                          <option value="si">Sí</option>
+                          {deudasEmpleado.map((d) => (
+                            <option key={d.deuda_id} value={String(d.deuda_id)}>
+                              {(d.numero_factura || `Deuda ${d.deuda_id}`)} - Saldo {formatMoney(d.saldo_pendiente)}
+                            </option>
+                          ))}
                         </select>
-                        <p className="text-xs text-slate-500 mt-1">
-                          Se aplica automáticamente a la factura más antigua pendiente.
-                        </p>
-                        {deudaMasAntiguaConsumo ? (
-                          <p className="text-xs text-rose-700 mt-1">
-                            Objetivo: {deudaMasAntiguaConsumo.numero_factura || `Deuda ${deudaMasAntiguaConsumo.deuda_id}`} ({formatMoney(deudaMasAntiguaConsumo.saldo_pendiente)})
+                        <div className="mt-1 flex items-center justify-between gap-2">
+                          <p className="text-xs text-slate-500">
+                            {deudasConsumoSeleccionadas.length > 0
+                              ? `${deudasConsumoSeleccionadas.length} factura(s) seleccionada(s)`
+                              : 'Si no seleccionas, el sistema distribuye automático (más antigua primero).'}
                           </p>
-                        ) : (
-                          <p className="text-xs text-slate-500 mt-1">No hay facturas pendientes.</p>
-                        )}
+                          {deudasConsumoSeleccionadas.length > 0 && (
+                            <button
+                              type="button"
+                              className="btn-secondary !py-1 !px-2 text-xs"
+                              onClick={() => limpiarSeleccionDeudasConsumo(estId)}
+                            >
+                              Limpiar selección
+                            </button>
+                          )}
+                        </div>
                       </div>
 
                       <div>
@@ -2899,7 +3163,6 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                           min="0"
                           step="1"
                           value={cobroConsumoPorEstilista[estId] || ''}
-                          disabled={!abonarConsumoActivo}
                           onFocus={() => setNumericPadTarget({ estilistaId: estId, field: 'cobro_consumo' })}
                           onChange={(e) => setCobroConsumoPorEstilista((prev) => ({ ...prev, [estId]: String(e.target.value || '').replace(/[^\d.]/g, '') }))}
                         />
@@ -2911,7 +3174,6 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                         <select
                           className="input-field"
                           value={medioCobroConsumoPorEstilista[estId] || 'efectivo'}
-                          disabled={!abonarConsumoActivo}
                           onChange={(e) => setMedioCobroConsumoPorEstilista((prev) => ({ ...prev, [estId]: e.target.value }))}
                         >
                           {MEDIOS_PAGO_OPERACION.map((m) => (
@@ -3030,13 +3292,39 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
                   <div className="card border border-amber-200 bg-amber-50">
                     <div className="mb-2 flex items-center justify-between gap-2">
-                      <h4 className="card-header">Facturas de consumo pendientes (informativo)</h4>
+                      <h4 className="card-header">Facturas de consumo pendientes</h4>
+                      {deudasEmpleado.length > 0 && (
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            className="btn-secondary !py-1 !px-2 text-xs"
+                            onClick={() => seleccionarTodasDeudasConsumo(estId, deudasEmpleado)}
+                          >
+                            Seleccionar todas
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-secondary !py-1 !px-2 text-xs"
+                            onClick={() => limpiarSeleccionDeudasConsumo(estId)}
+                          >
+                            Limpiar
+                          </button>
+                        </div>
+                      )}
                     </div>
                     <div className="space-y-2 max-h-[280px] overflow-y-auto pr-1">
                       {deudasEmpleado.length === 0 && <p className="text-sm text-slate-500">No tiene consumo pendiente.</p>}
                       {deudasEmpleado.map((d) => (
                         <div key={d.deuda_id} className="rounded-xl border border-amber-200 bg-white p-3">
-                          <span className="text-sm font-semibold text-slate-900">{d.numero_factura || `Deuda ${d.deuda_id}`}</span>
+                          <label className="flex items-start gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              className="mt-1"
+                              checked={deudasConsumoSeleccionadas.includes(String(d.deuda_id))}
+                              onChange={() => toggleDeudaConsumoSeleccion(estId, d.deuda_id)}
+                            />
+                            <span className="text-sm font-semibold text-slate-900">{d.numero_factura || `Deuda ${d.deuda_id}`}</span>
+                          </label>
                           <p className="text-xs text-slate-500">{d.fecha_hora || '-'}</p>
                           <p className="text-xs text-rose-700 mt-1">Saldo: {formatMoney(d.saldo_pendiente)}</p>
                         </div>
@@ -3162,84 +3450,6 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
       <div className="card border border-amber-200 bg-amber-50">
         <h2 className="card-header">Cartera Empleado</h2>
         <p className="text-sm text-slate-600">Filtra por empleado, revisa facturas y controla saldos pendientes. Selecciona una fila para ver su histórico.</p>
-
-        {/* Cargo manual sin inventario */}
-        {!esRecepcion && (
-          <div className="mt-4">
-            <button
-              type="button"
-              className="btn-secondary !py-2 !px-4 text-sm"
-              onClick={() => setMostrarFormCargoManual((v) => !v)}
-            >
-              {mostrarFormCargoManual ? '▲ Cancelar cargo manual' : '+ Agregar cargo manual a empleado'}
-            </button>
-
-            {mostrarFormCargoManual && (
-              <div className="mt-3 rounded-2xl border-2 border-rose-300 bg-rose-50 p-4">
-                <p className="text-sm font-bold text-rose-800">Cargo manual al empleado</p>
-                <p className="text-xs text-rose-600 mt-0.5">Suma una deuda al empleado sin afectar el inventario. Úsalo para multas, préstamos u otros descuentos.</p>
-                <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                  <div>
-                    <label className="block text-xs text-slate-600 mb-1">Empleado</label>
-                    <select
-                      className="input-field"
-                      value={cargoManualEstilistaId}
-                      onChange={(e) => setCargoManualEstilistaId(e.target.value)}
-                    >
-                      <option value="">Seleccionar...</option>
-                      {opcionesEstilistaCartera.map((item) => (
-                        <option key={`cm-est-${item.estilista_id}`} value={String(item.estilista_id)}>
-                          {item.estilista_nombre}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs text-slate-600 mb-1">Monto ($)</label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="100"
-                      className="input-field"
-                      placeholder="Ej: 62400"
-                      value={cargoManualMonto}
-                      onChange={(e) => setCargoManualMonto(e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-slate-600 mb-1">Fecha (opcional)</label>
-                    <input
-                      type="date"
-                      className="input-field"
-                      value={cargoManualFecha}
-                      onChange={(e) => setCargoManualFecha(e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-slate-600 mb-1">Motivo / descripción</label>
-                    <input
-                      type="text"
-                      className="input-field"
-                      placeholder="Ej: Préstamo, multa, etc."
-                      value={cargoManualMotivo}
-                      onChange={(e) => setCargoManualMotivo(e.target.value)}
-                    />
-                  </div>
-                </div>
-                <div className="mt-3">
-                  <button
-                    type="button"
-                    className="btn-danger !py-2 !px-5"
-                    onClick={crearCargoManual}
-                    disabled={savingCargoManual}
-                  >
-                    {savingCargoManual ? 'Creando cargo...' : 'Crear cargo'}
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
 
         <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
           <div className="rounded-xl border border-amber-200 bg-white p-3">
@@ -3398,7 +3608,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                 <th className="px-4 py-3 text-left">Fecha</th>
                 <th className="px-4 py-3 text-left">Medio</th>
                 <th className="px-4 py-3 text-left">Valor abonado</th>
-                <th className="px-4 py-3 text-left">Editar / eliminar abono</th>
+                <th className="px-4 py-3 text-left">Editar datos del abono</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
@@ -3415,7 +3625,6 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
               {deudaSeleccionada && (deudaSeleccionada.abonos || []).map((abono) => {
                 const abonoId = Number(abono.abono_id);
                 const savingEdit = !!savingEditByAbono[abonoId];
-                const savingDelete = !!savingDeleteByAbono[abonoId];
                 const editValue = editMontoByAbono[abonoId] ?? String(Number(abono.monto || 0));
                 const editMedio = editMedioByAbono[abonoId] ?? (abono.medio_pago || 'efectivo');
                 const editFecha = editFechaByAbono[abonoId] ?? String(abono.fecha_hora || '').slice(0, 10);
@@ -3464,13 +3673,6 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                         >
                           {savingEdit ? 'Guardando...' : 'Guardar'}
                         </button>
-                        <button
-                          className="btn-danger !px-3 !py-2"
-                          onClick={() => eliminarAbonoCartera(abono, deudaSeleccionada)}
-                          disabled={savingDelete}
-                        >
-                          {savingDelete ? 'Eliminando...' : 'Eliminar'}
-                        </button>
                       </div>
                     </td>
                   </tr>
@@ -3492,164 +3694,228 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
         </div>
       )}
       <section className="rounded-3xl bg-gradient-to-br from-emerald-900 via-teal-800 to-slate-900 p-6 text-white shadow-2xl">
-        <h2 className="text-2xl font-black tracking-tight">Ajuste Diario Unificado</h2>
-        <p className="mt-2 text-sm text-emerald-100">
-          Una sola tabla para ajustar por día y empleado: pagos al empleado, abono de puesto y cobro de consumo.
-        </p>
+        <div className="inline-flex items-center gap-2 rounded-full border border-emerald-300/40 bg-emerald-400/15 px-3 py-1 text-xs font-bold uppercase tracking-[0.2em] text-emerald-100">
+          Ajuste diario renovado
+        </div>
+        <h2 className="mt-3 text-3xl font-black tracking-tight">Ajuste Diario por pendientes reales</h2>
+        <p className="mt-2 text-sm text-emerald-100">Ahora ves primero el pendiente real por empleado, luego el detalle de días y facturas, y finalmente haces el ajuste sobre la tabla diaria.</p>
       </section>
 
-      <div className="card border border-emerald-200 bg-emerald-50">
-        <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-3 mb-3">
-          <div>
-            <h3 className="card-header mb-0">Tabla diaria consolidada</h3>
-            <p className="text-xs text-slate-600 mt-1">Filtra por empleado o fecha y visualiza cuántas filas tienen cambios sin guardar.</p>
-          </div>
-          <div className="flex flex-wrap items-end gap-2">
-            <input
-              type="text"
-              className="input-field !py-2 !w-56"
-              placeholder="Buscar empleado o fecha..."
-              value={filtroAjusteTexto}
-              onChange={(e) => setFiltroAjusteTexto(e.target.value)}
-            />
-            <label className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700">
-              <input
-                type="checkbox"
-                checked={soloPendientesAjuste}
-                onChange={(e) => setSoloPendientesAjuste(e.target.checked)}
-              />
-              Solo pendientes
-            </label>
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={cargarAjusteDiarioUnificado}
-              disabled={loadingAjusteDiario}
-            >
-              {loadingAjusteDiario ? 'Actualizando...' : 'Actualizar tabla'}
+      <div className="grid grid-cols-1 xl:grid-cols-[300px_1fr] gap-6 items-start">
+        <aside className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <div>
+              <p className="text-xs uppercase tracking-wide text-slate-500">Panel izquierdo</p>
+              <h3 className="text-lg font-black text-slate-900">Empleados con pendientes</h3>
+            </div>
+            <button type="button" className="btn-secondary !py-1.5" onClick={cargarAjusteDiarioUnificado} disabled={loadingAjusteDiario}>
+              {loadingAjusteDiario ? '...' : 'Actualizar'}
             </button>
           </div>
-        </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3 mb-4">
-          <div className="rounded-xl border border-emerald-200 bg-white p-3">
-            <p className="text-xs text-slate-500">Filas visibles</p>
-            <p className="text-xl font-black text-slate-900">{ajusteDiarioRowsFiltradas.length}</p>
+          <div className="space-y-2 max-h-[68vh] overflow-y-auto pr-1">
+            {detallePendientesAjuste.length === 0 && (
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-500">No hay empleados con pendientes para el rango actual.</div>
+            )}
+            {detallePendientesAjuste.map((emp) => {
+              const activo = Number(estilistaActivoAjuste) === Number(emp.estilista_id);
+              return (
+                <button
+                  key={`emp-ajuste-${emp.estilista_id}`}
+                  type="button"
+                  onClick={() => setEstilistaActivoAjuste(Number(emp.estilista_id))}
+                  className={`w-full rounded-2xl border p-3 text-left transition ${activo ? 'border-emerald-400 bg-emerald-50 shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300'}`}
+                >
+                  <p className="font-semibold text-slate-900">{emp.estilista_nombre}</p>
+                  <p className="mt-1 text-xs text-amber-700">Pendiente pago: {formatMoney(emp.total_pendiente_pago)}</p>
+                  <p className="mt-1 text-xs text-rose-700">Deuda puesto días: {formatMoney(emp.total_pendiente_puesto_dias)}</p>
+                  <p className="mt-1 text-xs text-slate-500">Facturas abiertas: {(emp.facturas_deuda || []).length}</p>
+                </button>
+              );
+            })}
           </div>
-          <div className="rounded-xl border border-emerald-200 bg-white p-3">
-            <p className="text-xs text-slate-500">Generado (visible)</p>
-            <p className="text-xl font-black text-slate-900">{formatMoney(resumenAjusteDiario.generado)}</p>
-          </div>
-          <div className="rounded-xl border border-emerald-200 bg-white p-3">
-            <p className="text-xs text-slate-500">Consumo cobrado (visible)</p>
-            <p className="text-xl font-black text-indigo-700">{formatMoney(resumenAjusteDiario.consumo)}</p>
-          </div>
-          <div className="rounded-xl border border-emerald-200 bg-white p-3">
-            <p className="text-xs text-slate-500">Abono puesto (visible)</p>
-            <p className="text-xl font-black text-emerald-700">{formatMoney(resumenAjusteDiario.abonoPuesto)}</p>
-          </div>
-          <div className="rounded-xl border border-emerald-200 bg-white p-3">
-            <p className="text-xs text-slate-500">Filas modificadas</p>
-            <p className="text-xl font-black text-amber-700">{resumenAjusteDiario.filasModificadas}</p>
-          </div>
-        </div>
+        </aside>
 
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-emerald-200">
-            <thead className="bg-emerald-100 text-emerald-900 text-xs uppercase tracking-wide">
-              <tr>
-                <th className="px-3 py-2 text-left">Fecha</th>
-                <th className="px-3 py-2 text-left">Empleado</th>
-                <th className="px-3 py-2 text-left">Generado</th>
-                <th className="px-3 py-2 text-left">Desc. puesto</th>
-                <th className="px-3 py-2 text-left">Efectivo</th>
-                <th className="px-3 py-2 text-left">Nequi</th>
-                <th className="px-3 py-2 text-left">Daviplata</th>
-                <th className="px-3 py-2 text-left">Otros</th>
-                <th className="px-3 py-2 text-left">Abono puesto</th>
-                <th className="px-3 py-2 text-left">Medio abono</th>
-                <th className="px-3 py-2 text-left">Comisión ventas</th>
-                <th className="px-3 py-2 text-left">Consumo día</th>
-                <th className="px-3 py-2 text-left">Medio consumo</th>
-                <th className="px-3 py-2 text-left">Pendiente</th>
-                <th className="px-3 py-2 text-left">Acción</th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-emerald-100">
-              {!loadingAjusteDiario && ajusteDiarioRowsFiltradas.length === 0 && (
-                <tr>
-                  <td className="table-cell text-slate-500" colSpan={15}>No hay filas para el rango seleccionado.</td>
-                </tr>
-              )}
-              {loadingAjusteDiario && (
-                <tr>
-                  <td className="table-cell text-slate-500" colSpan={15}>Cargando ajuste diario...</td>
-                </tr>
-              )}
-              {ajusteDiarioRowsFiltradas.map((fila) => {
-                const key = `${fila.estilista_id}|${fila.fecha}`;
-                const edit = ajusteDiarioEditsByKey[key] || {};
-                const aplicaComisionRow = Boolean(edit.aplica_comision_ventas ?? true);
-                const totalPago =
-                  toMontoNoNegativo(edit.pago_efectivo) +
-                  toMontoNoNegativo(edit.pago_nequi) +
-                  toMontoNoNegativo(edit.pago_daviplata) +
-                  toMontoNoNegativo(edit.pago_otros);
-                const generadoConComision = Number((fila.generado_total_con_comision ?? fila.generado_total) || 0);
-                const generadoSinComision = Number((fila.generado_total_sin_comision ?? fila.generado_total) || 0);
-                const comisionDia = Math.max(generadoConComision - generadoSinComision, 0);
-                const generado = Math.max(aplicaComisionRow ? generadoConComision : generadoSinComision, 0);
-                const pendientePreview = Math.max(generado - totalPago, 0);
-                return (
-                  <tr key={`ajuste-${key}`}>
-                    <td className="table-cell font-semibold">{fila.fecha}</td>
-                    <td className="table-cell">{fila.estilista_nombre}</td>
-                    <td className="table-cell font-semibold text-slate-900">{formatMoney(generado)}</td>
-                    <td className="table-cell text-amber-700">{formatMoney(fila.descuento_puesto)}</td>
-                    <td className="table-cell"><input className="input-field !h-11 !py-2 !w-24 !font-semibold" value={edit.pago_efectivo || ''} onChange={(e) => actualizarAjusteDiarioCampo(key, 'pago_efectivo', e.target.value)} /></td>
-                    <td className="table-cell"><input className="input-field !h-11 !py-2 !w-24 !font-semibold" value={edit.pago_nequi || ''} onChange={(e) => actualizarAjusteDiarioCampo(key, 'pago_nequi', e.target.value)} /></td>
-                    <td className="table-cell"><input className="input-field !h-11 !py-2 !w-24 !font-semibold" value={edit.pago_daviplata || ''} onChange={(e) => actualizarAjusteDiarioCampo(key, 'pago_daviplata', e.target.value)} /></td>
-                    <td className="table-cell"><input className="input-field !h-11 !py-2 !w-24 !font-semibold" value={edit.pago_otros || ''} onChange={(e) => actualizarAjusteDiarioCampo(key, 'pago_otros', e.target.value)} /></td>
-                    <td className="table-cell"><input className="input-field !h-11 !py-2 !w-24 !font-semibold" value={edit.abono_puesto || ''} onChange={(e) => actualizarAjusteDiarioCampo(key, 'abono_puesto', e.target.value)} /></td>
-                    <td className="table-cell">
-                      <select className="input-field !py-2 !w-28" value={edit.medio_abono_puesto || 'efectivo'} onChange={(e) => actualizarAjusteDiarioCampo(key, 'medio_abono_puesto', e.target.value)}>
-                        {MEDIOS_PAGO_OPERACION.map((m) => (<option key={`aj-ab-${key}-${m.value}`} value={m.value}>{m.label}</option>))}
-                      </select>
-                    </td>
-                    <td className="table-cell">
-                      <p className="text-xs font-semibold text-indigo-700 mb-1">{formatMoney(comisionDia)}</p>
-                      <p className="text-[11px] text-slate-500 mb-1">{aplicaComisionRow ? 'Pagada' : 'No pagada'}</p>
-                      <select className="input-field !py-2 !w-44" value={Boolean(edit.aplica_comision_ventas ?? true) ? 'si' : 'no'} onChange={(e) => actualizarAjusteDiarioCampo(key, 'aplica_comision_ventas', e.target.value === 'si')}>
-                        <option value="si">Sí aplica</option>
-                        <option value="no">No aplica</option>
-                      </select>
-                    </td>
-                    <td className="table-cell">
-                      <input className="input-field !h-11 !py-2 !w-24 !font-semibold" value={edit.cobro_consumo_objetivo || ''} onChange={(e) => actualizarAjusteDiarioCampo(key, 'cobro_consumo_objetivo', e.target.value)} />
-                      <p className="text-[11px] text-slate-500 mt-1">Actual: {formatMoney(fila.cobro_consumo_dia)}</p>
-                    </td>
-                    <td className="table-cell">
-                      <select className="input-field !py-2 !w-28" value={edit.medio_cobro_consumo || 'efectivo'} onChange={(e) => actualizarAjusteDiarioCampo(key, 'medio_cobro_consumo', e.target.value)}>
-                        {MEDIOS_PAGO_OPERACION.map((m) => (<option key={`aj-co-${key}-${m.value}`} value={m.value}>{m.label}</option>))}
-                      </select>
-                    </td>
-                    <td className="table-cell font-semibold text-emerald-700">{formatMoney(pendientePreview)}</td>
-                    <td className="table-cell">
+        <section className="space-y-4">
+          {!detallePendienteActivoAjuste && (
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 text-slate-500">Selecciona un empleado en el panel izquierdo para ver su detalle de pendientes.</div>
+          )}
+
+          {detallePendienteActivoAjuste && (
+            <>
+              <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+                <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
+                  <div>
+                    <p className="text-xs uppercase tracking-wide text-slate-500">Empleado seleccionado</p>
+                    <h3 className="mt-1 text-2xl font-black text-slate-900">{detallePendienteActivoAjuste.estilista_nombre}</h3>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 min-w-[280px]">
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+                      <p className="text-xs text-amber-700">Pendiente por pagar empleado</p>
+                      <p className="text-lg font-black text-amber-900">{formatMoney(detallePendienteActivoAjuste.total_pendiente_pago)}</p>
+                    </div>
+                    <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2">
+                      <p className="text-xs text-rose-700">Deuda de puesto por días</p>
+                      <p className="text-lg font-black text-rose-900">{formatMoney(detallePendienteActivoAjuste.total_pendiente_puesto_dias)}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">Días no liquidados</p>
+                      <p className="text-xs text-slate-500 mt-1">Selecciona con checkbox los días a marcar como pago.</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn-secondary !py-1 !px-2 text-xs"
+                      onClick={() => limpiarDiasPagoSeleccionados(detallePendienteActivoAjuste.estilista_id)}
+                    >
+                      Limpiar
+                    </button>
+                  </div>
+                  <div className="mt-3 space-y-2 max-h-64 overflow-y-auto pr-1">
+                    {detallePendienteActivoAjuste.dias_no_liquidados.length === 0 && <p className="text-xs text-slate-500">Sin días pendientes.</p>}
+                    {detallePendienteActivoAjuste.dias_no_liquidados.map((d) => {
+                      const estId = Number(detallePendienteActivoAjuste.estilista_id);
+                      const checked = (diasPagoSeleccionadosByEstilista[estId] || []).includes(String(d.fecha || ''));
+                      return (
+                        <label key={`dia-no-liq-${estId}-${d.fecha}`} className="flex items-start gap-2 rounded-xl border border-slate-200 p-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleDiaPagoSeleccionado(estId, d.fecha)}
+                            className="mt-1"
+                          />
+                          <span className="text-xs text-slate-700">
+                            <span className="block text-slate-500">{d.fecha || '-'}</span>
+                            <span className="block">Generado: {formatMoney(d.generado)} | Pagado: {formatMoney(d.pagado)}</span>
+                            <span className="block font-semibold text-amber-800">Pendiente: {formatMoney(d.pendiente)}</span>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">Días con deuda de puesto</p>
+                      <p className="text-xs text-slate-500 mt-1">Qué día quedó pendiente deuda de puesto.</p>
+                    </div>
+                    <div className="flex items-center gap-2">
                       <button
                         type="button"
-                        className="btn-primary !py-2 !px-3"
-                        onClick={() => guardarAjusteDiarioFila(fila)}
-                        disabled={!!savingAjusteDiarioByKey[key]}
+                        className="btn-secondary !py-1 !px-2 text-xs"
+                        onClick={() => seleccionarTodosDiasDeudaPuesto(detallePendienteActivoAjuste.estilista_id, detallePendienteActivoAjuste.dias_deuda_puesto)}
                       >
-                        {savingAjusteDiarioByKey[key] ? 'Guardando...' : 'Guardar'}
+                        Todos
                       </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                      <button
+                        type="button"
+                        className="btn-secondary !py-1 !px-2 text-xs"
+                        onClick={() => limpiarDiasDeudaPuestoSeleccionados(detallePendienteActivoAjuste.estilista_id)}
+                      >
+                        Limpiar
+                      </button>
+                    </div>
+                  </div>
+                  <div className="mt-3 space-y-2 max-h-64 overflow-y-auto pr-1">
+                    {detallePendienteActivoAjuste.dias_deuda_puesto.length === 0 && <p className="text-xs text-slate-500">Sin deuda de puesto por día.</p>}
+                    {detallePendienteActivoAjuste.dias_deuda_puesto.map((d) => {
+                      const estId = Number(detallePendienteActivoAjuste.estilista_id);
+                      const checked = (diasDeudaPuestoSeleccionadosByEstilista[estId] || []).includes(String(d.fecha || ''));
+                      return (
+                        <label key={`dia-deuda-puesto-${estId}-${d.fecha}`} className="flex items-start gap-2 rounded-xl border border-slate-200 p-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleDiaDeudaPuestoSeleccionado(estId, d.fecha)}
+                            className="mt-1"
+                          />
+                          <span>
+                            <p className="text-xs text-slate-500">{d.fecha || '-'}</p>
+                            <p className="text-sm font-semibold text-rose-800">Deuda puesto: {formatMoney(d.deuda_puesto_dia)}</p>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">Facturas de deuda del empleado</p>
+                      <p className="text-xs text-slate-500 mt-1">Detalle de factura y motivo de deuda.</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        className="btn-secondary !py-1 !px-2 text-xs"
+                        onClick={() => seleccionarTodasFacturasDeuda(detallePendienteActivoAjuste.estilista_id, detallePendienteActivoAjuste.facturas_deuda)}
+                      >
+                        Todas
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-secondary !py-1 !px-2 text-xs"
+                        onClick={() => limpiarFacturasDeudaSeleccionadas(detallePendienteActivoAjuste.estilista_id)}
+                      >
+                        Limpiar
+                      </button>
+                    </div>
+                  </div>
+                  <div className="mt-3 space-y-2 max-h-64 overflow-y-auto pr-1">
+                    {detallePendienteActivoAjuste.facturas_deuda.length === 0 && <p className="text-xs text-slate-500">Sin facturas con saldo.</p>}
+                    {detallePendienteActivoAjuste.facturas_deuda.map((f) => {
+                      const estId = Number(detallePendienteActivoAjuste.estilista_id);
+                      const checked = (facturasDeudaSeleccionadasByEstilista[estId] || []).includes(String(f.deuda_id || ''));
+                      return (
+                        <label key={`factura-deuda-${estId}-${f.deuda_id}`} className="flex items-start gap-2 rounded-xl border border-slate-200 p-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleFacturaDeudaSeleccionada(estId, f.deuda_id)}
+                            className="mt-1"
+                          />
+                          <span>
+                            <p className="text-xs text-slate-500">{f.numero_factura} · {String(f.fecha_hora || '').slice(0, 10) || '-'}</p>
+                            <p className="text-xs text-slate-700">Motivo: {f.motivo || '-'}</p>
+                            <p className="text-xs text-slate-700">Total: {formatMoney(f.total_cargo)}</p>
+                            <p className="text-sm font-semibold text-rose-800">Saldo: {formatMoney(f.saldo_pendiente)}</p>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+                <p className="text-sm font-semibold text-slate-900">Cambiar estado como pago</p>
+                <p className="text-xs text-slate-600 mt-1">Marca días en "Días no liquidados" y aplica el cambio. El sistema registrará pago completo del día en efectivo.</p>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700">
+                    Seleccionados: {(diasPagoSeleccionadosByEstilista[Number(detallePendienteActivoAjuste.estilista_id)] || []).length}
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={marcarDiasSeleccionadosComoPago}
+                    disabled={aplicandoPagoMasivo}
+                  >
+                    {aplicandoPagoMasivo ? 'Aplicando...' : 'Cambiar estado a pago (seleccionados)'}
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+        </section>
       </div>
     </div>
   );

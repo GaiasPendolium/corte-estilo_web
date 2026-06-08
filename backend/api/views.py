@@ -4,10 +4,9 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.exceptions import PermissionDenied
 from django_filters.rest_framework import DjangoFilterBackend
-from django.db.models import Sum, Count, Q, F, Exists, OuterRef, Subquery, DecimalField, IntegerField, Value
+from django.db.models import Sum, Count, Q, F
 from django.db import transaction, connection
 from django.db.utils import OperationalError, ProgrammingError
-from django.db.models.functions import Coalesce
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.http import HttpResponse
@@ -2580,12 +2579,7 @@ def _sincronizar_deuda_desde_items(deuda):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def crear_cargo_manual_empleado(request):
-    """
-    Crea un cargo (deuda) manual a un empleado sin afectar el inventario.
-
-    POST /api/reportes/consumo-empleado/cargo-manual/
-    Body: { estilista_id, monto, motivo, fecha (opcional, YYYY-MM-DD) }
-    """
+    """Crea un cargo manual de consumo para un empleado sin afectar inventario."""
     if _es_recepcion(request.user):
         raise PermissionDenied('Recepción no tiene permiso para crear cargos manuales.')
 
@@ -2619,10 +2613,8 @@ def crear_cargo_manual_empleado(request):
         except Exception:
             return Response({'error': 'Fecha inválida. Usa YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    # Genera número de factura único con prefijo CARGO-
     timestamp_str = timezone.localtime(ahora).strftime('%Y%m%d%H%M%S')
     numero_factura = f"CARGO-{estilista_id}-{timestamp_str}"
-    # Garantiza unicidad en caso de colisión
     intentos = 0
     while DeudaConsumoEmpleado.objects.filter(numero_factura=numero_factura).exists():
         intentos += 1
@@ -2645,14 +2637,17 @@ def crear_cargo_manual_empleado(request):
         logger.exception('Error creando cargo manual empleado')
         return Response({'error': f'No se pudo crear el cargo: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-    return Response({
-        'ok': True,
-        'deuda_id': deuda.id,
-        'numero_factura': deuda.numero_factura,
-        'monto': float(monto),
-        'estilista_nombre': estilista.nombre,
-        'motivo': motivo,
-    }, status=status.HTTP_201_CREATED)
+    return Response(
+        {
+            'ok': True,
+            'deuda_id': deuda.id,
+            'numero_factura': deuda.numero_factura,
+            'monto': float(monto),
+            'estilista_nombre': estilista.nombre,
+            'motivo': motivo,
+        },
+        status=status.HTTP_201_CREATED,
+    )
 
 
 @api_view(['GET'])
@@ -2665,39 +2660,10 @@ def reporte_consumo_empleado(request):
     fecha_inicio, fecha_fin = _resolver_rango_fechas(request)
     estilista_id = (request.query_params.get('estilista_id') or '').strip()
 
-    abonos_total_sq = (
-        AbonoDeudaEmpleado.objects
-        .filter(deuda_id=OuterRef('pk'))
-        .values('deuda_id')
-        .annotate(total=Sum('monto'))
-        .values('total')[:1]
-    )
-    abonos_count_sq = (
-        AbonoDeudaEmpleado.objects
-        .filter(deuda_id=OuterRef('pk'))
-        .values('deuda_id')
-        .annotate(total=Count('id'))
-        .values('total')[:1]
-    )
-    ventas_consumo_exists = VentaProducto.objects.filter(
-        deuda_consumo_id=OuterRef('pk'),
-        tipo_operacion='consumo_empleado',
-    )
-
     qs = DeudaConsumoEmpleado.objects.select_related('estilista').filter(
         Q(fecha_hora__date__gte=fecha_inicio, fecha_hora__date__lte=fecha_fin)
         | Q(abonos__isnull=False)
-    ).annotate(
-        total_abonado_real=Coalesce(
-            Subquery(abonos_total_sq, output_field=DecimalField(max_digits=12, decimal_places=2)),
-            Value(Decimal('0.00')),
-        ),
-        abonos_count=Coalesce(
-            Subquery(abonos_count_sq, output_field=IntegerField()),
-            Value(0),
-        ),
-        tiene_consumo=Exists(ventas_consumo_exists),
-    ).distinct()
+    ).annotate(abonos_count=Count('abonos', distinct=True)).distinct()
 
     if estilista_id:
         qs = qs.filter(estilista_id=int(estilista_id))
@@ -2706,12 +2672,19 @@ def reporte_consumo_empleado(request):
     for deuda in list(qs):
         _sincronizar_deuda_desde_items(deuda)
 
+    qs = DeudaConsumoEmpleado.objects.select_related('estilista').filter(
+        Q(fecha_hora__date__gte=fecha_inicio, fecha_hora__date__lte=fecha_fin)
+        | Q(abonos__isnull=False)
+    ).annotate(abonos_count=Count('abonos', distinct=True)).distinct()
+    if estilista_id:
+        qs = qs.filter(estilista_id=int(estilista_id))
+
     # Cartera principal: mantener pendientes y también facturas con abonos
     # para que el usuario vea inmediatamente los pagos registrados en liquidación.
     qs_pendientes = []
     for deuda in qs:
         total_cargo = Decimal(deuda.total_cargo or 0)
-        total_abonado_real = Decimal(getattr(deuda, 'total_abonado_real', 0) or 0)
+        total_abonado_real = Decimal(deuda.abonos.aggregate(total=Sum('monto'))['total'] or 0)
         saldo = max(total_cargo - total_abonado_real, Decimal(0))
 
         estado_real = 'pendiente'
@@ -2737,7 +2710,7 @@ def reporte_consumo_empleado(request):
 
         if saldo <= Decimal('0.5') and not tiene_abono:
             continue
-        if not bool(getattr(deuda, 'tiene_consumo', False)):
+        if not deuda.ventas_items.filter(tipo_operacion='consumo_empleado').exists():
             continue
         qs_pendientes.append(deuda)
 
@@ -2814,20 +2787,10 @@ def reporte_consumo_empleado(request):
                 deuda_item['abonos'].append(item_abono)
 
     consumos_detalle = []
-    items_por_deuda = defaultdict(list)
-    if deuda_ids:
-        items_qs = (
-            VentaProducto.objects
-            .select_related('producto', 'estilista')
-            .filter(deuda_consumo_id__in=deuda_ids, tipo_operacion='consumo_empleado')
-            .order_by('deuda_consumo_id', '-fecha_hora', '-id')
-        )
-        for venta in items_qs:
-            items_por_deuda[int(venta.deuda_consumo_id)].append(venta)
-
     for deuda in qs_pendientes:
         ultimo_abono = abono_map.get(int(deuda.id))
-        for venta in items_por_deuda.get(int(deuda.id), []):
+        items_qs = deuda.ventas_items.select_related('producto', 'estilista').filter(tipo_operacion='consumo_empleado').order_by('-fecha_hora', '-id')
+        for venta in items_qs:
             consumos_detalle.append(
                 {
                     'venta_id': venta.id,
@@ -3036,7 +2999,7 @@ def _aplicar_abonos_consumo_interno(
     return aplicaciones, restante
 
 
-@api_view(['PUT', 'PATCH', 'DELETE'])
+@api_view(['PUT', 'PATCH'])
 @permission_classes([IsAuthenticated])
 def editar_abono_consumo_empleado(request, abono_id):
     """Permite corregir un abono registrado por error y recalcula la deuda asociada."""
@@ -3047,35 +3010,6 @@ def editar_abono_consumo_empleado(request, abono_id):
         abono = AbonoDeudaEmpleado.objects.select_related('deuda').get(id=int(abono_id))
     except Exception:
         return Response({'error': 'Abono no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
-
-    if request.method == 'DELETE':
-        with transaction.atomic():
-            deuda = DeudaConsumoEmpleado.objects.select_for_update().get(id=abono.deuda_id)
-            abono_eliminado = Decimal(abono.monto or 0)
-            abono.delete()
-
-            total_restante = Decimal(deuda.abonos.aggregate(total=Sum('monto'))['total'] or 0)
-            deuda.total_abonado = total_restante
-            _recalcular_estado_deuda(deuda)
-            deuda.save(update_fields=['total_abonado', 'saldo_pendiente', 'estado'])
-
-        return Response(
-            {
-                'ok': True,
-                'abono_eliminado': {
-                    'abono_id': int(abono_id),
-                    'monto': float(abono_eliminado),
-                },
-                'deuda': {
-                    'deuda_id': deuda.id,
-                    'numero_factura': deuda.numero_factura,
-                    'total_cargo': float(deuda.total_cargo or 0),
-                    'total_abonado': float(deuda.total_abonado or 0),
-                    'saldo_pendiente': float(deuda.saldo_pendiente or 0),
-                    'estado': deuda.estado,
-                },
-            }
-        )
 
     monto_raw = request.data.get('monto', abono.monto)
     medio_pago = (request.data.get('medio_pago') or abono.medio_pago or 'efectivo').strip().lower()
@@ -3937,9 +3871,9 @@ def liquidar_operacion_integral(request):
         return Response({'error': 'consumo_monto inválido.'}, status=status.HTTP_400_BAD_REQUEST)
     consumo_monto = max(consumo_monto, Decimal(0))
 
-    # En liquidación integral, el consumo siempre se aplica automático
-    # a las deudas más antiguas pendientes del empleado.
-    deuda_ids = []
+    deuda_ids = request.data.get('deuda_ids') or []
+    if not isinstance(deuda_ids, list):
+        deuda_ids = []
 
     medio_cobro_consumo = (request.data.get('medio_cobro_consumo') or 'efectivo').strip().lower()
     if medio_cobro_consumo not in {'nequi', 'daviplata', 'efectivo', 'otros'}:
@@ -4982,9 +4916,109 @@ def reporte_ajuste_diario_unificado(request):
     for (est_id, fecha_dia), _monto in consumo_por_est_dia.items():
         dias_con_movimiento[int(est_id)].add(fecha_dia)
 
+    def _deuda_arrastre_previa(est_id):
+        if usar_fact:
+            try:
+                fact_prev = FactLiquidacionEstilistaDia.objects.filter(
+                    estilista_id=est_id,
+                    fecha__lt=fecha_inicio_dt,
+                    vigente=True,
+                ).order_by('-fecha', '-version').first()
+                if fact_prev is not None:
+                    return max(Decimal(getattr(fact_prev, 'deuda_puesto_cierre', 0) or 0), Decimal(0))
+            except Exception:
+                pass
+
+        try:
+            ep_prev = EstadoPagoEstilistaDia.objects.filter(
+                estilista_id=est_id,
+                fecha__lt=fecha_inicio_dt,
+            ).order_by('-fecha', '-actualizado_en').first()
+            if ep_prev is not None:
+                return max(
+                    Decimal(getattr(ep_prev, 'saldo_puesto_pendiente', None) or getattr(ep_prev, 'pendiente_puesto', 0) or 0),
+                    Decimal(0),
+                )
+        except Exception:
+            pass
+
+        return Decimal(0)
+
+    fifo_por_estilista = {}
+    for est in estilistas:
+        est_id = int(est.id)
+        dias_est = sorted(list(dias_con_movimiento.get(est_id, set())))
+        if not dias_est:
+            fifo_por_estilista[est_id] = {
+                'arrastre_inicial': Decimal(0),
+                'arrastre_final': Decimal(0),
+                'pendiente_por_fecha': {},
+                'aplicado_por_fecha': {},
+            }
+            continue
+
+        arrastre = _deuda_arrastre_previa(est_id)
+        arrastre_inicial = Decimal(arrastre)
+        pendientes_fifo = []
+        aplicado_por_fecha = defaultdict(Decimal)
+
+        for dia in dias_est:
+            ep = estados_map.get((est_id, dia))
+            fact = facts_map.get((est_id, dia)) if usar_fact else None
+            fact_aplica = facts_map_aplica.get((est_id, dia))
+
+            calc_con_comision = calcular_liquidacion_dia_estilista(est, dia, aplica_comision_ventas=True)
+            calc_sin_comision = calcular_liquidacion_dia_estilista(est, dia, aplica_comision_ventas=False)
+            aplica_comision_ventas = bool(getattr(fact_aplica, 'aplica_comision_ventas', True)) if fact_aplica else True
+            descuento_puesto = Decimal((
+                fact.descuento_puesto_dia if fact else (calc_con_comision.get('descuento_puesto') if aplica_comision_ventas else calc_sin_comision.get('descuento_puesto'))
+            ) or 0)
+            descuento_puesto = max(descuento_puesto, Decimal(0))
+
+            if descuento_puesto > 0:
+                pendientes_fifo.append([dia, descuento_puesto])
+
+            abono_puesto = Decimal((fact.abono_puesto_dia if fact else (ep.abono_puesto if ep else 0)) or 0)
+            abono_restante = max(abono_puesto, Decimal(0))
+
+            aplicado_arrastre = min(arrastre, abono_restante)
+            arrastre = max(arrastre - aplicado_arrastre, Decimal(0))
+            abono_restante -= aplicado_arrastre
+            aplicado_por_fecha[dia] += aplicado_arrastre
+
+            while abono_restante > 0 and pendientes_fifo:
+                fecha_deuda, saldo_deuda = pendientes_fifo[0]
+                aplicar = min(saldo_deuda, abono_restante)
+                saldo_deuda -= aplicar
+                abono_restante -= aplicar
+                aplicado_por_fecha[dia] += aplicar
+
+                if saldo_deuda <= 0:
+                    pendientes_fifo.pop(0)
+                else:
+                    pendientes_fifo[0][1] = saldo_deuda
+
+        pendiente_por_fecha = defaultdict(Decimal)
+        for fecha_pendiente, saldo_pendiente in pendientes_fifo:
+            pendiente_por_fecha[fecha_pendiente] += max(Decimal(saldo_pendiente or 0), Decimal(0))
+
+        fifo_por_estilista[est_id] = {
+            'arrastre_inicial': arrastre_inicial,
+            'arrastre_final': arrastre,
+            'pendiente_por_fecha': pendiente_por_fecha,
+            'aplicado_por_fecha': aplicado_por_fecha,
+        }
+
+    solo_deuda_abierta_raw = (request.query_params.get('solo_deuda_abierta') or '').strip().lower()
+    solo_deuda_abierta = solo_deuda_abierta_raw in {'1', 'true', 'si', 'sí', 'yes'}
+
     items = []
     for est in estilistas:
         est_id = int(est.id)
+        fifo_est = fifo_por_estilista.get(est_id, {})
+        pendiente_por_fecha = fifo_est.get('pendiente_por_fecha', {})
+        aplicado_por_fecha = fifo_est.get('aplicado_por_fecha', {})
+
         for dia in sorted(list(dias_con_movimiento.get(est_id, set())), reverse=True):
             calc_con_comision = calcular_liquidacion_dia_estilista(est, dia, aplica_comision_ventas=True)
             calc_sin_comision = calcular_liquidacion_dia_estilista(est, dia, aplica_comision_ventas=False)
@@ -5009,9 +5043,17 @@ def reporte_ajuste_diario_unificado(request):
             descuento_puesto = Decimal((
                 fact.descuento_puesto_dia if fact else (calc_con_comision.get('descuento_puesto') if aplica_comision_ventas else calc_sin_comision.get('descuento_puesto'))
             ) or 0)
+            descuento_puesto = max(descuento_puesto, Decimal(0))
             deuda_puesto = Decimal((fact.deuda_puesto_cierre if fact else (getattr(ep, 'saldo_puesto_pendiente', 0) if ep else 0)) or 0)
             estado_item = (fact.estado_liquidacion if fact else (ep.estado if ep else 'pendiente'))
             cobro_consumo = Decimal((fact.cobro_consumo_dia if fact else consumo_por_est_dia.get((est_id, dia), Decimal(0))) or 0)
+
+            pendiente_empleado = max(generado - pagado_total, Decimal(0))
+            deuda_puesto_dia_pendiente = max(Decimal(pendiente_por_fecha.get(dia, Decimal(0)) or 0), Decimal(0))
+            abono_puesto_aplicado_fifo = max(Decimal(aplicado_por_fecha.get(dia, Decimal(0)) or 0), Decimal(0))
+
+            if solo_deuda_abierta and pendiente_empleado <= 0 and deuda_puesto_dia_pendiente <= 0 and cobro_consumo <= 0:
+                continue
 
             items.append(
                 {
@@ -5028,12 +5070,17 @@ def reporte_ajuste_diario_unificado(request):
                     'pago_daviplata': float(pago_daviplata),
                     'pago_otros': float(pago_otros),
                     'pagado_total': float(pagado_total),
-                    'pendiente_pago_empleado': float(max(generado - pagado_total, Decimal(0))),
+                    'pendiente_pago_empleado': float(pendiente_empleado),
                     'abono_puesto': float(abono_puesto),
+                    'abono_puesto_aplicado_fifo': float(abono_puesto_aplicado_fifo),
                     'medio_abono_puesto': medio_abono,
                     'aplica_comision_ventas': aplica_comision_ventas,
                     'cobro_consumo_dia': float(cobro_consumo),
                     'deuda_puesto_pendiente': float(deuda_puesto),
+                    'deuda_puesto_dia_pendiente': float(deuda_puesto_dia_pendiente),
+                    'deuda_puesto_dia_cancelada': float(deuda_puesto_dia_pendiente) <= 0.005,
+                    'deuda_puesto_arrastre_inicial': float(max(Decimal(fifo_est.get('arrastre_inicial', 0) or 0), Decimal(0))),
+                    'deuda_puesto_arrastre_actual': float(max(Decimal(fifo_est.get('arrastre_final', 0) or 0), Decimal(0))),
                 }
             )
 
@@ -5244,7 +5291,6 @@ def reporte_cierre_caja(request):
                     'abono_id': int(ab.id),
                     'fecha_hora': timezone.localtime(ab.fecha_hora).strftime('%Y-%m-%d %H:%M:%S') if ab.fecha_hora else None,
                     'fecha': _fecha_operativa_desde_dt(ab.fecha_hora).strftime('%Y-%m-%d') if ab.fecha_hora else None,
-                    'fecha_consumo': _fecha_operativa_desde_dt(deuda.fecha_hora).strftime('%Y-%m-%d') if deuda.fecha_hora else None,
                     'origen': 'consumo_empleado_abono',
                     'numero_factura': deuda.numero_factura,
                     'medio_pago': ab.medio_pago,

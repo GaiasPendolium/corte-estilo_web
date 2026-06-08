@@ -182,6 +182,10 @@ const Servicios = () => {
   const [clientes, setClientes] = useState([]);
   const [estadoEstilistas, setEstadoEstilistas] = useState([]);
   const [serviciosEnProceso, setServiciosEnProceso] = useState([]);
+  const [ultimosServicios, setUltimosServicios] = useState([]);
+
+  const [servicioVisualizar, setServicioVisualizar] = useState(null);
+  const [showVisualizarFactura, setShowVisualizarFactura] = useState(false);
 
   const [nuevoCliente, setNuevoCliente] = useState({ nombre: '', telefono: '', fecha_nacimiento: '' });
 
@@ -267,11 +271,12 @@ const Servicios = () => {
   const cargarTodo = async () => {
     try {
       setLoading(true);
-      const [listaEstilistas, listaServicios, listaClientes, listaRealizados, estadoRes, listaProductos] = await Promise.all([
+      const [listaEstilistas, listaServicios, listaClientes, listaRealizados, listaFinalizadosResp, estadoRes, listaProductos] = await Promise.all([
         fetchAllRows(estilistasService.getAll, { activo: true }),
         fetchAllRows(serviciosService.getAll, { activo: true }),
         fetchAllRows(clientesService.getAll),
         fetchAllRows(serviciosRealizadosService.getAll, { estado: 'en_proceso' }),
+        serviciosRealizadosService.getAll({ estado: 'finalizado', page: 1 }),
         serviciosRealizadosService.getEstadoEstilistas(),
         fetchAllRows(productosService.getAll, { activo: true }),
       ]);
@@ -282,6 +287,13 @@ const Servicios = () => {
       setProductos(listaProductos);
       setEstadoEstilistas(Array.isArray(estadoRes) ? estadoRes : []);
       setServiciosEnProceso(listaRealizados.filter((s) => s.estado === 'en_proceso'));
+      try {
+        const rowsFinalizados = extractRows(listaFinalizadosResp || []);
+        const ordered = rowsFinalizados.slice().sort((a, b) => String(b.fecha_hora || '').localeCompare(String(a.fecha_hora || '')));
+        setUltimosServicios(ordered.slice(0, 5));
+      } catch (e) {
+        setUltimosServicios([]);
+      }
     } catch (error) {
       toast.error('No se pudo cargar el módulo operativo');
     } finally {
@@ -577,6 +589,20 @@ const Servicios = () => {
       return;
     }
     prepararFinalizacion(srv);
+  };
+
+  const reimprimirServicio = async (servicio) => {
+    try {
+      await ticketPrintService.reprintServiceSale(servicio);
+      toast.success('Ticket reenviado a impresora POS');
+    } catch (error) {
+      toast.error(error?.message || 'No se pudo reenviar el ticket a QZ Tray');
+    }
+  };
+
+  const visualizarServicio = (servicio) => {
+    setServicioVisualizar(servicio);
+    setShowVisualizarFactura(true);
   };
 
   const agregarFilaAdicional = () => {
@@ -1394,31 +1420,40 @@ const Servicios = () => {
       </div>
 
       <div className="card space-y-4">
-        <h2 className="card-header">Servicios en proceso</h2>
-        {serviciosEnProceso.length === 0 && <p className="text-gray-600">No hay servicios en proceso.</p>}
-        {serviciosEnProceso.length > 0 && (
+        <h2 className="card-header">Últimos servicios facturados</h2>
+        {ultimosServicios.length === 0 && <p className="text-gray-600">No se encontraron servicios facturados recientemente.</p>}
+        {ultimosServicios.length > 0 && (
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="table-header">
                 <tr>
-                  <th className="px-6 py-3 text-left">Empleado</th>
+                  <th className="px-6 py-3 text-left">Factura</th>
+                  <th className="px-6 py-3 text-left">Fecha</th>
                   <th className="px-6 py-3 text-left">Servicio</th>
                   <th className="px-6 py-3 text-left">Cliente</th>
-                  <th className="px-6 py-3 text-left">Precio base</th>
-                  <th className="px-6 py-3 text-right">Acción</th>
+                  <th className="px-6 py-3 text-left">Empleado</th>
+                  <th className="px-6 py-3 text-left">Total cliente</th>
+                  <th className="px-6 py-3 text-right">Acciones</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {serviciosEnProceso.map((srv) => (
-                  <tr key={srv.id} className="hover:bg-gray-50">
-                    <td className="table-cell">{srv.estilista_nombre}</td>
-                    <td className="table-cell">{srv.servicio_nombre}</td>
-                    <td className="table-cell">{srv.cliente_nombre || '-'}</td>
-                    <td className="table-cell">{formatCOP(srv.precio_cobrado || 0)}</td>
+                {ultimosServicios.map((s) => (
+                  <tr key={s.id} className="hover:bg-gray-50">
+                    <td className="table-cell">{s.numero_factura || '-'}</td>
+                    <td className="table-cell">{String(s.fecha_hora || '').slice(0, 10)}</td>
+                    <td className="table-cell">{s.servicio_nombre}</td>
+                    <td className="table-cell">{s.cliente_nombre || '-'}</td>
+                    <td className="table-cell">{s.estilista_nombre || '-'}</td>
+                    <td className="table-cell">{formatCOP((Number(s.precio_cobrado || 0) + Number(s.valor_adicionales || 0)) || 0)}</td>
                     <td className="table-cell text-right">
-                      <button className="btn-primary !px-3 !py-2" onClick={() => prepararFinalizacion(srv)} disabled={!puedeCrearServicio}>
-                        Finalizar
-                      </button>
+                      <div className="flex justify-end gap-2">
+                        <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => visualizarServicio(s)}>
+                          Ver
+                        </button>
+                        <button className="btn-secondary !px-3 !py-2 inline-flex items-center gap-1" onClick={() => reimprimirServicio(s)}>
+                          Reimprimir
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -1887,6 +1922,38 @@ const Servicios = () => {
         onClose={cerrarSearchKeyboard}
         title="Teclado de búsqueda"
       />
+
+      {showVisualizarFactura && servicioVisualizar && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+              <h2 className="text-xl font-bold text-gray-900">Factura de Servicio</h2>
+              <button onClick={() => { setShowVisualizarFactura(false); setServicioVisualizar(null); }} className="text-gray-400 hover:text-gray-600">Cerrar</button>
+            </div>
+            <div className="px-6 py-4 space-y-4">
+              <div>
+                <p className="text-sm text-gray-600">Número de factura</p>
+                <p className="font-bold text-gray-900">{servicioVisualizar.numero_factura || '-'}</p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-600">Fecha</p>
+                <p className="font-bold text-gray-900">{String(servicioVisualizar.fecha_hora || '').slice(0, 19).replace('T', ' ')}</p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-600">Cliente</p>
+                <p className="font-bold text-gray-900">{servicioVisualizar.cliente_nombre || '-'}</p>
+              </div>
+              <div>
+                <pre className="whitespace-pre-wrap text-sm bg-gray-50 border p-3 rounded">{servicioVisualizar.factura_texto || JSON.stringify(servicioVisualizar, null, 2)}</pre>
+              </div>
+            </div>
+            <div className="bg-gray-100 px-6 py-3 flex gap-2 justify-end">
+              <button type="button" className="btn-secondary" onClick={() => { setShowVisualizarFactura(false); setServicioVisualizar(null); }}>Cerrar</button>
+              <button type="button" className="btn-primary" onClick={() => reimprimirServicio(servicioVisualizar)}>Reimprimir</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showConfirmacionFinalizar && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
