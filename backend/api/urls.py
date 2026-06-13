@@ -12,7 +12,7 @@ from .views import (
     reporte_consumo_empleado, abonar_consumo_empleado, editar_abono_consumo_empleado, reporte_cierre_caja,
     crear_cargo_manual_empleado,
     liquidar_dia_v2, liquidar_operacion_integral, cargar_deuda_puesto_dia, eliminar_estado_pago_historial, mover_fecha_estado_pago_dia, qz_certificate, qz_sign,
-    reporte_ajuste_diario_unificado
+    reporte_ajuste_diario_unificado, cancelar_deuda_puesto_dias, cancelar_facturas_deuda_empleado
 )
 
 # Crear router para los viewsets
@@ -52,6 +52,8 @@ urlpatterns = [
     path('reportes/estilistas/liquidar-dia-v2/', liquidar_dia_v2, name='reportes-estilista-liquidar-dia-v2'),
     path('reportes/estilistas/liquidar-operacion-integral/', liquidar_operacion_integral, name='reportes-estilista-liquidar-operacion-integral'),
     path('reportes/estilistas/cargar-deuda-puesto/', cargar_deuda_puesto_dia, name='reportes-estilista-cargar-deuda-puesto'),
+    path('reportes/estilistas/cancelar-deuda-puesto-dias/', cancelar_deuda_puesto_dias, name='reportes-estilista-cancelar-deuda-puesto-dias'),
+    path('reportes/consumo-empleado/cancelar-facturas/', cancelar_facturas_deuda_empleado, name='reporte-consumo-empleado-cancelar-facturas'),
     path('reportes/consumo-empleado/deudas/', reporte_consumo_empleado, name='reporte-consumo-empleado-deudas'),
     path('reportes/consumo-empleado/abonar/', abonar_consumo_empleado, name='reporte-consumo-empleado-abonar'),
     path('reportes/consumo-empleado/abonos/<int:abono_id>/', editar_abono_consumo_empleado, name='reporte-consumo-empleado-abono-editar'),

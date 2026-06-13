@@ -575,4 +575,19 @@ export const reportesService = {
     });
     return response.data;
   },
+
+  cancelarDeudaPuestoDias: async ({ estilista_id, fechas }) => {
+    const response = await api.post('/reportes/estilistas/cancelar-deuda-puesto-dias/', {
+      estilista_id,
+      fechas,
+    });
+    return response.data;
+  },
+
+  cancelarFacturasDeudaEmpleado: async ({ deuda_ids }) => {
+    const response = await api.post('/reportes/consumo-empleado/cancelar-facturas/', {
+      deuda_ids,
+    });
+    return response.data;
+  },
 };

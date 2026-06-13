@@ -194,6 +194,18 @@ const Reportes = () => {
   const [diasDeudaPuestoSeleccionadosByEstilista, setDiasDeudaPuestoSeleccionadosByEstilista] = useState({});
   const [facturasDeudaSeleccionadasByEstilista, setFacturasDeudaSeleccionadasByEstilista] = useState({});
   const [aplicandoPagoMasivo, setAplicandoPagoMasivo] = useState(false);
+  const [aplicandoLiquidarDeudaPuesto, setAplicandoLiquidarDeudaPuesto] = useState(false);
+  const [aplicandoCancelarDeudaPuesto, setAplicandoCancelarDeudaPuesto] = useState(false);
+  const [aplicandoLiquidarFacturas, setAplicandoLiquidarFacturas] = useState(false);
+  const [aplicandoCancelarFacturas, setAplicandoCancelarFacturas] = useState(false);
+  const [formularioNuevaDeudaAjuste, setFormularioNuevaDeudaAjuste] = useState({
+    estilista_id: '',
+    fecha: '',
+    tipo_deuda: 'puesto',
+    valor: '',
+    observacion: '',
+    loading: false,
+  });
   const [vistaSimpleLiquidacion, setVistaSimpleLiquidacion] = useState(true);
   const [pasoLiquidacion, setPasoLiquidacion] = useState(1);
   const [cierreTabActiva, setCierreTabActiva] = useState('medios');
@@ -389,6 +401,8 @@ const Reportes = () => {
           estilista_nombre: fila.estilista_nombre || `Empleado ${estId}`,
           total_pendiente_pago: 0,
           total_pendiente_puesto_dias: 0,
+          saldo_puesto_total: Math.max(Number(fila.saldo_puesto_total || 0), 0),
+          saldo_consumo_total: Math.max(Number(fila.saldo_consumo_total || 0), 0),
           dias_no_liquidados: [],
           dias_deuda_puesto: [],
           facturas_deuda: [],
@@ -396,6 +410,9 @@ const Reportes = () => {
       }
 
       const item = map.get(estId);
+      // saldo_puesto_total y saldo_consumo_total son por empleado (misma en todas las filas); tomar la mayor
+      item.saldo_puesto_total = Math.max(item.saldo_puesto_total, Math.max(Number(fila.saldo_puesto_total || 0), 0));
+      item.saldo_consumo_total = Math.max(item.saldo_consumo_total, Math.max(Number(fila.saldo_consumo_total || 0), 0));
       const pendientePago = Math.max(Number(fila.pendiente_pago_empleado || 0), 0);
       const deudaPuestoDia = Math.max(Number(fila.deuda_puesto_dia_pendiente || 0), 0);
       const generadoDia = Math.max(Number(fila.generado_total || 0), 0);
@@ -420,7 +437,7 @@ const Reportes = () => {
       }
     });
 
-    (carteraData?.deudas || []).forEach((d) => {
+    (carteraDataLiquidacionGlobal?.deudas || []).forEach((d) => {
       const estId = Number(d.estilista_id || 0);
       if (!estId) return;
 
@@ -430,6 +447,8 @@ const Reportes = () => {
           estilista_nombre: d.estilista_nombre || `Empleado ${estId}`,
           total_pendiente_pago: 0,
           total_pendiente_puesto_dias: 0,
+          saldo_puesto_total: 0,
+          saldo_consumo_total: 0,
           dias_no_liquidados: [],
           dias_deuda_puesto: [],
           facturas_deuda: [],
@@ -439,7 +458,8 @@ const Reportes = () => {
       const saldo = Math.max(Number(d.saldo_pendiente || 0), 0);
       if (saldo <= 0) return;
 
-      map.get(estId).facturas_deuda.push({
+      const empItem = map.get(estId);
+      empItem.facturas_deuda.push({
         deuda_id: Number(d.deuda_id || 0),
         numero_factura: d.numero_factura || `Deuda ${d.deuda_id}`,
         fecha_hora: d.fecha_hora || '',
@@ -447,20 +467,25 @@ const Reportes = () => {
         total_cargo: Math.max(Number(d.total_cargo || 0), 0),
         saldo_pendiente: saldo,
       });
+      // Acumular consumo total desde facturas (fallback cuando no hay filas del API con saldo_consumo_total)
+      if (!empItem.saldo_consumo_total) {
+        empItem._consumo_from_facturas = (empItem._consumo_from_facturas || 0) + saldo;
+      }
     });
 
     const out = Array.from(map.values())
       .map((x) => ({
         ...x,
+        saldo_consumo_total: x.saldo_consumo_total || x._consumo_from_facturas || 0,
         dias_no_liquidados: (x.dias_no_liquidados || []).sort((a, b) => String(a.fecha || '').localeCompare(String(b.fecha || ''))),
         dias_deuda_puesto: (x.dias_deuda_puesto || []).sort((a, b) => String(a.fecha || '').localeCompare(String(b.fecha || ''))),
         facturas_deuda: (x.facturas_deuda || []).sort((a, b) => String(a.fecha_hora || '').localeCompare(String(b.fecha_hora || ''))),
       }))
-      .filter((x) => x.total_pendiente_pago > 0 || x.total_pendiente_puesto_dias > 0 || (x.facturas_deuda || []).length > 0)
-      .sort((a, b) => (b.total_pendiente_pago + b.total_pendiente_puesto_dias) - (a.total_pendiente_pago + a.total_pendiente_puesto_dias));
+      .filter((x) => x.total_pendiente_pago > 0 || x.saldo_puesto_total > 0 || x.saldo_consumo_total > 0 || (x.facturas_deuda || []).length > 0)
+      .sort((a, b) => (b.total_pendiente_pago + b.saldo_puesto_total + b.saldo_consumo_total) - (a.total_pendiente_pago + a.saldo_puesto_total + a.saldo_consumo_total));
 
     return out;
-  }, [ajusteDiarioRowsFiltradas, carteraData]);
+  }, [ajusteDiarioRowsFiltradas, carteraDataLiquidacionGlobal]);
 
   const detallePendienteActivoAjuste = useMemo(
     () => detallePendientesAjuste.find((x) => Number(x.estilista_id) === Number(estilistaActivoAjuste)) || null,
@@ -615,6 +640,171 @@ const Reportes = () => {
     }
   };
 
+  const liquidarDeudaPuestoSeleccionados = async () => {
+    const estId = Number(estilistaActivoAjuste || 0);
+    if (!estId) return;
+    const fechasSeleccionadas = diasDeudaPuestoSeleccionadosByEstilista[estId] || [];
+    if (fechasSeleccionadas.length === 0) {
+      toast.warning('Selecciona al menos un día de deuda de puesto para liquidar.');
+      return;
+    }
+    const detalle = detallePendientesAjuste.find((x) => Number(x.estilista_id) === estId);
+    if (!detalle) return;
+
+    setAplicandoLiquidarDeudaPuesto(true);
+    try {
+      for (const fecha of fechasSeleccionadas) {
+        const diaDeuda = detalle.dias_deuda_puesto.find((d) => String(d.fecha) === String(fecha));
+        if (!diaDeuda) continue;
+        await reportesService.liquidarOperacionIntegral({
+          estilista_id: estId,
+          fecha,
+          pago_efectivo: 0,
+          pago_nequi: 0,
+          pago_daviplata: 0,
+          pago_otros: 0,
+          abono_puesto: Number(diaDeuda.deuda_puesto_dia || 0),
+          medio_abono_puesto: 'efectivo',
+          aplica_comision_ventas: false,
+          forzar_reemplazo_dia: true,
+          skip_descuento_puesto: false,
+          consumo_monto: 0,
+          deuda_ids: [],
+          notas: `Deuda de puesto liquidada desde Ajuste Diario (${fecha})`,
+        });
+      }
+      setDiasDeudaPuestoSeleccionadosByEstilista((prev) => ({ ...prev, [estId]: [] }));
+      toast.success('Deuda de puesto liquidada correctamente.');
+      await Promise.all([cargarAjusteDiarioUnificado(), cargarCarteraLiquidacionGlobal()]);
+    } catch (error) {
+      const msg = error?.response?.data?.error || error?.message || 'No se pudo liquidar la deuda de puesto.';
+      toast.error(String(msg));
+    } finally {
+      setAplicandoLiquidarDeudaPuesto(false);
+    }
+  };
+
+  const cancelarDeudaPuestoSeleccionados = async () => {
+    const estId = Number(estilistaActivoAjuste || 0);
+    if (!estId) return;
+    const fechasSeleccionadas = diasDeudaPuestoSeleccionadosByEstilista[estId] || [];
+    if (fechasSeleccionadas.length === 0) {
+      toast.warning('Selecciona al menos un día de deuda de puesto para cancelar.');
+      return;
+    }
+
+    setAplicandoCancelarDeudaPuesto(true);
+    try {
+      await reportesService.cancelarDeudaPuestoDias({ estilista_id: estId, fechas: fechasSeleccionadas });
+      setDiasDeudaPuestoSeleccionadosByEstilista((prev) => ({ ...prev, [estId]: [] }));
+      toast.success('Deuda de puesto cancelada correctamente.');
+      await Promise.all([cargarAjusteDiarioUnificado(), cargarCarteraLiquidacionGlobal()]);
+    } catch (error) {
+      const msg = error?.response?.data?.error || error?.message || 'No se pudo cancelar la deuda de puesto.';
+      toast.error(String(msg));
+    } finally {
+      setAplicandoCancelarDeudaPuesto(false);
+    }
+  };
+
+  const liquidarFacturasSeleccionadas = async () => {
+    const estId = Number(estilistaActivoAjuste || 0);
+    if (!estId) return;
+    const idsSeleccionados = facturasDeudaSeleccionadasByEstilista[estId] || [];
+    if (idsSeleccionados.length === 0) {
+      toast.warning('Selecciona al menos una factura para liquidar.');
+      return;
+    }
+    const detalle = detallePendientesAjuste.find((x) => Number(x.estilista_id) === estId);
+    if (!detalle) return;
+
+    setAplicandoLiquidarFacturas(true);
+    try {
+      for (const idStr of idsSeleccionados) {
+        const factura = detalle.facturas_deuda.find((f) => String(f.deuda_id) === String(idStr));
+        if (!factura) continue;
+        await reportesService.abonarConsumoEmpleado({
+          estilista_id: estId,
+          deuda_id: factura.deuda_id,
+          monto: Number(factura.saldo_pendiente || 0),
+          medio_pago: 'efectivo',
+          notas: 'Pago total desde Ajuste Diario',
+          fecha: String(factura.fecha_hora || '').slice(0, 10) || undefined,
+        });
+      }
+      setFacturasDeudaSeleccionadasByEstilista((prev) => ({ ...prev, [estId]: [] }));
+      toast.success('Facturas liquidadas correctamente.');
+      await Promise.all([cargarAjusteDiarioUnificado(), cargarCarteraLiquidacionGlobal()]);
+    } catch (error) {
+      const msg = error?.response?.data?.error || error?.message || 'No se pudo liquidar las facturas.';
+      toast.error(String(msg));
+    } finally {
+      setAplicandoLiquidarFacturas(false);
+    }
+  };
+
+  const cancelarFacturasSeleccionadas = async () => {
+    const estId = Number(estilistaActivoAjuste || 0);
+    if (!estId) return;
+    const idsSeleccionados = facturasDeudaSeleccionadasByEstilista[estId] || [];
+    if (idsSeleccionados.length === 0) {
+      toast.warning('Selecciona al menos una factura para cancelar.');
+      return;
+    }
+
+    setAplicandoCancelarFacturas(true);
+    try {
+      await reportesService.cancelarFacturasDeudaEmpleado({ deuda_ids: idsSeleccionados.map(Number) });
+      setFacturasDeudaSeleccionadasByEstilista((prev) => ({ ...prev, [estId]: [] }));
+      toast.success('Facturas canceladas correctamente.');
+      await Promise.all([cargarAjusteDiarioUnificado(), cargarCarteraLiquidacionGlobal()]);
+    } catch (error) {
+      const msg = error?.response?.data?.error || error?.message || 'No se pudo cancelar las facturas.';
+      toast.error(String(msg));
+    } finally {
+      setAplicandoCancelarFacturas(false);
+    }
+  };
+
+  const guardarNuevaDeudaAjuste = async () => {
+    const { estilista_id, fecha, tipo_deuda, valor, observacion } = formularioNuevaDeudaAjuste;
+    if (!estilista_id || !fecha || !tipo_deuda || !valor || !observacion) {
+      toast.warning('Todos los campos son obligatorios.');
+      return;
+    }
+    const montoNum = Number(String(valor).replace(/[^\d.]/g, ''));
+    if (!montoNum || montoNum <= 0) {
+      toast.warning('El valor debe ser mayor a 0.');
+      return;
+    }
+
+    setFormularioNuevaDeudaAjuste((prev) => ({ ...prev, loading: true }));
+    try {
+      if (tipo_deuda === 'puesto') {
+        await reportesService.cargarDeudaPuestoDia({
+          estilista_id: Number(estilista_id),
+          fecha,
+          monto_deuda: montoNum,
+          notas: observacion,
+        });
+      } else {
+        await reportesService.crearCargoManualEmpleado({
+          estilista_id: Number(estilista_id),
+          monto: montoNum,
+          motivo: observacion,
+          fecha,
+        });
+      }
+      toast.success('Deuda registrada correctamente.');
+      setFormularioNuevaDeudaAjuste({ estilista_id: '', fecha: '', tipo_deuda: 'puesto', valor: '', observacion: '', loading: false });
+      await Promise.all([cargarAjusteDiarioUnificado(), cargarCarteraLiquidacionGlobal()]);
+    } catch (error) {
+      const msg = error?.response?.data?.error || error?.message || 'No se pudo registrar la deuda.';
+      toast.error(String(msg));
+      setFormularioNuevaDeudaAjuste((prev) => ({ ...prev, loading: false }));
+    }
+  };
+
   const actualizarCuadreDiaCampo = (estilistaId, fecha, campo, valor) => {
     setCuadreDiarioByEstilista((prev) => {
       const porEstilista = prev[estilistaId] || {};
@@ -701,9 +891,9 @@ const Reportes = () => {
     setLoadingAjusteDiario(true);
     try {
       const resp = await reportesService.getReporteAjusteDiario({
-        periodo,
-        fecha_inicio: fechaInicio,
-        fecha_fin: fechaFin,
+        periodo: 'personalizado',
+        fecha_inicio: '2020-01-01',
+        fecha_fin: format(new Date(), 'yyyy-MM-dd'),
         solo_deuda_abierta: ocultarDiasSaldadosAjuste ? '1' : '0',
       });
       const filas = resp?.items || [];
@@ -732,7 +922,7 @@ const Reportes = () => {
     } finally {
       setLoadingAjusteDiario(false);
     }
-  }, [esRecepcion, periodo, fechaInicio, fechaFin, ocultarDiasSaldadosAjuste]);
+  }, [esRecepcion, ocultarDiasSaldadosAjuste]);
 
   const cargarTodo = useCallback(async () => {
     const reqSeq = ++cargarTodoSeqRef.current;
@@ -921,7 +1111,8 @@ const Reportes = () => {
   useEffect(() => {
     if (moduloActivo !== 'ajuste') return;
     cargarAjusteDiarioUnificado();
-  }, [moduloActivo, cargarAjusteDiarioUnificado]);
+    cargarCarteraLiquidacionGlobal();
+  }, [moduloActivo, cargarAjusteDiarioUnificado, cargarCarteraLiquidacionGlobal]);
 
   useEffect(() => {
     if (moduloActivo !== 'liquidacion') return;
@@ -1861,6 +2052,44 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
           </div>
         </section>
 
+        {(() => {
+          const empleadosConComision = (biData?.estilistas || []).filter((e) => Number(e.comision_ventas_producto || 0) > 0);
+          if (empleadosConComision.length === 0) return null;
+          const totalComisiones = empleadosConComision.reduce((sum, e) => sum + Number(e.comision_ventas_producto || 0), 0);
+          return (
+            <section className="card border border-emerald-200 bg-emerald-50">
+              <h3 className="card-header mb-1">Comisiones pagadas a empleados</h3>
+              <p className="text-xs text-slate-500 mb-3">Comisión por venta de productos incluida en la liquidación cuando se seleccionó "Sí aplica comisión".</p>
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-emerald-200">
+                  <thead>
+                    <tr className="bg-emerald-100">
+                      <th className="px-4 py-2 text-left text-xs font-semibold text-emerald-800">Empleado</th>
+                      <th className="px-4 py-2 text-left text-xs font-semibold text-emerald-800">Comisión por ventas en caja</th>
+                      <th className="px-4 py-2 text-left text-xs font-semibold text-emerald-800">Comisión por servicios</th>
+                      <th className="px-4 py-2 text-left text-xs font-semibold text-emerald-800">Total comisión</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-emerald-100">
+                    {empleadosConComision.map((e) => (
+                      <tr key={`comision-cierre-${e.estilista_id}`}>
+                        <td className="px-4 py-2 text-sm font-medium text-slate-900">{e.estilista_nombre}</td>
+                        <td className="px-4 py-2 text-sm text-slate-700">{formatMoney(e.comision_ventas_producto_caja || 0)}</td>
+                        <td className="px-4 py-2 text-sm text-slate-700">{formatMoney(e.comision_ventas_producto_servicios || 0)}</td>
+                        <td className="px-4 py-2 text-sm font-semibold text-emerald-800">{formatMoney(e.comision_ventas_producto || 0)}</td>
+                      </tr>
+                    ))}
+                    <tr className="bg-emerald-50">
+                      <td className="px-4 py-2 text-xs font-bold text-emerald-800" colSpan={3}>Total comisiones del período</td>
+                      <td className="px-4 py-2 text-sm font-black text-emerald-900">{formatMoney(totalComisiones)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          );
+        })()}
+
         <section className="card border border-slate-200 bg-white">
           <h3 className="card-header mb-3">Desglose de ingresos</h3>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -2356,13 +2585,18 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
             const generadoEmpleadoSimple = diaSeleccionadoSimple
               ? Math.max(Number(diaSeleccionadoSimple.base_servicio || 0), 0)
               : Math.max(Number(empleado?.valor_total_empleado || 0), 0);
+            const aplicaComisionSimple = Boolean(aplicaComisionVentasPorEstilista[estId] ?? true);
+            const comisionVentasSimple = (aplicaComisionSimple && diaSeleccionadoSimple)
+              ? Math.max(Number(diaSeleccionadoSimple.comision_productos || 0), 0)
+              : 0;
+            const totalBaseConComision = generadoEmpleadoSimple + comisionVentasSimple;
             const descuentoPuestoDiaSimple = diaSeleccionadoSimple
               ? Math.max(Number(diaSeleccionadoSimple.descuento_espacio || 0), 0)
               : 0;
             const puestoPendienteSimple = Math.max(Number(deudaPuestoAcumulada || 0), 0);
             const puestoTotalSimple = Math.max(descuentoPuestoDiaSimple + puestoPendienteSimple, 0);
             const abonoPuestoCalculado = modoCobroPuesto === 'porcentaje'
-              ? Math.round((Math.max(generadoEmpleadoSimple, 0) * porcentajePuestoDigitado) / 100)
+              ? Math.round((Math.max(totalBaseConComision, 0) * porcentajePuestoDigitado) / 100)
               : cargoPuestoDigitado;
             const tieneValorPuestoDigitado = String(cargoPuestoPorEstilista[estId] || '').trim().length > 0;
             const tienePorcentajeDigitado = String(porcentajePuestoPorEstilista[estId] || '').trim().length > 0;
@@ -2379,7 +2613,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
               ? Math.min(Math.max(abonoPuestoDigitado, 0), puestoPendienteSimple)
               : 0;
             const descuentoConsumoAplicado = cancelarDeudaConsumo ? cobroConsumoAplicado : 0;
-            const valorLiquidarHoySimple = Math.max(generadoEmpleadoSimple - cargoPuestoDiaAplicado, 0);
+            const valorLiquidarHoySimple = Math.max(totalBaseConComision - cargoPuestoDiaAplicado, 0);
             const totalDescuentosSimple = cargoPuestoDiaAplicado + abonoPuestoDeudaAplicado + descuentoConsumoAplicado;
             const totalPagarFinalSimple = Math.max(valorLiquidarHoySimple - abonoPuestoDeudaAplicado - descuentoConsumoAplicado, 0);
             const pagosSimple = pagosPorEstilista[estId] || {};
@@ -2798,22 +3032,30 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                             <span className="text-slate-300">Ganancia del día</span>
                             <span className="font-semibold">{formatMoney(generadoEmpleadoSimple)}</span>
                           </div>
+                          {comisionVentasSimple > 0 && (
+                            <div className="flex items-center justify-between gap-3 text-sm">
+                              <span className="text-emerald-300">+ Comisión por ventas</span>
+                              <span className="font-semibold text-emerald-300">+{formatMoney(comisionVentasSimple)}</span>
+                            </div>
+                          )}
+                          {aplicaComisionSimple && comisionVentasSimple === 0 && diaSeleccionadoSimple && (
+                            <div className="flex items-center justify-between gap-3 text-sm">
+                              <span className="text-slate-500">+ Comisión por ventas</span>
+                              <span className="text-slate-500">{formatMoney(0)}</span>
+                            </div>
+                          )}
                           <div className="flex items-center justify-between gap-3 text-sm">
-                            <span className="text-slate-300">Descuentos del día</span>
-                            <span className="font-semibold">{formatMoney(0)}</span>
-                          </div>
-                          <div className="flex items-center justify-between gap-3 text-sm">
-                            <span className="text-slate-300">Puesto del día</span>
+                            <span className="text-amber-300">- Puesto del día</span>
                             <span className="font-semibold text-amber-300">-{formatMoney(cargoPuestoDiaAplicado)}</span>
                           </div>
                           <div className="flex items-center justify-between gap-3 text-sm">
-                            <span className="text-slate-300">Abonos deuda</span>
+                            <span className="text-rose-300">- Abonos deuda</span>
                             <span className="font-semibold text-rose-300">-{formatMoney(abonoPuestoDeudaAplicado + descuentoConsumoAplicado)}</span>
                           </div>
                           <div className="rounded-2xl bg-white/5 p-4 ring-1 ring-white/10">
                             <p className="text-xs uppercase tracking-wide text-slate-400">Total a pagar</p>
                             <p className="mt-2 text-4xl font-black tracking-tight text-white">{formatMoney(totalPagarFinalSimple)}</p>
-                            <p className="mt-2 text-xs text-slate-400">Se actualiza al instante con cada cambio de cobro o abono.</p>
+                            <p className="mt-2 text-xs text-slate-400">Ganancia + comisión − puesto − abonos</p>
                           </div>
                         </div>
 
@@ -3715,7 +3957,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
 
           <div className="space-y-2 max-h-[68vh] overflow-y-auto pr-1">
             {detallePendientesAjuste.length === 0 && (
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-500">No hay empleados con pendientes para el rango actual.</div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-500">No hay empleados con saldos pendientes acumulados.</div>
             )}
             {detallePendientesAjuste.map((emp) => {
               const activo = Number(estilistaActivoAjuste) === Number(emp.estilista_id);
@@ -3727,9 +3969,10 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                   className={`w-full rounded-2xl border p-3 text-left transition ${activo ? 'border-emerald-400 bg-emerald-50 shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300'}`}
                 >
                   <p className="font-semibold text-slate-900">{emp.estilista_nombre}</p>
-                  <p className="mt-1 text-xs text-amber-700">Pendiente pago: {formatMoney(emp.total_pendiente_pago)}</p>
-                  <p className="mt-1 text-xs text-rose-700">Deuda puesto días: {formatMoney(emp.total_pendiente_puesto_dias)}</p>
-                  <p className="mt-1 text-xs text-slate-500">Facturas abiertas: {(emp.facturas_deuda || []).length}</p>
+                  {emp.total_pendiente_pago > 0 && <p className="mt-1 text-xs text-amber-700">Pendiente pago: {formatMoney(emp.total_pendiente_pago)}</p>}
+                  {emp.saldo_puesto_total > 0 && <p className="mt-1 text-xs text-rose-700">Deuda puesto: {formatMoney(emp.saldo_puesto_total)}</p>}
+                  {emp.saldo_consumo_total > 0 && <p className="mt-1 text-xs text-violet-700">Consumo: {formatMoney(emp.saldo_consumo_total)}</p>}
+                  {(emp.facturas_deuda || []).length > 0 && <p className="mt-1 text-xs text-slate-500">Facturas abiertas: {emp.facturas_deuda.length}</p>}
                 </button>
               );
             })}
@@ -3749,14 +3992,18 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                     <p className="text-xs uppercase tracking-wide text-slate-500">Empleado seleccionado</p>
                     <h3 className="mt-1 text-2xl font-black text-slate-900">{detallePendienteActivoAjuste.estilista_nombre}</h3>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 min-w-[280px]">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 min-w-[320px]">
                     <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
-                      <p className="text-xs text-amber-700">Pendiente por pagar empleado</p>
+                      <p className="text-xs text-amber-700">Pendiente pago</p>
                       <p className="text-lg font-black text-amber-900">{formatMoney(detallePendienteActivoAjuste.total_pendiente_pago)}</p>
                     </div>
                     <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2">
-                      <p className="text-xs text-rose-700">Deuda de puesto por días</p>
-                      <p className="text-lg font-black text-rose-900">{formatMoney(detallePendienteActivoAjuste.total_pendiente_puesto_dias)}</p>
+                      <p className="text-xs text-rose-700">Deuda puesto</p>
+                      <p className="text-lg font-black text-rose-900">{formatMoney(detallePendienteActivoAjuste.saldo_puesto_total || 0)}</p>
+                    </div>
+                    <div className="rounded-xl border border-violet-200 bg-violet-50 px-3 py-2">
+                      <p className="text-xs text-violet-700">Consumo empleado</p>
+                      <p className="text-lg font-black text-violet-900">{formatMoney(detallePendienteActivoAjuste.saldo_consumo_total || 0)}</p>
                     </div>
                   </div>
                 </div>
@@ -3897,25 +4144,139 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
               </div>
 
               <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
-                <p className="text-sm font-semibold text-slate-900">Cambiar estado como pago</p>
-                <p className="text-xs text-slate-600 mt-1">Marca días en "Días no liquidados" y aplica el cambio. El sistema registrará pago completo del día en efectivo.</p>
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700">
-                    Seleccionados: {(diasPagoSeleccionadosByEstilista[Number(detallePendienteActivoAjuste.estilista_id)] || []).length}
+                <p className="text-sm font-semibold text-slate-900">Acciones sobre seleccionados</p>
+                <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+                    <p className="text-xs font-semibold text-amber-800 mb-2">Días no liquidados ({(diasPagoSeleccionadosByEstilista[Number(detallePendienteActivoAjuste.estilista_id)] || []).length} sel.)</p>
+                    <button
+                      type="button"
+                      className="btn-primary w-full text-xs !py-2"
+                      onClick={marcarDiasSeleccionadosComoPago}
+                      disabled={aplicandoPagoMasivo}
+                    >
+                      {aplicandoPagoMasivo ? 'Aplicando...' : 'Marcar como pagado'}
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    className="btn-primary"
-                    onClick={marcarDiasSeleccionadosComoPago}
-                    disabled={aplicandoPagoMasivo}
-                  >
-                    {aplicandoPagoMasivo ? 'Aplicando...' : 'Cambiar estado a pago (seleccionados)'}
-                  </button>
+                  <div className="rounded-xl border border-rose-200 bg-rose-50 p-3">
+                    <p className="text-xs font-semibold text-rose-800 mb-2">Deuda de puesto ({(diasDeudaPuestoSeleccionadosByEstilista[Number(detallePendienteActivoAjuste.estilista_id)] || []).length} sel.)</p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        className="btn-primary flex-1 text-xs !py-2"
+                        onClick={liquidarDeudaPuestoSeleccionados}
+                        disabled={aplicandoLiquidarDeudaPuesto || aplicandoCancelarDeudaPuesto}
+                      >
+                        {aplicandoLiquidarDeudaPuesto ? '...' : 'Liquidar'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-danger flex-1 text-xs !py-2"
+                        onClick={cancelarDeudaPuestoSeleccionados}
+                        disabled={aplicandoCancelarDeudaPuesto || aplicandoLiquidarDeudaPuesto}
+                      >
+                        {aplicandoCancelarDeudaPuesto ? '...' : 'Cancelar'}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-violet-200 bg-violet-50 p-3">
+                    <p className="text-xs font-semibold text-violet-800 mb-2">Facturas de deuda ({(facturasDeudaSeleccionadasByEstilista[Number(detallePendienteActivoAjuste.estilista_id)] || []).length} sel.)</p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        className="btn-primary flex-1 text-xs !py-2"
+                        onClick={liquidarFacturasSeleccionadas}
+                        disabled={aplicandoLiquidarFacturas || aplicandoCancelarFacturas}
+                      >
+                        {aplicandoLiquidarFacturas ? '...' : 'Liquidar'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-danger flex-1 text-xs !py-2"
+                        onClick={cancelarFacturasSeleccionadas}
+                        disabled={aplicandoCancelarFacturas || aplicandoLiquidarFacturas}
+                      >
+                        {aplicandoCancelarFacturas ? '...' : 'Cancelar'}
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
             </>
           )}
         </section>
+      </div>
+
+      <div className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+        <h3 className="text-lg font-black text-slate-900">Agregar saldo pendiente</h3>
+        <p className="text-xs text-slate-500 mt-1">Registra manualmente una deuda de puesto o una factura de consumo para un empleado. Todos los campos son obligatorios.</p>
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">Empleado</label>
+            <select
+              className="input-field"
+              value={formularioNuevaDeudaAjuste.estilista_id}
+              onChange={(e) => setFormularioNuevaDeudaAjuste((prev) => ({ ...prev, estilista_id: e.target.value }))}
+            >
+              <option value="">Selecciona empleado</option>
+              {(biData?.estilistas || []).map((est) => (
+                <option key={est.estilista_id} value={est.estilista_id}>{est.estilista_nombre}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">Fecha</label>
+            <input
+              type="date"
+              className="input-field"
+              value={formularioNuevaDeudaAjuste.fecha}
+              onChange={(e) => setFormularioNuevaDeudaAjuste((prev) => ({ ...prev, fecha: e.target.value }))}
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">Tipo de deuda</label>
+            <select
+              className="input-field"
+              value={formularioNuevaDeudaAjuste.tipo_deuda}
+              onChange={(e) => setFormularioNuevaDeudaAjuste((prev) => ({ ...prev, tipo_deuda: e.target.value }))}
+            >
+              <option value="puesto">Deuda de puesto</option>
+              <option value="consumo">Factura de consumo</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">Valor a cargar</label>
+            <input
+              type="number"
+              min="1"
+              step="1"
+              className="input-field"
+              value={formularioNuevaDeudaAjuste.valor}
+              onChange={(e) => setFormularioNuevaDeudaAjuste((prev) => ({ ...prev, valor: e.target.value }))}
+              placeholder="0"
+            />
+          </div>
+          <div className="sm:col-span-2">
+            <label className="block text-xs font-semibold text-slate-700 mb-1">Observación</label>
+            <input
+              type="text"
+              className="input-field"
+              value={formularioNuevaDeudaAjuste.observacion}
+              onChange={(e) => setFormularioNuevaDeudaAjuste((prev) => ({ ...prev, observacion: e.target.value }))}
+              placeholder="Motivo o descripción de la deuda"
+              maxLength={250}
+            />
+          </div>
+        </div>
+        <div className="mt-4">
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={guardarNuevaDeudaAjuste}
+            disabled={formularioNuevaDeudaAjuste.loading}
+          >
+            {formularioNuevaDeudaAjuste.loading ? 'Guardando...' : 'Registrar deuda'}
+          </button>
+        </div>
       </div>
     </div>
   );

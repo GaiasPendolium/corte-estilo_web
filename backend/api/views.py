@@ -26,7 +26,7 @@ from .models import (
     Usuario, Estilista, Servicio, Cliente, Producto,
     ServicioRealizado, VentaProducto, MovimientoInventario, EstadoPagoEstilistaDia,
     DeudaConsumoEmpleado, AbonoDeudaEmpleado, ServicioRealizadoAdicional,
-    EstadoPagoEstilistaHistorial, FactLiquidacionEstilistaDia
+    EstadoPagoEstilistaHistorial, FactLiquidacionEstilistaDia, SaldoDeudaPuesto
 )
 from .serializers import (
     UsuarioSerializer, EstilistaSerializer, ServicioSerializer, ClienteSerializer,
@@ -1980,42 +1980,21 @@ def _calcular_datos_bi(request):
         total_pago_estilistas_positivo += total_pagado_empleado
 
         total_dias = len(dias_trabajados)
-        # Deuda acumulada de puesto recalculada secuencialmente por fecha.
-        # Esto evita arrastres incorrectos en datos históricos antiguos.
-        deuda_puesto_inicial = Decimal(0)
+        # Deuda total acumulada: leer directamente de SaldoDeudaPuesto (fuente de verdad).
+        # Este valor se actualiza en cada operación (carga, cancelación, liquidación)
+        # y no depende del filtro de fechas del UI.
+        deuda_total_acumulada = Decimal(0)
+        deuda_consumo_acumulada = Decimal(0)
         try:
-            ultimo_estado_previo = EstadoPagoEstilistaDia.objects.filter(
-                estilista=estilista,
-                fecha__lt=fecha_inicio_dt,
-            ).order_by('-fecha', '-actualizado_en').first()
-            if ultimo_estado_previo:
-                deuda_puesto_inicial = max(
-                    Decimal(
-                        getattr(ultimo_estado_previo, 'saldo_puesto_pendiente', None)
-                        or getattr(ultimo_estado_previo, 'pendiente_puesto', 0)
-                        or 0
-                    ),
-                    Decimal(0),
-                )
-        except (OperationalError, ProgrammingError):
-            deuda_puesto_inicial = Decimal(0)
+            saldo_obj = SaldoDeudaPuesto.objects.filter(estilista=estilista).first()
+            if saldo_obj:
+                deuda_total_acumulada = max(Decimal(saldo_obj.saldo or 0), Decimal(0))
+                deuda_consumo_acumulada = max(Decimal(saldo_obj.saldo_consumo or 0), Decimal(0))
         except Exception:
-            deuda_puesto_inicial = Decimal(0)
+            deuda_total_acumulada = Decimal(0)
+            deuda_consumo_acumulada = Decimal(0)
 
-        deuda_puesto_running = deuda_puesto_inicial
-        for dia in sorted(dias_trabajados):
-            base_servicio_dia = servicios_por_dia.get(dia, Decimal(0))
-            descuento_dia = max(_descuento_puesto_dia(estilista, base_servicio_dia), Decimal(0))
-            estado_dia_obj = estados_pago_obj_map.get((estilista.id, dia))
-            fact_dia = facts_map.get((estilista.id, dia)) if usar_fact else None
-            if fact_dia:
-                abono_puesto_dia = Decimal(fact_dia.abono_puesto_dia or 0)
-            else:
-                abono_puesto_dia = Decimal(estado_dia_obj.abono_puesto or 0) if estado_dia_obj else Decimal(0)
-            deuda_puesto_running = max(deuda_puesto_running + descuento_dia - max(abono_puesto_dia, Decimal(0)), Decimal(0))
-
-        deuda_puesto_historial = deuda_puesto_inicial
-        deuda_total_acumulada = deuda_puesto_running
+        deuda_puesto_historial = deuda_total_acumulada
         total_deuda_estilistas += max(deuda_total_acumulada, Decimal(0))
 
         if total_dias == 0:
@@ -2063,6 +2042,7 @@ def _calcular_datos_bi(request):
                 'deuda_puesto_pendiente': float(deuda_total_acumulada),
                 'deuda_puesto_historica': float(deuda_puesto_historial),
                 'deuda_total_acumulada': float(deuda_total_acumulada),
+                'deuda_consumo_acumulada': float(deuda_consumo_acumulada),
                 'estado_pago_dia': estado_pago_rango,
                 'estado_pago_rango': estado_pago_rango,
                 'dias_cancelados_rango': int(dias_cancelados),
@@ -2555,6 +2535,10 @@ def _sincronizar_deuda_desde_items(deuda):
     if not deuda:
         return
 
+    # Los cargos manuales (CARGO-*) no tienen items de venta por diseño; no sincronizar.
+    if str(deuda.numero_factura or '').startswith('CARGO-'):
+        return
+
     items_consumo_qs = deuda.ventas_items.filter(tipo_operacion='consumo_empleado')
     total_cargo_real = Decimal(items_consumo_qs.aggregate(total=Sum('total'))['total'] or 0)
     total_abonado = Decimal(deuda.total_abonado or 0)
@@ -2633,6 +2617,10 @@ def crear_cargo_manual_empleado(request):
                 usuario=request.user,
                 notas=motivo,
             )
+            # Incrementa saldo_consumo consolidado
+            saldo_obj, _ = SaldoDeudaPuesto.objects.get_or_create(estilista=estilista)
+            saldo_obj.saldo_consumo = max(Decimal(saldo_obj.saldo_consumo or 0) + monto, Decimal(0))
+            saldo_obj.save()
     except Exception as e:
         logger.exception('Error creando cargo manual empleado')
         return Response({'error': f'No se pudo crear el cargo: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -2710,7 +2698,9 @@ def reporte_consumo_empleado(request):
 
         if saldo <= Decimal('0.5') and not tiene_abono:
             continue
-        if not deuda.ventas_items.filter(tipo_operacion='consumo_empleado').exists():
+        # Allow manual charges (CARGO-*) even without linked product items
+        es_cargo_manual = str(deuda.numero_factura or '').startswith('CARGO-')
+        if not es_cargo_manual and not deuda.ventas_items.filter(tipo_operacion='consumo_empleado').exists():
             continue
         qs_pendientes.append(deuda)
 
@@ -2744,6 +2734,7 @@ def reporte_consumo_empleado(request):
             'total_abonado': float(deuda.total_abonado or 0),
             'saldo_pendiente': float(deuda.saldo_pendiente or 0),
             'estado': deuda.estado,
+            'notas': deuda.notas or '',
             'abonos': [],
         }
         deudas_items.append(deuda_item)
@@ -2995,6 +2986,16 @@ def _aplicar_abonos_consumo_interno(
         )
 
         restante -= aplicado
+
+    # Decrementar saldo_consumo consolidado por el total efectivamente aplicado
+    total_aplicado = Decimal(monto_decimal or 0) - restante
+    if total_aplicado > 0:
+        try:
+            saldo_obj, _ = SaldoDeudaPuesto.objects.get_or_create(estilista=estilista)
+            saldo_obj.saldo_consumo = max(Decimal(saldo_obj.saldo_consumo or 0) - total_aplicado, Decimal(0))
+            saldo_obj.save()
+        except Exception:
+            pass
 
     return aplicaciones, restante
 
@@ -3603,7 +3604,13 @@ def _liquidar_dia_v2_core(request):
     abono_puesto = abono_operacion_puesto if forzar_reemplazo_dia else (abono_puesto_previo_dia + abono_operacion_puesto)
     
     # ============ [3] SALDO PENDIENTE ACUMULADO DE PUESTO ============
-    deuda_total_puesto = deuda_anterior_puesto + descuento
+    # Si skip=True (dejar pendiente): el descuento NO se cobró hoy → se suma como nueva deuda.
+    # Si skip=False (cobrar hoy): el descuento ya fue cobrado vía reducción del pago
+    #   (pagable = ganancias - descuento), por lo que NO genera deuda nueva.
+    if skip_descuento_puesto:
+        deuda_total_puesto = deuda_anterior_puesto + descuento
+    else:
+        deuda_total_puesto = deuda_anterior_puesto
     abono_aplicado_total_puesto = min(abono_puesto, deuda_total_puesto)
     saldo_puesto = max(deuda_total_puesto - abono_aplicado_total_puesto, Decimal(0))
     pendiente_liquidacion = max(pagable - total_pagado, Decimal(0))
@@ -3650,6 +3657,21 @@ def _liquidar_dia_v2_core(request):
         
         estado_diaria.save()
         estado_resultante = estado_diaria.estado
+
+        # Sincronizar saldo consolidado con el resultado de esta liquidación.
+        # _liquidar_dia_v2_core calcula saldo_puesto correctamente usando la cadena de días,
+        # así que ese valor es autoritativo. Lo usamos si este día es el más reciente.
+        try:
+            hay_mas_reciente = EstadoPagoEstilistaDia.objects.filter(
+                estilista=estilista,
+                fecha__gt=estado_diaria.fecha,
+            ).exists()
+            if not hay_mas_reciente:
+                saldo_obj, _ = SaldoDeudaPuesto.objects.get_or_create(estilista=estilista)
+                saldo_obj.saldo = max(saldo_puesto, Decimal(0))
+                saldo_obj.save()
+        except Exception:
+            pass
 
     except (OperationalError, ProgrammingError) as e:
         # Compatibilidad: intentar persistencia SQL en esquema legacy para no perder datos.
@@ -3996,23 +4018,7 @@ def cargar_deuda_puesto_dia(request):
 
     try:
         with transaction.atomic():
-            # Verificar que NO exista liquidación previa en esa fecha
-            estado_existente = EstadoPagoEstilistaDia.objects.filter(
-                estilista=estilista,
-                fecha=fecha,
-            ).first()
-
-            if estado_existente and (
-                estado_existente.pago_efectivo > 0 or
-                estado_existente.pago_nequi > 0 or
-                estado_existente.pago_daviplata > 0 or
-                estado_existente.pago_otros > 0
-            ):
-                return Response({
-                    'error': 'No puedes cargar deuda en un día ya liquidado. Usa la opción de corregir liquidación.'
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-            # Obtener o crear registro
+            # Obtener o crear registro (sin restricción por fecha o liquidación previa)
             estado_diaria, creado = EstadoPagoEstilistaDia.objects.get_or_create(
                 estilista=estilista,
                 fecha=fecha,
@@ -4021,8 +4027,21 @@ def cargar_deuda_puesto_dia(request):
             estado_anterior = estado_diaria.estado
             saldo_anterior = estado_diaria.saldo_puesto_pendiente
 
-            # Sumar deuda
-            estado_diaria.saldo_puesto_pendiente = estado_diaria.saldo_puesto_pendiente + monto_deuda
+            # For new records on non-service days, include prior accumulated debt so
+            # saldo_puesto_pendiente is always the full running total (prior + new charge).
+            if creado:
+                estado_previo = EstadoPagoEstilistaDia.objects.filter(
+                    estilista=estilista,
+                    fecha__lt=fecha,
+                ).order_by('-fecha').first()
+                deuda_previa = max(
+                    Decimal(getattr(estado_previo, 'saldo_puesto_pendiente', 0) or 0),
+                    Decimal(0)
+                ) if estado_previo else Decimal(0)
+                estado_diaria.saldo_puesto_pendiente = deuda_previa + monto_deuda
+            else:
+                # Existing record: add on top of whatever was already stored for this day
+                estado_diaria.saldo_puesto_pendiente = estado_diaria.saldo_puesto_pendiente + monto_deuda
 
             # Actualizar estado a 'debe' si hay deuda
             if estado_diaria.saldo_puesto_pendiente > Decimal(0):
@@ -4038,6 +4057,11 @@ def cargar_deuda_puesto_dia(request):
             estado_diaria.usuario_liquida = request.user
 
             estado_diaria.save()
+
+            # Actualizar saldo consolidado (fuente de verdad)
+            saldo_obj, _ = SaldoDeudaPuesto.objects.get_or_create(estilista=estilista)
+            saldo_obj.saldo = max(Decimal(saldo_obj.saldo or 0) + monto_deuda, Decimal(0))
+            saldo_obj.save()
 
             # Crear registro en historial
             try:
@@ -4070,6 +4094,165 @@ def cargar_deuda_puesto_dia(request):
         return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
     except Exception as e:
         return Response({'error': f'No se pudo cargar la deuda: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def cancelar_deuda_puesto_dias(request):
+    """
+    Cancela (pone a cero) la deuda de puesto de días específicos.
+
+    POST /api/reportes/estilistas/cancelar-deuda-puesto-dias/
+
+    Body:
+    {
+        "estilista_id": 5,
+        "fechas": ["2026-04-10", "2026-04-11"]
+    }
+    """
+    if _es_recepcion(request.user):
+        raise PermissionDenied('Recepción no tiene permiso para cancelar deuda de puesto.')
+
+    try:
+        estilista_id = int(request.data.get('estilista_id') or 0)
+        estilista = Estilista.objects.get(id=estilista_id, activo=True)
+    except (ValueError, Estilista.DoesNotExist):
+        return Response({'error': 'Estilista no encontrado.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    fechas_raw = request.data.get('fechas', [])
+    if not fechas_raw or not isinstance(fechas_raw, list):
+        return Response({'error': 'Se requiere una lista de fechas.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    fechas = []
+    for f in fechas_raw:
+        try:
+            fechas.append(datetime.strptime(str(f).strip(), '%Y-%m-%d').date())
+        except Exception:
+            return Response({'error': f'Fecha inválida: {f}'}, status=status.HTTP_400_BAD_REQUEST)
+
+    cancelados = []
+    try:
+        with transaction.atomic():
+            # Calcular primero la contribución de cada día para decrementar el saldo consolidado.
+            # La contribución = saldo[día] - saldo[día_anterior] (lo que ese día sumó a la deuda).
+            total_a_restar = Decimal(0)
+            for fecha in sorted(fechas):
+                estado = EstadoPagoEstilistaDia.objects.filter(estilista=estilista, fecha=fecha).first()
+                if not estado:
+                    continue
+                saldo_dia = max(Decimal(estado.saldo_puesto_pendiente or 0), Decimal(0))
+                prev_estado = EstadoPagoEstilistaDia.objects.filter(
+                    estilista=estilista, fecha__lt=fecha,
+                ).order_by('-fecha').first()
+                saldo_prev = max(Decimal(getattr(prev_estado, 'saldo_puesto_pendiente', 0) or 0), Decimal(0)) if prev_estado else Decimal(0)
+                contribucion = max(saldo_dia - saldo_prev, Decimal(0))
+                total_a_restar += contribucion
+
+            # Decrementar saldo consolidado
+            if total_a_restar > Decimal(0):
+                saldo_obj, _ = SaldoDeudaPuesto.objects.get_or_create(estilista=estilista)
+                saldo_obj.saldo = max(Decimal(saldo_obj.saldo or 0) - total_a_restar, Decimal(0))
+                saldo_obj.save()
+
+            for fecha in fechas:
+                estado = EstadoPagoEstilistaDia.objects.filter(estilista=estilista, fecha=fecha).first()
+                if not estado:
+                    continue
+                saldo_anterior = float(estado.saldo_puesto_pendiente or 0)
+                estado.saldo_puesto_pendiente = Decimal(0)
+                if estado.estado == 'debe':
+                    estado.estado = 'cancelado'
+                estado.save()
+
+                fact = FactLiquidacionEstilistaDia.objects.filter(estilista=estilista, fecha=fecha).first()
+                if fact:
+                    fact.deuda_puesto_cierre = Decimal(0)
+                    fact.save()
+
+                try:
+                    EstadoPagoEstilistaHistorial.objects.create(
+                        estilista=estilista,
+                        fecha=fecha,
+                        estado_anterior='debe',
+                        estado_nuevo='cancelado',
+                        usuario=request.user,
+                        notas=f'Deuda de puesto cancelada manualmente (anterior: ${saldo_anterior:,.2f}).',
+                        monto_liquidado=Decimal(0),
+                        abono_puesto_dia=Decimal(0),
+                    )
+                except Exception:
+                    pass
+
+                cancelados.append({'fecha': fecha.strftime('%Y-%m-%d'), 'saldo_anterior': saldo_anterior})
+
+        return Response({
+            'success': True,
+            'mensaje': f'{len(cancelados)} día(s) de deuda de puesto cancelado(s).',
+            'cancelados': cancelados,
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        return Response({'error': f'No se pudo cancelar la deuda: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def cancelar_facturas_deuda_empleado(request):
+    """
+    Cancela (estado='cancelado', saldo=0) facturas de deuda de consumo de empleado.
+
+    POST /api/reportes/consumo-empleado/cancelar-facturas/
+
+    Body:
+    {
+        "deuda_ids": [12, 34, 56]
+    }
+    """
+    if _es_recepcion(request.user):
+        raise PermissionDenied('Recepción no tiene permiso para cancelar facturas de deuda.')
+
+    deuda_ids_raw = request.data.get('deuda_ids', [])
+    if not deuda_ids_raw or not isinstance(deuda_ids_raw, list):
+        return Response({'error': 'Se requiere una lista de deuda_ids.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        deuda_ids = [int(x) for x in deuda_ids_raw]
+    except (ValueError, TypeError):
+        return Response({'error': 'deuda_ids debe contener números enteros.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    canceladas = []
+    try:
+        with transaction.atomic():
+            deudas = DeudaConsumoEmpleado.objects.filter(id__in=deuda_ids).select_related('estilista')
+            saldo_restar_por_emp = {}
+            for deuda in deudas:
+                if deuda.estado == 'cancelado':
+                    continue
+                saldo_anterior = Decimal(str(deuda.saldo_pendiente or 0))
+                deuda.estado = 'cancelado'
+                deuda.saldo_pendiente = Decimal(0)
+                deuda.save()
+                canceladas.append({'deuda_id': deuda.id, 'numero_factura': deuda.numero_factura, 'saldo_anterior': float(saldo_anterior)})
+                emp_id = int(deuda.estilista_id)
+                saldo_restar_por_emp[emp_id] = saldo_restar_por_emp.get(emp_id, Decimal(0)) + saldo_anterior
+
+            # Decrementar saldo_consumo consolidado por empleado
+            for emp_id, total_restar in saldo_restar_por_emp.items():
+                try:
+                    saldo_obj = SaldoDeudaPuesto.objects.get(estilista_id=emp_id)
+                    saldo_obj.saldo_consumo = max(Decimal(saldo_obj.saldo_consumo or 0) - total_restar, Decimal(0))
+                    saldo_obj.save()
+                except SaldoDeudaPuesto.DoesNotExist:
+                    pass
+
+        return Response({
+            'success': True,
+            'mensaje': f'{len(canceladas)} factura(s) cancelada(s).',
+            'canceladas': canceladas,
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        return Response({'error': f'No se pudo cancelar las facturas: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @api_view(['GET'])
@@ -4944,6 +5127,17 @@ def reporte_ajuste_diario_unificado(request):
 
         return Decimal(0)
 
+    # Saldo actual por empleado desde la tabla consolidada (fuente de verdad)
+    saldo_puesto_actual_map = {}
+    saldo_consumo_actual_map = {}
+    try:
+        for sdp in SaldoDeudaPuesto.objects.filter(estilista_id__in=estilista_ids):
+            saldo_puesto_actual_map[int(sdp.estilista_id)] = max(Decimal(str(sdp.saldo or 0)), Decimal(0))
+            saldo_consumo_actual_map[int(sdp.estilista_id)] = max(Decimal(str(sdp.saldo_consumo or 0)), Decimal(0))
+    except Exception:
+        saldo_puesto_actual_map = {}
+        saldo_consumo_actual_map = {}
+
     fifo_por_estilista = {}
     for est in estilistas:
         est_id = int(est.id)
@@ -4975,7 +5169,10 @@ def reporte_ajuste_diario_unificado(request):
             ) or 0)
             descuento_puesto = max(descuento_puesto, Decimal(0))
 
-            if descuento_puesto > 0:
+            # Si ese día se eligió "cobrar hoy" (skip=False), el descuento ya fue cobrado
+            # vía reducción del pago → no genera nueva entrada en la cola FIFO de deudas.
+            skip_desc = bool(getattr(ep, 'skip_descuento_puesto', False)) if ep else False
+            if descuento_puesto > 0 and skip_desc:
                 pendientes_fifo.append([dia, descuento_puesto])
 
             abono_puesto = Decimal((fact.abono_puesto_dia if fact else (ep.abono_puesto if ep else 0)) or 0)
@@ -5050,6 +5247,13 @@ def reporte_ajuste_diario_unificado(request):
 
             pendiente_empleado = max(generado - pagado_total, Decimal(0))
             deuda_puesto_dia_pendiente = max(Decimal(pendiente_por_fecha.get(dia, Decimal(0)) or 0), Decimal(0))
+            # Fallback: if FIFO didn't capture this day (e.g. manual debt with skip=False),
+            # use the stored saldo_puesto_pendiente — but ONLY if the employee still has
+            # real outstanding debt (per SaldoDeudaPuesto). If saldo_actual==0 the employee
+            # paid off all debt in a later liquidation; historical records must not re-appear.
+            saldo_actual_est = saldo_puesto_actual_map.get(est_id, Decimal(0))
+            if deuda_puesto_dia_pendiente == Decimal(0) and deuda_puesto > Decimal(0) and saldo_actual_est > 0:
+                deuda_puesto_dia_pendiente = deuda_puesto
             abono_puesto_aplicado_fifo = max(Decimal(aplicado_por_fecha.get(dia, Decimal(0)) or 0), Decimal(0))
 
             if solo_deuda_abierta and pendiente_empleado <= 0 and deuda_puesto_dia_pendiente <= 0 and cobro_consumo <= 0:
@@ -5081,6 +5285,8 @@ def reporte_ajuste_diario_unificado(request):
                     'deuda_puesto_dia_cancelada': float(deuda_puesto_dia_pendiente) <= 0.005,
                     'deuda_puesto_arrastre_inicial': float(max(Decimal(fifo_est.get('arrastre_inicial', 0) or 0), Decimal(0))),
                     'deuda_puesto_arrastre_actual': float(max(Decimal(fifo_est.get('arrastre_final', 0) or 0), Decimal(0))),
+                    'saldo_puesto_total': float(saldo_puesto_actual_map.get(est_id, Decimal(0))),
+                    'saldo_consumo_total': float(saldo_consumo_actual_map.get(est_id, Decimal(0))),
                 }
             )
 

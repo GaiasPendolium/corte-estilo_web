@@ -810,3 +810,37 @@ class FactLiquidacionEstilistaDia(models.Model):
 
     def __str__(self):
         return f"{self.estilista.nombre} {self.fecha} v{self.version} ({'vigente' if self.vigente else 'historico'})"
+
+
+class SaldoDeudaPuesto(models.Model):
+    """
+    Una fila por empleado. Fuente de verdad del saldo acumulado de deuda de puesto
+    y deuda de consumo (facturas internas). Se incrementa/decrementa en cada operación
+    para que bi_resumen siempre lea el valor correcto sin depender del filtro de fechas.
+    """
+    estilista = models.OneToOneField(
+        Estilista,
+        on_delete=models.CASCADE,
+        related_name='saldo_deuda_puesto',
+        verbose_name='Estilista',
+    )
+    saldo = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        verbose_name='Saldo acumulado deuda de puesto',
+    )
+    saldo_consumo = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        verbose_name='Saldo acumulado consumo empleado (facturas)',
+    )
+    actualizado_en = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Saldo deuda de puesto'
+        verbose_name_plural = 'Saldos deuda de puesto'
+
+    def __str__(self):
+        return f"{self.estilista.nombre}: puesto=${self.saldo} consumo=${self.saldo_consumo}"
