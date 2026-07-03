@@ -1476,10 +1476,14 @@ class VentaProductoViewSet(viewsets.ModelViewSet):
                 v.save(update_fields=['factura_texto'])
 
             if tipo_operacion == 'consumo_empleado' and deuda_obj:
+                saldo_anterior_deuda = Decimal(deuda_obj.saldo_pendiente or 0)
                 deuda_obj.total_cargo = total_transaccion
                 deuda_obj.fecha_hora = fecha_referencia
                 _recalcular_estado_deuda(deuda_obj)
                 deuda_obj.save(update_fields=['total_cargo', 'saldo_pendiente', 'estado', 'fecha_hora'])
+                _ajustar_saldo_consumo_consolidado(
+                    deuda_obj.estilista_id, saldo_anterior_deuda, Decimal(deuda_obj.saldo_pendiente or 0)
+                )
 
         output_serializer = self.get_serializer(nuevas_ventas, many=True)
         return Response(
@@ -2660,6 +2664,23 @@ def _recalcular_estado_deuda(deuda):
         deuda.estado = 'pendiente'
 
 
+def _ajustar_saldo_consumo_consolidado(estilista_id, saldo_anterior, saldo_nuevo):
+    """
+    Ajusta SaldoDeudaPuesto.saldo_consumo (el total consolidado que usa Ajuste
+    Diario) por el delta cuando el saldo_pendiente de una DeudaConsumoEmpleado
+    cambia FUERA del flujo normal de creacion/abono (edicion o eliminacion de
+    factura de consumo, que recalculan saldo_pendiente directamente).
+    """
+    if not estilista_id:
+        return
+    delta = Decimal(saldo_nuevo or 0) - Decimal(saldo_anterior or 0)
+    if delta == 0:
+        return
+    saldo_obj, _ = SaldoDeudaPuesto.objects.get_or_create(estilista_id=estilista_id)
+    saldo_obj.saldo_consumo = max(Decimal(saldo_obj.saldo_consumo or 0) + delta, Decimal(0))
+    saldo_obj.save()
+
+
 def _sincronizar_deuda_desde_items(deuda):
     """Sincroniza total_cargo/estado según los items de consumo aún existentes."""
     if not deuda:
@@ -2668,6 +2689,9 @@ def _sincronizar_deuda_desde_items(deuda):
     # Los cargos manuales (CARGO-*) no tienen items de venta por diseño; no sincronizar.
     if str(deuda.numero_factura or '').startswith('CARGO-'):
         return
+
+    estilista_id = deuda.estilista_id
+    saldo_anterior = Decimal(deuda.saldo_pendiente or 0)
 
     items_consumo_qs = deuda.ventas_items.filter(tipo_operacion='consumo_empleado')
     total_cargo_real = Decimal(items_consumo_qs.aggregate(total=Sum('total'))['total'] or 0)
@@ -2678,16 +2702,19 @@ def _sincronizar_deuda_desde_items(deuda):
     if total_cargo_real <= 0:
         if total_abonado <= 0:
             deuda.delete()
+            _ajustar_saldo_consumo_consolidado(estilista_id, saldo_anterior, Decimal(0))
             return
         deuda.total_cargo = Decimal(0)
         deuda.saldo_pendiente = Decimal(0)
         deuda.estado = 'cancelado'
         deuda.save(update_fields=['total_cargo', 'saldo_pendiente', 'estado'])
+        _ajustar_saldo_consumo_consolidado(estilista_id, saldo_anterior, Decimal(0))
         return
 
     deuda.total_cargo = total_cargo_real
     _recalcular_estado_deuda(deuda)
     deuda.save(update_fields=['total_cargo', 'saldo_pendiente', 'estado'])
+    _ajustar_saldo_consumo_consolidado(estilista_id, saldo_anterior, Decimal(deuda.saldo_pendiente or 0))
 
 
 @api_view(['POST'])
