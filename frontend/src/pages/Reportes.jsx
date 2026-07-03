@@ -193,7 +193,8 @@ const Reportes = () => {
   const [diasPagoSeleccionadosByEstilista, setDiasPagoSeleccionadosByEstilista] = useState({});
   const [diasDeudaPuestoSeleccionadosByEstilista, setDiasDeudaPuestoSeleccionadosByEstilista] = useState({});
   const [facturasDeudaSeleccionadasByEstilista, setFacturasDeudaSeleccionadasByEstilista] = useState({});
-  const [aplicandoPagoMasivo, setAplicandoPagoMasivo] = useState(false);
+  const [montoAbonoPuestoByEstilista, setMontoAbonoPuestoByEstilista] = useState({});
+  const [aplicandoLiquidarPago, setAplicandoLiquidarPago] = useState(false);
   const [aplicandoLiquidarDeudaPuesto, setAplicandoLiquidarDeudaPuesto] = useState(false);
   const [aplicandoCancelarDeudaPuesto, setAplicandoCancelarDeudaPuesto] = useState(false);
   const [aplicandoLiquidarFacturas, setAplicandoLiquidarFacturas] = useState(false);
@@ -518,6 +519,13 @@ const Reportes = () => {
     });
   };
 
+  const seleccionarTodosDiasPago = (estilistaId, dias) => {
+    const estId = Number(estilistaId || 0);
+    if (!estId) return;
+    const fechas = (dias || []).map((d) => String(d.fecha || '')).filter(Boolean);
+    setDiasPagoSeleccionadosByEstilista((prev) => ({ ...prev, [estId]: fechas }));
+  };
+
   const limpiarDiasPagoSeleccionados = (estilistaId) => {
     const estId = Number(estilistaId || 0);
     if (!estId) return;
@@ -580,63 +588,34 @@ const Reportes = () => {
     setFacturasDeudaSeleccionadasByEstilista((prev) => ({ ...prev, [estId]: [] }));
   };
 
-  const marcarDiasSeleccionadosComoPago = async () => {
+  const liquidarPagoSeleccionados = async () => {
     const estId = Number(estilistaActivoAjuste || 0);
     if (!estId) {
       toast.info('Selecciona un empleado en el panel izquierdo.');
       return;
     }
-
     const fechasSeleccionadas = diasPagoSeleccionadosByEstilista[estId] || [];
     if (fechasSeleccionadas.length === 0) {
-      toast.info('Selecciona al menos un día no liquidado para marcarlo como pago.');
+      toast.info('Selecciona al menos un día con pago pendiente.');
       return;
     }
 
-    setAplicandoPagoMasivo(true);
+    setAplicandoLiquidarPago(true);
     try {
-      for (const fechaSel of fechasSeleccionadas) {
-        const fila = (ajusteDiarioRows || []).find(
-          (r) => Number(r.estilista_id) === estId && String(r.fecha || '') === String(fechaSel || '')
-        );
-        if (!fila) continue;
-
-        const key = `${fila.estilista_id}|${fila.fecha}`;
-        const edit = ajusteDiarioEditsByKey[key] || {};
-        const aplicaComisionRow = Boolean(edit.aplica_comision_ventas ?? fila.aplica_comision_ventas ?? true);
-        const generadoConComision = Number((fila.generado_total_con_comision ?? fila.generado_total) || 0);
-        const generadoSinComision = Number((fila.generado_total_sin_comision ?? fila.generado_total) || 0);
-        const generadoObjetivo = Math.max(aplicaComisionRow ? generadoConComision : generadoSinComision, 0);
-        const consumoActual = Math.max(Number(fila.cobro_consumo_dia || 0), 0);
-        const consumoObjetivo = toMontoNoNegativo(edit.cobro_consumo_objetivo ?? fila.cobro_consumo_dia ?? 0);
-        const extraConsumo = Math.max(consumoObjetivo - consumoActual, 0);
-
-        await reportesService.liquidarOperacionIntegral({
-          estilista_id: fila.estilista_id,
-          fecha: fila.fecha,
-          pago_efectivo: generadoObjetivo,
-          pago_nequi: 0,
-          pago_daviplata: 0,
-          pago_otros: 0,
-          abono_puesto: toMontoNoNegativo(edit.abono_puesto ?? fila.abono_puesto),
-          medio_abono_puesto: edit.medio_abono_puesto || fila.medio_abono_puesto || 'efectivo',
-          aplica_comision_ventas: aplicaComisionRow,
-          forzar_reemplazo_dia: true,
-          consumo_monto: extraConsumo,
-          deuda_ids: [],
-          medio_cobro_consumo: edit.medio_cobro_consumo || 'efectivo',
-          notas: `Marcado como pago desde ajuste diario ${fila.fecha}`,
-        });
-      }
-
+      // Este endpoint SOLO toca el pago al empleado: no modifica abono_puesto,
+      // saldo_puesto_pendiente ni facturas de consumo interno.
+      const resp = await reportesService.liquidarPagoEmpleadoDias({
+        estilista_id: estId,
+        fechas: fechasSeleccionadas,
+      });
       limpiarDiasPagoSeleccionados(estId);
-      toast.success('Días seleccionados actualizados como pago.');
+      toast.success(resp?.mensaje || 'Pago liquidado correctamente.');
       await Promise.all([cargarTodo(), cargarCarteraLiquidacionGlobal(), cargarAjusteDiarioUnificado()]);
     } catch (error) {
-      const msg = error?.response?.data?.error || error?.message || 'No se pudo aplicar el cambio masivo a pago.';
+      const msg = error?.response?.data?.error || error?.message || 'No se pudo liquidar el pago.';
       toast.error(String(msg));
     } finally {
-      setAplicandoPagoMasivo(false);
+      setAplicandoLiquidarPago(false);
     }
   };
 
@@ -648,33 +627,23 @@ const Reportes = () => {
       toast.warning('Selecciona al menos un día de deuda de puesto para liquidar.');
       return;
     }
-    const detalle = detallePendientesAjuste.find((x) => Number(x.estilista_id) === estId);
-    if (!detalle) return;
+
+    // Monto vacío = liquidar completo cada día seleccionado. Con monto, se abona
+    // de la fecha más antigua a la más reciente entre los seleccionados. Todo se
+    // resuelve en el backend en una sola operación atómica: no toca pago al
+    // empleado ni consumo interno en ningún momento.
+    const montoIngresado = toMontoNoNegativo(montoAbonoPuestoByEstilista[estId]);
 
     setAplicandoLiquidarDeudaPuesto(true);
     try {
-      for (const fecha of fechasSeleccionadas) {
-        const diaDeuda = detalle.dias_deuda_puesto.find((d) => String(d.fecha) === String(fecha));
-        if (!diaDeuda) continue;
-        await reportesService.liquidarOperacionIntegral({
-          estilista_id: estId,
-          fecha,
-          pago_efectivo: 0,
-          pago_nequi: 0,
-          pago_daviplata: 0,
-          pago_otros: 0,
-          abono_puesto: Number(diaDeuda.deuda_puesto_dia || 0),
-          medio_abono_puesto: 'efectivo',
-          aplica_comision_ventas: false,
-          forzar_reemplazo_dia: true,
-          skip_descuento_puesto: false,
-          consumo_monto: 0,
-          deuda_ids: [],
-          notas: `Deuda de puesto liquidada desde Ajuste Diario (${fecha})`,
-        });
-      }
+      const resp = await reportesService.abonarDeudaPuestoDias({
+        estilista_id: estId,
+        fechas: fechasSeleccionadas,
+        monto: montoIngresado,
+      });
       setDiasDeudaPuestoSeleccionadosByEstilista((prev) => ({ ...prev, [estId]: [] }));
-      toast.success('Deuda de puesto liquidada correctamente.');
+      setMontoAbonoPuestoByEstilista((prev) => ({ ...prev, [estId]: '' }));
+      toast.success(resp?.mensaje || 'Deuda de puesto actualizada correctamente.');
       await Promise.all([cargarAjusteDiarioUnificado(), cargarCarteraLiquidacionGlobal()]);
     } catch (error) {
       const msg = error?.response?.data?.error || error?.message || 'No se pudo liquidar la deuda de puesto.';
@@ -3995,7 +3964,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 min-w-[320px]">
                     <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
                       <p className="text-xs text-amber-700">Pendiente pago</p>
-                      <p className="text-lg font-black text-amber-900">{formatMoney(detallePendienteActivoAjuste.total_pendiente_pago)}</p>
+                      <p className="text-lg font-black text-amber-900">{formatMoney(detallePendienteActivoAjuste.total_pendiente_pago || 0)}</p>
                     </div>
                     <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2">
                       <p className="text-xs text-rose-700">Deuda puesto</p>
@@ -4013,24 +3982,33 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                 <div className="rounded-2xl border border-slate-200 bg-white p-4">
                   <div className="flex items-center justify-between gap-2">
                     <div>
-                      <p className="text-sm font-semibold text-slate-900">Días no liquidados</p>
-                      <p className="text-xs text-slate-500 mt-1">Selecciona con checkbox los días a marcar como pago.</p>
+                      <p className="text-sm font-semibold text-slate-900">Días con pago pendiente</p>
+                      <p className="text-xs text-slate-500 mt-1">Ya se le pagó al empleado en caja pero no quedó guardado en Liquidación Empleado.</p>
                     </div>
-                    <button
-                      type="button"
-                      className="btn-secondary !py-1 !px-2 text-xs"
-                      onClick={() => limpiarDiasPagoSeleccionados(detallePendienteActivoAjuste.estilista_id)}
-                    >
-                      Limpiar
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        className="btn-secondary !py-1 !px-2 text-xs"
+                        onClick={() => seleccionarTodosDiasPago(detallePendienteActivoAjuste.estilista_id, detallePendienteActivoAjuste.dias_no_liquidados)}
+                      >
+                        Todos
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-secondary !py-1 !px-2 text-xs"
+                        onClick={() => limpiarDiasPagoSeleccionados(detallePendienteActivoAjuste.estilista_id)}
+                      >
+                        Limpiar
+                      </button>
+                    </div>
                   </div>
                   <div className="mt-3 space-y-2 max-h-64 overflow-y-auto pr-1">
-                    {detallePendienteActivoAjuste.dias_no_liquidados.length === 0 && <p className="text-xs text-slate-500">Sin días pendientes.</p>}
+                    {detallePendienteActivoAjuste.dias_no_liquidados.length === 0 && <p className="text-xs text-slate-500">Sin días con pago pendiente.</p>}
                     {detallePendienteActivoAjuste.dias_no_liquidados.map((d) => {
                       const estId = Number(detallePendienteActivoAjuste.estilista_id);
                       const checked = (diasPagoSeleccionadosByEstilista[estId] || []).includes(String(d.fecha || ''));
                       return (
-                        <label key={`dia-no-liq-${estId}-${d.fecha}`} className="flex items-start gap-2 rounded-xl border border-slate-200 p-2 cursor-pointer">
+                        <label key={`dia-pago-${estId}-${d.fecha}`} className="flex items-start gap-2 rounded-xl border border-slate-200 p-2 cursor-pointer">
                           <input
                             type="checkbox"
                             checked={checked}
@@ -4147,18 +4125,34 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                 <p className="text-sm font-semibold text-slate-900">Acciones sobre seleccionados</p>
                 <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
-                    <p className="text-xs font-semibold text-amber-800 mb-2">Días no liquidados ({(diasPagoSeleccionadosByEstilista[Number(detallePendienteActivoAjuste.estilista_id)] || []).length} sel.)</p>
+                    <p className="text-xs font-semibold text-amber-800 mb-2">Días con pago pendiente ({(diasPagoSeleccionadosByEstilista[Number(detallePendienteActivoAjuste.estilista_id)] || []).length} sel.)</p>
+                    <p className="text-[11px] text-amber-700 mb-2">Solo registra el pago al empleado. No toca deuda de puesto ni consumo interno.</p>
                     <button
                       type="button"
                       className="btn-primary w-full text-xs !py-2"
-                      onClick={marcarDiasSeleccionadosComoPago}
-                      disabled={aplicandoPagoMasivo}
+                      onClick={liquidarPagoSeleccionados}
+                      disabled={aplicandoLiquidarPago}
                     >
-                      {aplicandoPagoMasivo ? 'Aplicando...' : 'Marcar como pagado'}
+                      {aplicandoLiquidarPago ? 'Aplicando...' : 'Marcar como liquidado'}
                     </button>
                   </div>
                   <div className="rounded-xl border border-rose-200 bg-rose-50 p-3">
                     <p className="text-xs font-semibold text-rose-800 mb-2">Deuda de puesto ({(diasDeudaPuestoSeleccionadosByEstilista[Number(detallePendienteActivoAjuste.estilista_id)] || []).length} sel.)</p>
+                    <label className="block text-[11px] text-rose-700 mb-2">
+                      Monto a abonar (opcional; cubre de la fecha más antigua a la más reciente entre los seleccionados)
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        className="input-field mt-1 !py-1 text-xs"
+                        placeholder="Dejar vacío = liquidar todos por completo"
+                        value={montoAbonoPuestoByEstilista[Number(detallePendienteActivoAjuste.estilista_id)] || ''}
+                        onChange={(e) => {
+                          const estId = Number(detallePendienteActivoAjuste.estilista_id);
+                          const valor = String(e.target.value || '').replace(/[^\d.]/g, '');
+                          setMontoAbonoPuestoByEstilista((prev) => ({ ...prev, [estId]: valor }));
+                        }}
+                      />
+                    </label>
                     <div className="flex gap-2">
                       <button
                         type="button"
@@ -4166,7 +4160,7 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                         onClick={liquidarDeudaPuestoSeleccionados}
                         disabled={aplicandoLiquidarDeudaPuesto || aplicandoCancelarDeudaPuesto}
                       >
-                        {aplicandoLiquidarDeudaPuesto ? '...' : 'Liquidar'}
+                        {aplicandoLiquidarDeudaPuesto ? '...' : 'Liquidar/Abonar'}
                       </button>
                       <button
                         type="button"

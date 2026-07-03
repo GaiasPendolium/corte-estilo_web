@@ -21,6 +21,19 @@ const QZ_SIGN_ENDPOINT = (
 
 let securityConfigured = false;
 
+const CONNECT_TIMEOUT_MS = Number(import.meta.env.VITE_QZ_CONNECT_TIMEOUT_MS || 6000);
+const PRINT_TIMEOUT_MS = Number(import.meta.env.VITE_QZ_PRINT_TIMEOUT_MS || 10000);
+
+// Evita que una conexion "zombie" (QZ Tray caido/sin responder) deje la
+// promesa colgada para siempre y trabe la pantalla en "Finalizando...".
+const withTimeout = (promise, ms, message) => {
+  let timeoutId;
+  const timeout = new Promise((_resolve, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timeoutId));
+};
+
 const toByte = (value, fallback = 0) => {
   const n = Number(value);
   if (Number.isNaN(n)) return fallback;
@@ -119,21 +132,33 @@ const configureSecurity = () => {
   securityConfigured = true;
 };
 
-const connectIfNeeded = async () => {
+const connectIfNeeded = async (forceReconnect = false) => {
   configureSecurity();
+
+  if (forceReconnect && qz.websocket.isActive()) {
+    try {
+      await withTimeout(qz.websocket.disconnect(), CONNECT_TIMEOUT_MS, 'Timeout al desconectar QZ Tray');
+    } catch (_error) {
+      // Ignorar: si no se puede cerrar limpio, igual intentamos reconectar.
+    }
+  }
 
   if (qz.websocket.isActive()) {
     return;
   }
 
-  await qz.websocket.connect({
-    host: DEFAULT_WS_HOST,
-    usingSecure: true,
-    port: {
-      secure: [DEFAULT_WS_PORT_SECURE],
-      insecure: [DEFAULT_WS_PORT_INSECURE],
-    },
-  });
+  await withTimeout(
+    qz.websocket.connect({
+      host: DEFAULT_WS_HOST,
+      usingSecure: true,
+      port: {
+        secure: [DEFAULT_WS_PORT_SECURE],
+        insecure: [DEFAULT_WS_PORT_INSECURE],
+      },
+    }),
+    CONNECT_TIMEOUT_MS,
+    'Tiempo de espera agotado al conectar con QZ Tray. Verifica que este ejecutandose.'
+  );
 };
 
 const getStoredPrinter = () => localStorage.getItem(PRINTER_STORAGE_KEY) || '';
@@ -200,8 +225,8 @@ const resolvePrinterName = async (preferredName) => {
 // (ej: comando de cajón) en el mismo trabajo para evitar que la impresora
 // ignore el comando cuando llega en un trabajo separado.
 const printRaw = async (rawData, printerName, extraBase64Items = []) => {
-  try {
-    await connectIfNeeded();
+  const attempt = async (forceReconnect) => {
+    await connectIfNeeded(forceReconnect);
     const resolvedPrinter = await resolvePrinterName(printerName);
 
     if (!resolvedPrinter) {
@@ -218,17 +243,27 @@ const printRaw = async (rawData, printerName, extraBase64Items = []) => {
       ...extraBase64Items.map((b64) => ({ type: 'raw', format: 'base64', data: b64 })),
     ];
 
-    await qz.print(config, dataItems);
+    await withTimeout(qz.print(config, dataItems), PRINT_TIMEOUT_MS, 'Tiempo de espera agotado al imprimir el ticket.');
     return { printer: resolvedPrinter };
-  } catch (error) {
-    throw new Error(normalizeError(error));
+  };
+
+  try {
+    return await attempt(false);
+  } catch (firstError) {
+    console.error('[qzTrayService] Fallo el primer intento de impresion, reintentando con reconexion:', firstError);
+    try {
+      return await attempt(true);
+    } catch (secondError) {
+      console.error('[qzTrayService] Fallo el reintento de impresion:', secondError);
+      throw new Error(normalizeError(secondError));
+    }
   }
 };
 
 // Abre cajón solo, usando base64 para preservar bytes binarios exactos.
 const openDrawerRaw = async (printerName, drawerBase64) => {
-  try {
-    await connectIfNeeded();
+  const attempt = async (forceReconnect) => {
+    await connectIfNeeded(forceReconnect);
     const resolvedPrinter = await resolvePrinterName(printerName);
 
     if (!resolvedPrinter) {
@@ -236,10 +271,24 @@ const openDrawerRaw = async (printerName, drawerBase64) => {
     }
 
     const config = qz.configs.create(resolvedPrinter, { copies: 1 });
-    await qz.print(config, [{ type: 'raw', format: 'base64', data: drawerBase64 }]);
+    await withTimeout(
+      qz.print(config, [{ type: 'raw', format: 'base64', data: drawerBase64 }]),
+      PRINT_TIMEOUT_MS,
+      'Tiempo de espera agotado al abrir el cajon.'
+    );
     return { printer: resolvedPrinter };
-  } catch (error) {
-    throw new Error(normalizeError(error));
+  };
+
+  try {
+    return await attempt(false);
+  } catch (firstError) {
+    console.error('[qzTrayService] Fallo el primer intento de abrir cajon, reintentando con reconexion:', firstError);
+    try {
+      return await attempt(true);
+    } catch (secondError) {
+      console.error('[qzTrayService] Fallo el reintento de abrir cajon:', secondError);
+      throw new Error(normalizeError(secondError));
+    }
   }
 };
 

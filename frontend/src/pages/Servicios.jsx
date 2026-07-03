@@ -32,17 +32,35 @@ const extractRows = (payload) => {
   return [];
 };
 
+// Trae la primera pagina para conocer el total y luego pide el resto de
+// paginas en paralelo (en lotes) en vez de una por una: con listas grandes
+// (clientes, servicios, productos) esto evita que "Operacion diaria" tarde
+// varios segundos en cargar por ir pagina por pagina de forma secuencial.
+const PAGE_FETCH_CONCURRENCY = 4;
+
 const fetchAllRows = async (getAllFn, params = {}) => {
-  let page = 1;
-  const all = [];
+  const firstPayload = await getAllFn({ ...params, page: 1 });
+  const firstRows = extractRows(firstPayload);
+  const count = Number(firstPayload?.count);
+  const pageSize = firstRows.length;
 
-  while (true) {
-    const payload = await getAllFn({ ...params, page });
-    const rows = extractRows(payload);
-    all.push(...rows);
+  if (!firstPayload?.next || !Number.isFinite(count) || !pageSize) {
+    return firstRows;
+  }
 
-    if (!payload?.next || rows.length === 0) break;
-    page += 1;
+  const totalPages = Math.ceil(count / pageSize);
+  const remainingPages = [];
+  for (let page = 2; page <= totalPages; page += 1) {
+    remainingPages.push(page);
+  }
+
+  const all = firstRows.slice();
+  for (let i = 0; i < remainingPages.length; i += PAGE_FETCH_CONCURRENCY) {
+    const batch = remainingPages.slice(i, i + PAGE_FETCH_CONCURRENCY);
+    const batchResults = await Promise.all(
+      batch.map((page) => getAllFn({ ...params, page }).then(extractRows))
+    );
+    batchResults.forEach((rows) => all.push(...rows));
   }
 
   return all;
@@ -667,7 +685,9 @@ const Servicios = () => {
       toast.success('Cliente registrado');
       setNuevoCliente({ nombre: '', telefono: '', fecha_nacimiento: '' });
       setShowNuevoClienteModal(false);
-      await cargarTodo();
+      cargarTodo().catch((reloadError) => {
+        console.error('[Servicios] Fallo al recargar datos despues de crear cliente:', reloadError);
+      });
     } catch (error) {
       toast.error('No se pudo registrar el cliente');
     } finally {
@@ -904,7 +924,13 @@ const Servicios = () => {
       });
       setProductoAdicionalBusqueda('');
       setProductoAdicionalSugerencias([]);
-      await cargarTodo();
+      // No se espera aqui: la factura ya quedo guardada, asi que no tiene sentido
+      // dejar el boton en "Finalizando..." mientras se recarga toda la lista en
+      // segundo plano (eso era lo que hacia parecer que la pantalla se quedaba
+      // cargando despues de "Revisar y finalizar").
+      cargarTodo().catch((reloadError) => {
+        console.error('[Servicios] Fallo al recargar datos despues de finalizar:', reloadError);
+      });
     } catch (error) {
       const msg = error?.response?.data?.error || 'No se pudo finalizar el servicio';
       toast.error(msg);
@@ -1159,7 +1185,12 @@ const Servicios = () => {
       setProductoVentaSeleccionado(null);
       setVentaSugerencias([]);
       setCarrito([]);
-      await cargarTodo();
+      // Igual que en finalizarServicio: la venta ya quedo guardada, la recarga
+      // completa de listas se hace en segundo plano para no dejar el boton
+      // trabado esperando la recarga.
+      cargarTodo().catch((reloadError) => {
+        console.error('[Servicios] Fallo al recargar datos despues de registrar venta:', reloadError);
+      });
     } catch (error) {
       const msg = error?.response?.data?.cantidad?.[0] || error?.response?.data?.detail || 'No se pudo registrar la venta';
       toast.error(String(msg));

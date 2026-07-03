@@ -484,6 +484,128 @@ def calcular_liquidacion_dia_estilista(estilista, fecha_dia, aplica_comision_ven
     }
 
 
+def _precargar_datos_liquidacion_rango(estilista_ids, fecha_inicio_dt, fecha_fin_dt):
+    """
+    Trae en bloque (4 queries totales, sin importar cuantos estilistas/dias haya)
+    todo lo que `calcular_liquidacion_dia_estilista` necesita, agrupado por
+    (estilista_id, fecha_operativa). Evita el N+1 de llamar esa funcion una vez
+    por cada combinacion estilista/dia (que antes disparaba 4 queries cada vez).
+    """
+    servicios_por_dia = defaultdict(list)
+    servicios_qs = ServicioRealizado.objects.select_related('servicio', 'estilista').filter(
+        estado='finalizado',
+        estilista_id__in=estilista_ids,
+        fecha_hora__date__gte=fecha_inicio_dt,
+        fecha_hora__date__lte=fecha_fin_dt,
+    )
+    for srv in servicios_qs:
+        f = _fecha_operativa_desde_dt(srv.fecha_hora)
+        if f:
+            servicios_por_dia[(int(srv.estilista_id), f)].append(srv)
+
+    adicionales_por_dia = defaultdict(list)
+    adicionales_qs = ServicioRealizadoAdicional.objects.filter(
+        estilista_id__in=estilista_ids,
+        servicio_realizado__estado='finalizado',
+        servicio_realizado__fecha_hora__date__gte=fecha_inicio_dt,
+        servicio_realizado__fecha_hora__date__lte=fecha_fin_dt,
+    ).select_related('servicio_realizado')
+    for ad in adicionales_qs:
+        f = _fecha_operativa_desde_dt(ad.servicio_realizado.fecha_hora)
+        if f:
+            adicionales_por_dia[(int(ad.estilista_id), f)].append(ad)
+
+    ventas_por_dia = defaultdict(list)
+    ventas_qs = VentaProducto.objects.select_related('producto').filter(
+        tipo_operacion='venta',
+        estilista_id__in=estilista_ids,
+        fecha_hora__date__gte=fecha_inicio_dt,
+        fecha_hora__date__lte=fecha_fin_dt,
+    )
+    for venta in ventas_qs:
+        f = _fecha_operativa_desde_dt(venta.fecha_hora)
+        if f:
+            ventas_por_dia[(int(venta.estilista_id), f)].append(venta)
+
+    servicios_producto_adicional_por_dia = defaultdict(list)
+    prod_ad_qs = ServicioRealizado.objects.select_related('adicional_otro_producto').filter(
+        estado='finalizado',
+        fecha_hora__date__gte=fecha_inicio_dt,
+        fecha_hora__date__lte=fecha_fin_dt,
+        adicional_otro_producto__isnull=False,
+        adicional_otro_estilista_id__in=estilista_ids,
+    )
+    for srv in prod_ad_qs:
+        f = _fecha_operativa_desde_dt(srv.fecha_hora)
+        if f:
+            servicios_producto_adicional_por_dia[(int(srv.adicional_otro_estilista_id), f)].append(srv)
+
+    return {
+        'servicios': servicios_por_dia,
+        'adicionales': adicionales_por_dia,
+        'ventas': ventas_por_dia,
+        'servicios_producto_adicional': servicios_producto_adicional_por_dia,
+    }
+
+
+def _calcular_liquidacion_dia_estilista_bulk(datos_precargados, estilista, fecha_dia, aplica_comision_ventas=True):
+    """
+    Misma formula que `calcular_liquidacion_dia_estilista`, pero usando datos
+    precargados en bloque (ver `_precargar_datos_liquidacion_rango`) en vez de
+    lanzar 4 queries nuevas por cada combinacion estilista/dia.
+    """
+    key = (int(estilista.id), fecha_dia)
+
+    servicios_base = Decimal(0)
+    for srv in datos_precargados['servicios'].get(key, []):
+        servicios_base += _monto_estilista_resuelto(srv)
+
+    comisiones_adicionales = Decimal(0)
+    for ad in datos_precargados['adicionales'].get(key, []):
+        valor_cobrado = Decimal(ad.valor_cobrado or 0)
+        pct_est = Decimal(ad.porcentaje_establecimiento or 0) if ad.aplica_porcentaje_establecimiento else Decimal(0)
+        pct_est = max(Decimal(0), min(Decimal(100), pct_est))
+        monto_estilista = valor_cobrado - (valor_cobrado * pct_est / Decimal(100))
+        comisiones_adicionales += monto_estilista
+
+    comisiones_ventas_caja = Decimal(0)
+    for venta in datos_precargados['ventas'].get(key, []):
+        monto_venta = Decimal(venta.total or 0)
+        pct_comision = Decimal(venta.producto.comision_estilista or 0)
+        pct_comision = max(Decimal(0), min(Decimal(100), pct_comision))
+        comisiones_ventas_caja += (monto_venta * pct_comision) / Decimal(100)
+
+    comisiones_ventas_servicios = Decimal(0)
+    for srv in datos_precargados['servicios_producto_adicional'].get(key, []):
+        cantidad = Decimal(srv.adicional_otro_cantidad or 1)
+        precio_venta = Decimal(srv.adicional_otro_producto.precio_venta or 0)
+        monto_venta = precio_venta * cantidad
+        pct_comision = Decimal(srv.adicional_otro_producto.comision_estilista or 0)
+        pct_comision = max(Decimal(0), min(Decimal(100), pct_comision))
+        comisiones_ventas_servicios += (monto_venta * pct_comision) / Decimal(100)
+
+    comisiones_ventas = comisiones_ventas_caja + comisiones_ventas_servicios
+    if not aplica_comision_ventas:
+        comisiones_ventas = Decimal(0)
+
+    ganancias_totales = servicios_base + comisiones_adicionales + comisiones_ventas
+    base_puesto = servicios_base + comisiones_adicionales
+    descuento_puesto = _descuento_puesto_dia(estilista, base_puesto)
+    total_pagable = max(ganancias_totales - descuento_puesto, Decimal(0))
+
+    return {
+        'ganancias_totales': ganancias_totales,
+        'servicios_base': servicios_base,
+        'comisiones_adicionales': comisiones_adicionales,
+        'comisiones_ventas_caja': comisiones_ventas_caja,
+        'comisiones_ventas_servicios': comisiones_ventas_servicios,
+        'comisiones_ventas': comisiones_ventas,
+        'aplica_comision_ventas': bool(aplica_comision_ventas),
+        'descuento_puesto': descuento_puesto,
+        'total_pagable': total_pagable,
+    }
+
+
 def _calcular_totales_dia_estilista(estilista, fecha_dia):
     """LEGACY: Para compatibilidad con código antiguo"""
     calc = calcular_liquidacion_dia_estilista(estilista, fecha_dia)
@@ -4197,6 +4319,288 @@ def cancelar_deuda_puesto_dias(request):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
+def abonar_deuda_puesto_dias(request):
+    """
+    Abona (o liquida completo si no se envia monto) deuda de puesto de dias
+    especificos, aplicando el abono de la fecha MAS ANTIGUA a la MAS RECIENTE
+    entre los dias seleccionados, cubriendo cada uno hasta donde alcance.
+
+    NO usa _liquidar_dia_v2_core: esa funcion esta pensada para procesar "el dia
+    de hoy" contra el saldo heredado del dia anterior, y al forzar el reemplazo
+    de un dia pasado termina descartando lo que ese dia aportaba y sobrescribe el
+    pago al empleado a 0. Esta funcion recalcula la cadena completa de deuda por
+    dia (mismo criterio que el reporte de Ajuste Diario: descuento diferido con
+    skip_descuento_puesto=True, o incremento detectado por carga manual) y la
+    vuelve a guardar de forma consistente, sin tocar pago_efectivo/pago_nequi/
+    pago_daviplata/pago_otros ni facturas de consumo interno en ningun momento.
+
+    POST /api/reportes/estilistas/abonar-deuda-puesto-dias/
+    Body: {"estilista_id": 5, "fechas": ["2026-06-07", "2026-06-30"], "monto": 29000}
+    Si "monto" se omite o es 0 o negativo, liquida completo cada dia seleccionado.
+    """
+    if _es_recepcion(request.user):
+        raise PermissionDenied('Recepción no tiene permiso para abonar deuda de puesto.')
+
+    try:
+        estilista_id = int(request.data.get('estilista_id') or 0)
+        estilista = Estilista.objects.get(id=estilista_id, activo=True)
+    except (ValueError, Estilista.DoesNotExist):
+        return Response({'error': 'Estilista no encontrado.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    fechas_raw = request.data.get('fechas', [])
+    if not fechas_raw or not isinstance(fechas_raw, list):
+        return Response({'error': 'Se requiere una lista de fechas.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    fechas_seleccionadas = set()
+    for f in fechas_raw:
+        try:
+            fechas_seleccionadas.add(datetime.strptime(str(f).strip(), '%Y-%m-%d').date())
+        except Exception:
+            return Response({'error': f'Fecha inválida: {f}'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        monto_raw = request.data.get('monto', 0)
+        monto_abono = max(Decimal(str(monto_raw or 0)), Decimal(0))
+    except Exception:
+        return Response({'error': 'Monto inválido.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        with transaction.atomic():
+            registros = list(
+                EstadoPagoEstilistaDia.objects.filter(estilista=estilista).order_by('fecha')
+            )
+
+            # 1) Reconstruir la cola FIFO real de deuda pendiente por dia, con el
+            # mismo criterio que reporte_ajuste_diario_unificado: un dia aporta
+            # deuda nueva si (a) tiene skip_descuento_puesto=True con descuento>0,
+            # o (b) su saldo acumulado subio respecto al dia anterior sin ser por
+            # ese motivo (carga manual). Los abonos historicos de cada dia ya
+            # consumen la cola en orden, igual que en el reporte.
+            pendientes_fifo = []  # [[fecha, monto_propio_restante], ...]
+            saldo_crudo_anterior = Decimal(0)
+            for ep in registros:
+                skip_desc = bool(ep.skip_descuento_puesto)
+                descuento = max(Decimal(ep.descuento_puesto or 0), Decimal(0))
+                saldo_crudo_dia = max(Decimal(ep.saldo_puesto_pendiente or 0), Decimal(0))
+
+                if descuento > 0 and skip_desc:
+                    pendientes_fifo.append([ep.fecha, descuento])
+                else:
+                    delta_manual = saldo_crudo_dia - saldo_crudo_anterior
+                    if delta_manual > 0:
+                        pendientes_fifo.append([ep.fecha, delta_manual])
+
+                saldo_crudo_anterior = saldo_crudo_dia
+
+                abono_dia = max(Decimal(ep.abono_puesto or 0), Decimal(0))
+                while abono_dia > 0 and pendientes_fifo:
+                    f0, s0 = pendientes_fifo[0]
+                    aplicar = min(s0, abono_dia)
+                    s0 -= aplicar
+                    abono_dia -= aplicar
+                    if s0 <= 0:
+                        pendientes_fifo.pop(0)
+                    else:
+                        pendientes_fifo[0][1] = s0
+
+            pendientes_por_fecha = {}
+            for f, s in pendientes_fifo:
+                pendientes_por_fecha[f] = pendientes_por_fecha.get(f, Decimal(0)) + max(s, Decimal(0))
+
+            # 2) Aplicar el NUEVO abono solo a las fechas seleccionadas, de la mas
+            # antigua a la mas reciente entre ellas.
+            fechas_ordenadas = sorted(fechas_seleccionadas)
+            restante = monto_abono if monto_abono > 0 else None  # None = liquidar completo
+            aplicado_por_fecha = {}
+            total_aplicado = Decimal(0)
+            for f in fechas_ordenadas:
+                pendiente_dia = pendientes_por_fecha.get(f, Decimal(0))
+                if pendiente_dia <= 0:
+                    continue
+                if restante is not None:
+                    if restante <= 0:
+                        break
+                    aplicar = min(pendiente_dia, restante)
+                    restante -= aplicar
+                else:
+                    aplicar = pendiente_dia
+                if aplicar <= 0:
+                    continue
+                aplicado_por_fecha[f] = aplicar
+                pendientes_por_fecha[f] = pendiente_dia - aplicar
+                total_aplicado += aplicar
+
+            if total_aplicado <= 0:
+                return Response(
+                    {'error': 'No hay deuda pendiente en los días seleccionados o el monto no alcanza para cubrir nada.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # 3) Reconstruir el saldo acumulado dia a dia con la deuda YA reducida
+            # por el nuevo abono, y guardar solo los registros que cambiaron.
+            fechas_con_aporte = sorted(pendientes_por_fecha.keys())
+            acumulado = Decimal(0)
+            saldo_final_por_fecha = {}
+            for f in fechas_con_aporte:
+                acumulado += max(pendientes_por_fecha.get(f, Decimal(0)), Decimal(0))
+                saldo_final_por_fecha[f] = acumulado
+
+            saldo_vigente = Decimal(0)
+            actualizados = 0
+            for ep in registros:
+                if ep.fecha in saldo_final_por_fecha:
+                    saldo_vigente = saldo_final_por_fecha[ep.fecha]
+
+                if Decimal(ep.saldo_puesto_pendiente or 0) == saldo_vigente and ep.fecha not in aplicado_por_fecha:
+                    continue
+
+                ep.saldo_puesto_pendiente = saldo_vigente
+                ep.pendiente_puesto = saldo_vigente
+                # No se toca pago_efectivo/pago_nequi/pago_daviplata/pago_otros ni
+                # nada de consumo interno. El estado 'pendiente' (pago al empleado
+                # sin liquidar) tampoco se toca; solo se alterna entre 'debe' y
+                # 'cancelado' segun el nuevo saldo de puesto.
+                if ep.estado != 'pendiente':
+                    ep.estado = 'debe' if saldo_vigente > 0 else 'cancelado'
+                if ep.fecha in aplicado_por_fecha:
+                    notas_actual = str(ep.notas or '')
+                    nota_extra = f'Abono deuda de puesto ${aplicado_por_fecha[ep.fecha]:,.2f} desde Ajuste Diario.'
+                    ep.notas = f'{notas_actual} | {nota_extra}'.strip(' |')[:255]
+                ep.save()
+                actualizados += 1
+
+            # 4) Sincronizar el saldo consolidado (fuente de verdad).
+            saldo_obj, _ = SaldoDeudaPuesto.objects.get_or_create(estilista=estilista)
+            saldo_obj.saldo = max(Decimal(saldo_obj.saldo or 0) - total_aplicado, Decimal(0))
+            saldo_obj.save()
+
+        return Response({
+            'success': True,
+            'mensaje': f'Abono aplicado: ${total_aplicado:,.2f} en {len(aplicado_por_fecha)} día(s).',
+            'total_aplicado': float(total_aplicado),
+            'aplicado_por_fecha': {f.strftime('%Y-%m-%d'): float(v) for f, v in aplicado_por_fecha.items()},
+        }, status=status.HTTP_200_OK)
+    except Exception as e:
+        return Response({'error': f'No se pudo abonar la deuda de puesto: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def liquidar_pago_empleado_dias(request):
+    """
+    Marca como liquidado (pagado) el pago al empleado de uno o mas dias especificos,
+    SIN tocar deuda de puesto (abono_puesto/saldo_puesto_pendiente/skip_descuento_puesto)
+    ni facturas de consumo interno del empleado. Pensado para el caso donde ya se
+    liquido al empleado en la caja pero nunca se guardo el registro en el sistema.
+
+    POST /api/reportes/estilistas/liquidar-pago-empleado-dias/
+
+    Body:
+    {
+        "estilista_id": 5,
+        "fechas": ["2026-06-19", "2026-06-20"]
+    }
+    """
+    if _es_recepcion(request.user):
+        raise PermissionDenied('Recepción no tiene permiso para liquidar pagos de empleado.')
+
+    try:
+        estilista_id = int(request.data.get('estilista_id') or 0)
+        estilista = Estilista.objects.get(id=estilista_id, activo=True)
+    except (ValueError, Estilista.DoesNotExist):
+        return Response({'error': 'Estilista no encontrado.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    fechas_raw = request.data.get('fechas', [])
+    if not fechas_raw or not isinstance(fechas_raw, list):
+        return Response({'error': 'Se requiere una lista de fechas.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    fechas = []
+    for f in fechas_raw:
+        try:
+            fechas.append(datetime.strptime(str(f).strip(), '%Y-%m-%d').date())
+        except Exception:
+            return Response({'error': f'Fecha inválida: {f}'}, status=status.HTTP_400_BAD_REQUEST)
+
+    actualizados = []
+    total_aplicado = Decimal(0)
+    try:
+        with transaction.atomic():
+            for fecha in sorted(fechas):
+                ep = EstadoPagoEstilistaDia.objects.filter(estilista=estilista, fecha=fecha).first()
+                fact = FactLiquidacionEstilistaDia.objects.filter(estilista=estilista, fecha=fecha, vigente=True).first()
+                aplica_comision_ventas = bool(getattr(fact, 'aplica_comision_ventas', True)) if fact else True
+
+                calc = calcular_liquidacion_dia_estilista(estilista, fecha, aplica_comision_ventas=aplica_comision_ventas)
+                generado = Decimal(calc.get('total_pagable') or 0)
+
+                pago_efectivo = Decimal(ep.pago_efectivo or 0) if ep else Decimal(0)
+                pago_nequi = Decimal(ep.pago_nequi or 0) if ep else Decimal(0)
+                pago_daviplata = Decimal(ep.pago_daviplata or 0) if ep else Decimal(0)
+                pago_otros = Decimal(ep.pago_otros or 0) if ep else Decimal(0)
+                pagado_total = pago_efectivo + pago_nequi + pago_daviplata + pago_otros
+
+                gap = max(generado - pagado_total, Decimal(0))
+                if gap <= 0:
+                    continue
+
+                if ep is None:
+                    # Dia sin registro previo: se crea uno nuevo, pero la deuda de puesto
+                    # DEBE arrancar en lo que traiga el dia anterior mas reciente (arrastre),
+                    # nunca en 0 — si el empleado ya tenia deuda acumulada, forzar 0 aqui
+                    # "resetea" la cadena y hace que el dia siguiente con registro propio
+                    # se vea como si esa deuda completa fuera nueva otra vez.
+                    ep_previo = EstadoPagoEstilistaDia.objects.filter(
+                        estilista=estilista, fecha__lt=fecha
+                    ).order_by('-fecha').first()
+                    saldo_arrastrado = max(
+                        Decimal(getattr(ep_previo, 'saldo_puesto_pendiente', None) or getattr(ep_previo, 'pendiente_puesto', 0) or 0),
+                        Decimal(0),
+                    ) if ep_previo else Decimal(0)
+                    ep = EstadoPagoEstilistaDia(
+                        estilista=estilista,
+                        fecha=fecha,
+                        saldo_puesto_pendiente=saldo_arrastrado,
+                        pendiente_puesto=saldo_arrastrado,
+                        abono_puesto=Decimal(0),
+                    )
+
+                ep.ganancias_totales = Decimal(calc.get('ganancias_totales') or 0)
+                ep.descuento_puesto = Decimal(calc.get('descuento_puesto') or 0)
+                ep.total_pagable = generado
+                ep.neto_dia = generado
+                # Solo se toca el pago al empleado; abono_puesto/saldo_puesto_pendiente/
+                # skip_descuento_puesto quedan exactamente como estaban (o como el
+                # arrastre correcto, si el registro se acaba de crear arriba).
+                ep.pago_efectivo = pago_efectivo + gap
+                saldo_puesto_actual = Decimal(ep.saldo_puesto_pendiente or 0)
+                ep.estado = 'debe' if saldo_puesto_actual > 0 else 'cancelado'
+                notas_actual = str(ep.notas or '')
+                nota_extra = f'Pago liquidado desde Ajuste Diario (${gap:,.2f}).'
+                ep.notas = f'{notas_actual} | {nota_extra}'.strip(' |')[:255]
+                ep.usuario_liquida = request.user
+                ep.save()
+
+                if fact is not None:
+                    fact.pago_efectivo = Decimal(fact.pago_efectivo or 0) + gap
+                    fact.pago_total_empleado = Decimal(fact.pago_total_empleado or 0) + gap
+                    fact.estado_liquidacion = ep.estado
+                    fact.save()
+
+                total_aplicado += gap
+                actualizados.append({'fecha': fecha.strftime('%Y-%m-%d'), 'monto_aplicado': float(gap)})
+
+        return Response({
+            'success': True,
+            'mensaje': f'{len(actualizados)} día(s) liquidado(s).',
+            'actualizados': actualizados,
+            'total_aplicado': float(total_aplicado),
+        }, status=status.HTTP_200_OK)
+    except Exception as e:
+        return Response({'error': f'No se pudo liquidar el pago: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
 def cancelar_facturas_deuda_empleado(request):
     """
     Cancela (estado='cancelado', saldo=0) facturas de deuda de consumo de empleado.
@@ -5138,6 +5542,22 @@ def reporte_ajuste_diario_unificado(request):
         saldo_puesto_actual_map = {}
         saldo_consumo_actual_map = {}
 
+    # Precarga en bloque (4 queries totales) + memo cache: evita repetir 4 queries
+    # por cada combinacion estilista/dia (antes se llamaba calcular_liquidacion_dia_estilista
+    # hasta 4 veces por dia -2 en este loop, 2 en el loop de items de abajo- y cada llamada
+    # hacia 4 queries propias; con muchos estilistas/dias esto disparaba miles de queries
+    # y era la causa principal de que "Reportes" tardara tanto en cargar).
+    datos_precargados = _precargar_datos_liquidacion_rango(estilista_ids, fecha_inicio_dt, fecha_fin_dt)
+    calc_cache = {}
+
+    def _calc_memo(est, dia, aplica_comision_ventas):
+        cache_key = (int(est.id), dia, bool(aplica_comision_ventas))
+        if cache_key not in calc_cache:
+            calc_cache[cache_key] = _calcular_liquidacion_dia_estilista_bulk(
+                datos_precargados, est, dia, aplica_comision_ventas
+            )
+        return calc_cache[cache_key]
+
     fifo_por_estilista = {}
     for est in estilistas:
         est_id = int(est.id)
@@ -5155,14 +5575,23 @@ def reporte_ajuste_diario_unificado(request):
         arrastre_inicial = Decimal(arrastre)
         pendientes_fifo = []
         aplicado_por_fecha = defaultdict(Decimal)
+        # Saldo acumulado "crudo" tal como queda guardado en
+        # EstadoPagoEstilistaDia.saldo_puesto_pendiente (siempre es un total corrido,
+        # nunca un valor propio del dia). Se usa solo para DETECTAR cargas manuales de
+        # deuda (ver cargar_deuda_puesto_dia) que no generan descuento_puesto/skip_desc:
+        # un incremento neto en este saldo que el flujo normal no explica. Ese incremento
+        # se encola en la MISMA cola FIFO de abajo para que quede correctamente "envejecido"
+        # por los abonos que lleguen despues (si no, cada dia mostraria el acumulado
+        # completo y liquidar un solo dia cancelaria de golpe deuda de otros dias).
+        saldo_crudo_anterior = arrastre_inicial
 
         for dia in dias_est:
             ep = estados_map.get((est_id, dia))
             fact = facts_map.get((est_id, dia)) if usar_fact else None
             fact_aplica = facts_map_aplica.get((est_id, dia))
 
-            calc_con_comision = calcular_liquidacion_dia_estilista(est, dia, aplica_comision_ventas=True)
-            calc_sin_comision = calcular_liquidacion_dia_estilista(est, dia, aplica_comision_ventas=False)
+            calc_con_comision = _calc_memo(est, dia, True)
+            calc_sin_comision = _calc_memo(est, dia, False)
             aplica_comision_ventas = bool(getattr(fact_aplica, 'aplica_comision_ventas', True)) if fact_aplica else True
             descuento_puesto = Decimal((
                 fact.descuento_puesto_dia if fact else (calc_con_comision.get('descuento_puesto') if aplica_comision_ventas else calc_sin_comision.get('descuento_puesto'))
@@ -5174,6 +5603,22 @@ def reporte_ajuste_diario_unificado(request):
             skip_desc = bool(getattr(ep, 'skip_descuento_puesto', False)) if ep else False
             if descuento_puesto > 0 and skip_desc:
                 pendientes_fifo.append([dia, descuento_puesto])
+            elif ep is not None:
+                saldo_crudo_dia = max(
+                    Decimal(getattr(ep, 'saldo_puesto_pendiente', None) or getattr(ep, 'pendiente_puesto', 0) or 0),
+                    Decimal(0),
+                )
+                delta_manual = saldo_crudo_dia - saldo_crudo_anterior
+                if delta_manual > 0:
+                    pendientes_fifo.append([dia, delta_manual])
+
+            # Mantener el baseline al dia (independiente de la rama de arriba) para
+            # que el proximo dia calcule su delta manual contra el valor correcto.
+            if ep is not None:
+                saldo_crudo_anterior = max(
+                    Decimal(getattr(ep, 'saldo_puesto_pendiente', None) or getattr(ep, 'pendiente_puesto', 0) or 0),
+                    Decimal(0),
+                )
 
             abono_puesto = Decimal((fact.abono_puesto_dia if fact else (ep.abono_puesto if ep else 0)) or 0)
             abono_restante = max(abono_puesto, Decimal(0))
@@ -5217,8 +5662,8 @@ def reporte_ajuste_diario_unificado(request):
         aplicado_por_fecha = fifo_est.get('aplicado_por_fecha', {})
 
         for dia in sorted(list(dias_con_movimiento.get(est_id, set())), reverse=True):
-            calc_con_comision = calcular_liquidacion_dia_estilista(est, dia, aplica_comision_ventas=True)
-            calc_sin_comision = calcular_liquidacion_dia_estilista(est, dia, aplica_comision_ventas=False)
+            calc_con_comision = _calc_memo(est, dia, True)
+            calc_sin_comision = _calc_memo(est, dia, False)
             ep = estados_map.get((est_id, dia))
             fact = facts_map.get((est_id, dia)) if usar_fact else None
             fact_aplica = facts_map_aplica.get((est_id, dia))
@@ -5246,14 +5691,12 @@ def reporte_ajuste_diario_unificado(request):
             cobro_consumo = Decimal((fact.cobro_consumo_dia if fact else consumo_por_est_dia.get((est_id, dia), Decimal(0))) or 0)
 
             pendiente_empleado = max(generado - pagado_total, Decimal(0))
+            # pendiente_por_fecha ya incluye tanto el descuento diferido normal
+            # (skip_descuento_puesto=True) como la deuda cargada manualmente (detectada
+            # como incremento del saldo acumulado en el loop de arriba), ambos envejecidos
+            # correctamente por la misma cola FIFO — por eso cada dia refleja solo lo que
+            # aporto ESE dia y no el acumulado completo del empleado.
             deuda_puesto_dia_pendiente = max(Decimal(pendiente_por_fecha.get(dia, Decimal(0)) or 0), Decimal(0))
-            # Fallback: if FIFO didn't capture this day (e.g. manual debt with skip=False),
-            # use the stored saldo_puesto_pendiente — but ONLY if the employee still has
-            # real outstanding debt (per SaldoDeudaPuesto). If saldo_actual==0 the employee
-            # paid off all debt in a later liquidation; historical records must not re-appear.
-            saldo_actual_est = saldo_puesto_actual_map.get(est_id, Decimal(0))
-            if deuda_puesto_dia_pendiente == Decimal(0) and deuda_puesto > Decimal(0) and saldo_actual_est > 0:
-                deuda_puesto_dia_pendiente = deuda_puesto
             abono_puesto_aplicado_fifo = max(Decimal(aplicado_por_fecha.get(dia, Decimal(0)) or 0), Decimal(0))
 
             if solo_deuda_abierta and pendiente_empleado <= 0 and deuda_puesto_dia_pendiente <= 0 and cobro_consumo <= 0:
