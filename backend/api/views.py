@@ -1237,6 +1237,14 @@ class VentaProductoViewSet(viewsets.ModelViewSet):
                         usuario=request.user,
                         notas='Generada automaticamente desde consumo de empleado',
                     )
+                    # Mantener sincronizado el saldo consolidado (fuente de verdad que
+                    # usa Ajuste Diario para el total "Consumo empleado"). Antes solo se
+                    # incrementaba en la carga manual de cargos (crear_cargo_manual_empleado),
+                    # no aqui, en el flujo normal de venta de consumo — por eso el total
+                    # mostrado quedaba por debajo de la suma real de facturas pendientes.
+                    saldo_obj, _ = SaldoDeudaPuesto.objects.get_or_create(estilista_id=int(estilista))
+                    saldo_obj.saldo_consumo = max(Decimal(saldo_obj.saldo_consumo or 0) + total_transaccion, Decimal(0))
+                    saldo_obj.save()
 
                 if tipo_operacion == 'consumo_empleado':
                     cliente_txt = ventas_creadas[0].estilista.nombre if ventas_creadas and ventas_creadas[0].estilista else 'Empleado no registrado'
