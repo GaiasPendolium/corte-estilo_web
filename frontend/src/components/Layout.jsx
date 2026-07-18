@@ -40,6 +40,7 @@ const Layout = () => {
     { path: '/productos', icon: FiPackage, label: 'Inventario y Servicio', permissionKey: 'productos' },
     { path: '/ventas', icon: FiDollarSign, label: 'Histórico de ventas', permissionKey: 'ventas' },
     { path: '/reportes', icon: FiBarChart2, label: 'Reportes', permissionKey: 'reportes' },
+    { path: '/creditos', icon: FiDollarSign, label: 'Créditos', permissionKey: 'creditos' },
   ].filter((item) => !item.permissionKey || hasMenuPermission(user, item.permissionKey, 'view'));
 
   return (

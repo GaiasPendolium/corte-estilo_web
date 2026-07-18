@@ -790,7 +790,7 @@ const Reportes = () => {
         ? valor
         : campo === 'aplica_comision_ventas'
           ? Boolean(valor)
-        : String(valor || '').replace(/[^\d.]/g, '');
+          : String(valor || '').replace(/[^\d.]/g, '');
 
       return {
         ...prev,
@@ -1352,7 +1352,7 @@ const Reportes = () => {
         ? valor
         : campo === 'aplica_comision_ventas'
           ? Boolean(valor)
-        : String(valor || '').replace(/[^\d.]/g, '');
+          : String(valor || '').replace(/[^\d.]/g, '');
 
       return {
         ...prev,
@@ -1562,219 +1562,219 @@ const Reportes = () => {
     }
   };
 
-const aplicarEstadoLiquidacion = async (fila) => {
-  const estilistaId = fila.estilista_id;
-  const fechaLiquidacion = fechaFin || format(new Date(), 'yyyy-MM-dd');
-  const esCorreccion = Boolean(modoCorreccionPorEstilista[estilistaId]);
-  
-  const pago_efectivo = Number(pagosPorEstilista[estilistaId]?.efectivo || 0);
-  const pago_nequi = Number(pagosPorEstilista[estilistaId]?.nequi || 0);
-  const pago_daviplata = Number(pagosPorEstilista[estilistaId]?.daviplata || 0);
-  const pago_otros = Number(pagosPorEstilista[estilistaId]?.otros || 0);
-  const abono_puesto_digitado = Number(abonoPuestoPorEstilista[estilistaId] || 0);
-  const puesto_modo = modoCobroPuestoPorEstilista[estilistaId] || 'fijo';
-  const puesto_porcentaje = Math.max(Number(porcentajePuestoPorEstilista[estilistaId] || 0), 0);
-  const diaBase = (desgloseLiquidacion?.desglose_por_dia || []).find((d) => String(d.fecha || '') === String(fechaLiquidacion));
-  const basePorcentajeDia = Math.max(Number(diaBase?.neto_dia || 0), 0);
-  const abono_puesto = puesto_modo === 'porcentaje'
-    ? Math.max(Math.round((basePorcentajeDia * puesto_porcentaje) / 100), 0)
-    : abono_puesto_digitado;
-  const medio_abono_puesto = medioAbonoPuestoPorEstilista[estilistaId] || 'efectivo';
-  const aplica_comision_ventas = Boolean(aplicaComisionVentasPorEstilista[estilistaId] ?? true);
-  const saldoConsumoEmpleado = Number(resumenPorEstilistaLiquidacion[estilistaId]?.saldo_pendiente || 0);
-  const cobroConsumoDigitado = Number(cobroConsumoPorEstilista[estilistaId] || 0);
-  const cobroConsumoAplicado = Math.min(Math.max(cobroConsumoDigitado, 0), Math.max(saldoConsumoEmpleado, 0));
-  const deudasConsumoSeleccionadas = (deudaConsumoSeleccionadasPorEstilista[estilistaId] || [])
-    .map((x) => Number(x))
-    .filter((x) => Number.isFinite(x) && x > 0);
-  const medioCobroConsumo = medioCobroConsumoPorEstilista[estilistaId] || 'efectivo';
-  const topePagoEmpleado = (() => {
-    const dia = (desgloseLiquidacion?.desglose_por_dia || []).find((d) => String(d.fecha || '') === String(fechaLiquidacion));
-    if (dia) return Math.max(Number(dia.neto_dia || 0), 0);
-    return calcularPendientePagoEmpleado(fila);
-  })();
+  const aplicarEstadoLiquidacion = async (fila) => {
+    const estilistaId = fila.estilista_id;
+    const fechaLiquidacion = fechaFin || format(new Date(), 'yyyy-MM-dd');
+    const esCorreccion = Boolean(modoCorreccionPorEstilista[estilistaId]);
 
-  if (pago_efectivo + pago_nequi + pago_daviplata + pago_otros > topePagoEmpleado) {
-    toast.warning(`El pago al empleado no puede superar ${formatMoney(topePagoEmpleado)} para el día ${fechaLiquidacion}.`);
-    return;
-  }
-  
-  setSavingEstadoByEstilista((prev) => ({ ...prev, [estilistaId]: true }));
-  
-  try {
-    const resultado = await reportesService.liquidarOperacionIntegral({
-      estilista_id: estilistaId,
-      fecha: fechaLiquidacion,
-      pago_efectivo,
-      pago_nequi,
-      pago_daviplata,
-      pago_otros,
-      abono_puesto,
-      medio_abono_puesto,
-      aplica_comision_ventas,
-      puesto_modo,
-      puesto_porcentaje,
-      forzar_reemplazo_dia: esCorreccion,
-      consumo_monto: cobroConsumoAplicado,
-      deuda_ids: deudasConsumoSeleccionadas,
-      medio_cobro_consumo: medioCobroConsumo,
-      notas: `Liquidación ${fechaLiquidacion}`,
-    });
-    const g = resultado.liquidacion.ganancias_totales;
-    const d = resultado.liquidacion.descuento_puesto;
-    const d_ant = resultado.puesto.deuda_anterior;
-    const d_tot = resultado.puesto.deuda_total;
-    const p = resultado.pagos.total;
-    const s = resultado.puesto.saldo_pendiente;
-    
-    const msgDeuda = d_ant > 0 ? ` (${formatMoney(d_ant)} anterior + ${formatMoney(d)} hoy)` : '';
-    const msgConsumo = Number(resultado?.consumo_integrado?.monto_aplicado || 0) > 0
-      ? ` - Consumo cobrado ${formatMoney(resultado?.consumo_integrado?.monto_aplicado || 0)}`
-      : '';
-    toast.success(`✓ ${resultado.estilista.nombre}: Gan ${formatMoney(g)} - Puesto ${formatMoney(d_tot)}${msgDeuda}${msgConsumo} - Pagado ${formatMoney(p)} - Saldo ${formatMoney(s)}`);
-    
-    // Actualizar estado localmente de inmediato para UI responsiva
-    setEstadoDiaPorEstilista((prev) => ({
-      ...prev,
-      [estilistaId]: resultado.estado,
-    }));
+    const pago_efectivo = Number(pagosPorEstilista[estilistaId]?.efectivo || 0);
+    const pago_nequi = Number(pagosPorEstilista[estilistaId]?.nequi || 0);
+    const pago_daviplata = Number(pagosPorEstilista[estilistaId]?.daviplata || 0);
+    const pago_otros = Number(pagosPorEstilista[estilistaId]?.otros || 0);
+    const abono_puesto_digitado = Number(abonoPuestoPorEstilista[estilistaId] || 0);
+    const puesto_modo = modoCobroPuestoPorEstilista[estilistaId] || 'fijo';
+    const puesto_porcentaje = Math.max(Number(porcentajePuestoPorEstilista[estilistaId] || 0), 0);
+    const diaBase = (desgloseLiquidacion?.desglose_por_dia || []).find((d) => String(d.fecha || '') === String(fechaLiquidacion));
+    const basePorcentajeDia = Math.max(Number(diaBase?.neto_dia || 0), 0);
+    const abono_puesto = puesto_modo === 'porcentaje'
+      ? Math.max(Math.round((basePorcentajeDia * puesto_porcentaje) / 100), 0)
+      : abono_puesto_digitado;
+    const medio_abono_puesto = medioAbonoPuestoPorEstilista[estilistaId] || 'efectivo';
+    const aplica_comision_ventas = Boolean(aplicaComisionVentasPorEstilista[estilistaId] ?? true);
+    const saldoConsumoEmpleado = Number(resumenPorEstilistaLiquidacion[estilistaId]?.saldo_pendiente || 0);
+    const cobroConsumoDigitado = Number(cobroConsumoPorEstilista[estilistaId] || 0);
+    const cobroConsumoAplicado = Math.min(Math.max(cobroConsumoDigitado, 0), Math.max(saldoConsumoEmpleado, 0));
+    const deudasConsumoSeleccionadas = (deudaConsumoSeleccionadasPorEstilista[estilistaId] || [])
+      .map((x) => Number(x))
+      .filter((x) => Number.isFinite(x) && x > 0);
+    const medioCobroConsumo = medioCobroConsumoPorEstilista[estilistaId] || 'efectivo';
+    const topePagoEmpleado = (() => {
+      const dia = (desgloseLiquidacion?.desglose_por_dia || []).find((d) => String(d.fecha || '') === String(fechaLiquidacion));
+      if (dia) return Math.max(Number(dia.neto_dia || 0), 0);
+      return calcularPendientePagoEmpleado(fila);
+    })();
 
-    if (esCorreccion) {
-      setModoCorreccionPorEstilista((prev) => ({ ...prev, [estilistaId]: false }));
+    if (pago_efectivo + pago_nequi + pago_daviplata + pago_otros > topePagoEmpleado) {
+      toast.warning(`El pago al empleado no puede superar ${formatMoney(topePagoEmpleado)} para el día ${fechaLiquidacion}.`);
+      return;
     }
-    
-    await Promise.all([cargarTodo(), cargarCarteraLiquidacionGlobal()]);
-  } catch (error) {
-    const msg = error?.response?.data?.error || error?.message || 'No se pudo procesar la liquidación.';
-    toast.error(`❌ ${msg}`);
-  } finally {
-    setSavingEstadoByEstilista((prev) => ({ ...prev, [estilistaId]: false }));
-  }
-};
 
-const aplicarLiquidacionSimple = async ({
-  fila,
-  valorLiquidarHoy,
-  cargoPuestoDia,
-  abonoPuestoDeuda,
-  abonoConsumo,
-  deudasConsumoSeleccionadas,
-  pagosPorMedio = null,
-}) => {
-  const estilistaId = Number(fila?.estilista_id || 0);
-  if (!estilistaId) {
-    toast.error('No se pudo identificar el empleado para liquidar.');
-    return;
-  }
+    setSavingEstadoByEstilista((prev) => ({ ...prev, [estilistaId]: true }));
 
-  const fechaLiquidacion = fechaFin || format(new Date(), 'yyyy-MM-dd');
-  if (String(fechaInicio || '') !== String(fechaLiquidacion || '')) {
-    toast.warning('La liquidación simple opera por día. Usa el mismo valor en fecha inicio y fecha fin.');
-    return;
-  }
-  const valorLiquidarHoySeguro = Math.max(Number(valorLiquidarHoy || 0), 0);
-  const cargoPuestoDiaSeguro = Math.max(Number(cargoPuestoDia || 0), 0);
-  const abonoPuestoDeudaSeguro = Math.max(Number(abonoPuestoDeuda || 0), 0);
-  const abonoConsumoSeguro = Math.max(Number(abonoConsumo || 0), 0);
-  const totalDescuentos = cargoPuestoDiaSeguro + abonoPuestoDeudaSeguro + abonoConsumoSeguro;
-  const pagoFinalEmpleado = Math.max(valorLiquidarHoySeguro - abonoPuestoDeudaSeguro - abonoConsumoSeguro, 0);
-  const pago_efectivo = Math.max(Number(pagosPorMedio?.efectivo || 0), 0);
-  const pago_nequi = Math.max(Number(pagosPorMedio?.nequi || 0), 0);
-  const pago_daviplata = Math.max(Number(pagosPorMedio?.daviplata || 0), 0);
-  const pago_otros = Math.max(Number(pagosPorMedio?.otros || 0), 0);
-  const totalPagosDigitados = pago_efectivo + pago_nequi + pago_daviplata + pago_otros;
-  const usarAutoEfectivo = totalPagosDigitados <= 0;
-  if (!usarAutoEfectivo && totalPagosDigitados > pagoFinalEmpleado) {
-    toast.warning(`Los pagos digitados (${formatMoney(totalPagosDigitados)}) superan el total final a pagar (${formatMoney(pagoFinalEmpleado)}).`);
-    return;
-  }
-  const puesto_modo = modoCobroPuestoPorEstilista[estilistaId] || 'fijo';
-  const puesto_porcentaje = Number(porcentajePuestoPorEstilista[estilistaId] || 0);
-  const medio_abono_puesto = medioAbonoPuestoPorEstilista[estilistaId] || 'efectivo';
-  const aplica_comision_ventas = Boolean(aplicaComisionVentasPorEstilista[estilistaId] ?? true);
-  const medioCobroConsumo = medioCobroConsumoPorEstilista[estilistaId] || 'efectivo';
-  const skip_puesto = Boolean(skipDescuentoPuestoPorEstilista[estilistaId] || false);
+    try {
+      const resultado = await reportesService.liquidarOperacionIntegral({
+        estilista_id: estilistaId,
+        fecha: fechaLiquidacion,
+        pago_efectivo,
+        pago_nequi,
+        pago_daviplata,
+        pago_otros,
+        abono_puesto,
+        medio_abono_puesto,
+        aplica_comision_ventas,
+        puesto_modo,
+        puesto_porcentaje,
+        forzar_reemplazo_dia: esCorreccion,
+        consumo_monto: cobroConsumoAplicado,
+        deuda_ids: deudasConsumoSeleccionadas,
+        medio_cobro_consumo: medioCobroConsumo,
+        notas: `Liquidación ${fechaLiquidacion}`,
+      });
+      const g = resultado.liquidacion.ganancias_totales;
+      const d = resultado.liquidacion.descuento_puesto;
+      const d_ant = resultado.puesto.deuda_anterior;
+      const d_tot = resultado.puesto.deuda_total;
+      const p = resultado.pagos.total;
+      const s = resultado.puesto.saldo_pendiente;
 
-  setSavingEstadoByEstilista((prev) => ({ ...prev, [estilistaId]: true }));
-  try {
-    const payload = {
-      estilista_id: estilistaId,
-      fecha: fechaLiquidacion,
-      pago_efectivo: usarAutoEfectivo ? pagoFinalEmpleado : pago_efectivo,
-      pago_nequi: usarAutoEfectivo ? 0 : pago_nequi,
-      pago_daviplata: usarAutoEfectivo ? 0 : pago_daviplata,
-      pago_otros: usarAutoEfectivo ? 0 : pago_otros,
-      abono_puesto: skip_puesto ? 0 : Number(abonoPuestoDeudaSeguro || 0),
-      medio_abono_puesto,
-      aplica_comision_ventas,
-      puesto_modo,
-      puesto_porcentaje,
-      forzar_reemplazo_dia: false,
-      skip_descuento_puesto: skip_puesto,
-      consumo_monto: abonoConsumoSeguro,
-      deuda_ids: deudasConsumoSeleccionadas,
-      medio_cobro_consumo: medioCobroConsumo,
-      notas: `Liquidación simple ${fechaLiquidacion} | Cargo día ${cargoPuestoDiaSeguro} | Abono espacio ${abonoPuestoDeudaSeguro} | Abono consumo ${abonoConsumoSeguro}`,
-    };
+      const msgDeuda = d_ant > 0 ? ` (${formatMoney(d_ant)} anterior + ${formatMoney(d)} hoy)` : '';
+      const msgConsumo = Number(resultado?.consumo_integrado?.monto_aplicado || 0) > 0
+        ? ` - Consumo cobrado ${formatMoney(resultado?.consumo_integrado?.monto_aplicado || 0)}`
+        : '';
+      toast.success(`✓ ${resultado.estilista.nombre}: Gan ${formatMoney(g)} - Puesto ${formatMoney(d_tot)}${msgDeuda}${msgConsumo} - Pagado ${formatMoney(p)} - Saldo ${formatMoney(s)}`);
 
-    await reportesService.liquidarOperacionIntegral(payload);
+      // Actualizar estado localmente de inmediato para UI responsiva
+      setEstadoDiaPorEstilista((prev) => ({
+        ...prev,
+        [estilistaId]: resultado.estado,
+      }));
 
-    toast.success(`Liquidación guardada. Pago final empleado: ${formatMoney(pagoFinalEmpleado)}.`);
-    setPasoLiquidacion(3);
-    await Promise.all([cargarTodo(), cargarCarteraLiquidacionGlobal()]);
-  } catch (error) {
-    const msg = error?.response?.data?.error || error?.message || 'No se pudo guardar la liquidación simple.';
-    toast.error(String(msg));
-  } finally {
-    setSavingEstadoByEstilista((prev) => ({ ...prev, [estilistaId]: false }));
-  }
-};
+      if (esCorreccion) {
+        setModoCorreccionPorEstilista((prev) => ({ ...prev, [estilistaId]: false }));
+      }
 
-const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
-  const key = `${estilistaId}|${fecha}`;
-  const porEstilista = cuadreDiarioByEstilista[estilistaId] || {};
-  const fila = porEstilista[fecha] || {};
+      await Promise.all([cargarTodo(), cargarCarteraLiquidacionGlobal()]);
+    } catch (error) {
+      const msg = error?.response?.data?.error || error?.message || 'No se pudo procesar la liquidación.';
+      toast.error(`❌ ${msg}`);
+    } finally {
+      setSavingEstadoByEstilista((prev) => ({ ...prev, [estilistaId]: false }));
+    }
+  };
 
-  const pago_efectivo = toMontoNoNegativo(fila.pago_efectivo);
-  const pago_nequi = toMontoNoNegativo(fila.pago_nequi);
-  const pago_daviplata = toMontoNoNegativo(fila.pago_daviplata);
-  const pago_otros = toMontoNoNegativo(fila.pago_otros);
-  const abono_puesto = toMontoNoNegativo(fila.abono_puesto);
-  const medio_abono_puesto = fila.medio_abono_puesto || 'efectivo';
-  const aplica_comision_ventas = Boolean(fila.aplica_comision_ventas ?? true);
+  const aplicarLiquidacionSimple = async ({
+    fila,
+    valorLiquidarHoy,
+    cargoPuestoDia,
+    abonoPuestoDeuda,
+    abonoConsumo,
+    deudasConsumoSeleccionadas,
+    pagosPorMedio = null,
+  }) => {
+    const estilistaId = Number(fila?.estilista_id || 0);
+    if (!estilistaId) {
+      toast.error('No se pudo identificar el empleado para liquidar.');
+      return;
+    }
 
-  const totalPagoEmpleado = pago_efectivo + pago_nequi + pago_daviplata + pago_otros;
-  const topePagoDia = Math.max(Number(netoDia || 0), 0);
-  if (totalPagoEmpleado > topePagoDia) {
-    toast.warning(`El pago al empleado no puede superar ${formatMoney(topePagoDia)} para el día ${fecha}.`);
-    return;
-  }
+    const fechaLiquidacion = fechaFin || format(new Date(), 'yyyy-MM-dd');
+    if (String(fechaInicio || '') !== String(fechaLiquidacion || '')) {
+      toast.warning('La liquidación simple opera por día. Usa el mismo valor en fecha inicio y fecha fin.');
+      return;
+    }
+    const valorLiquidarHoySeguro = Math.max(Number(valorLiquidarHoy || 0), 0);
+    const cargoPuestoDiaSeguro = Math.max(Number(cargoPuestoDia || 0), 0);
+    const abonoPuestoDeudaSeguro = Math.max(Number(abonoPuestoDeuda || 0), 0);
+    const abonoConsumoSeguro = Math.max(Number(abonoConsumo || 0), 0);
+    const totalDescuentos = cargoPuestoDiaSeguro + abonoPuestoDeudaSeguro + abonoConsumoSeguro;
+    const pagoFinalEmpleado = Math.max(valorLiquidarHoySeguro - abonoPuestoDeudaSeguro - abonoConsumoSeguro, 0);
+    const pago_efectivo = Math.max(Number(pagosPorMedio?.efectivo || 0), 0);
+    const pago_nequi = Math.max(Number(pagosPorMedio?.nequi || 0), 0);
+    const pago_daviplata = Math.max(Number(pagosPorMedio?.daviplata || 0), 0);
+    const pago_otros = Math.max(Number(pagosPorMedio?.otros || 0), 0);
+    const totalPagosDigitados = pago_efectivo + pago_nequi + pago_daviplata + pago_otros;
+    const usarAutoEfectivo = totalPagosDigitados <= 0;
+    if (!usarAutoEfectivo && totalPagosDigitados > pagoFinalEmpleado) {
+      toast.warning(`Los pagos digitados (${formatMoney(totalPagosDigitados)}) superan el total final a pagar (${formatMoney(pagoFinalEmpleado)}).`);
+      return;
+    }
+    const puesto_modo = modoCobroPuestoPorEstilista[estilistaId] || 'fijo';
+    const puesto_porcentaje = Number(porcentajePuestoPorEstilista[estilistaId] || 0);
+    const medio_abono_puesto = medioAbonoPuestoPorEstilista[estilistaId] || 'efectivo';
+    const aplica_comision_ventas = Boolean(aplicaComisionVentasPorEstilista[estilistaId] ?? true);
+    const medioCobroConsumo = medioCobroConsumoPorEstilista[estilistaId] || 'efectivo';
+    const skip_puesto = Boolean(skipDescuentoPuestoPorEstilista[estilistaId] || false);
 
-  setSavingCuadreDiaByKey((prev) => ({ ...prev, [key]: true }));
-  try {
-    await reportesService.liquidarDiaV2({
-      estilista_id: estilistaId,
-      fecha,
-      pago_efectivo,
-      pago_nequi,
-      pago_daviplata,
-      pago_otros,
-      abono_puesto,
-      medio_abono_puesto,
-      aplica_comision_ventas,
-      forzar_reemplazo_dia: true,
-      notas: `Cuadre diario ${fecha}`,
-    });
+    setSavingEstadoByEstilista((prev) => ({ ...prev, [estilistaId]: true }));
+    try {
+      const payload = {
+        estilista_id: estilistaId,
+        fecha: fechaLiquidacion,
+        pago_efectivo: usarAutoEfectivo ? pagoFinalEmpleado : pago_efectivo,
+        pago_nequi: usarAutoEfectivo ? 0 : pago_nequi,
+        pago_daviplata: usarAutoEfectivo ? 0 : pago_daviplata,
+        pago_otros: usarAutoEfectivo ? 0 : pago_otros,
+        abono_puesto: skip_puesto ? 0 : Number(abonoPuestoDeudaSeguro || 0),
+        medio_abono_puesto,
+        aplica_comision_ventas,
+        puesto_modo,
+        puesto_porcentaje,
+        forzar_reemplazo_dia: false,
+        skip_descuento_puesto: skip_puesto,
+        consumo_monto: abonoConsumoSeguro,
+        deuda_ids: deudasConsumoSeleccionadas,
+        medio_cobro_consumo: medioCobroConsumo,
+        notas: `Liquidación simple ${fechaLiquidacion} | Cargo día ${cargoPuestoDiaSeguro} | Abono espacio ${abonoPuestoDeudaSeguro} | Abono consumo ${abonoConsumoSeguro}`,
+      };
 
-    toast.success(`Cuadre diario guardado para ${fecha}.`);
-    await Promise.all([cargarTodo(), cargarCarteraLiquidacionGlobal()]);
-  } catch (error) {
-    const msg = error?.response?.data?.error || error?.message || 'No se pudo guardar el cuadre del día.';
-    toast.error(String(msg));
-  } finally {
-    setSavingCuadreDiaByKey((prev) => ({ ...prev, [key]: false }));
-  }
-};
+      await reportesService.liquidarOperacionIntegral(payload);
+
+      toast.success(`Liquidación guardada. Pago final empleado: ${formatMoney(pagoFinalEmpleado)}.`);
+      setPasoLiquidacion(3);
+      await Promise.all([cargarTodo(), cargarCarteraLiquidacionGlobal()]);
+    } catch (error) {
+      const msg = error?.response?.data?.error || error?.message || 'No se pudo guardar la liquidación simple.';
+      toast.error(String(msg));
+    } finally {
+      setSavingEstadoByEstilista((prev) => ({ ...prev, [estilistaId]: false }));
+    }
+  };
+
+  const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
+    const key = `${estilistaId}|${fecha}`;
+    const porEstilista = cuadreDiarioByEstilista[estilistaId] || {};
+    const fila = porEstilista[fecha] || {};
+
+    const pago_efectivo = toMontoNoNegativo(fila.pago_efectivo);
+    const pago_nequi = toMontoNoNegativo(fila.pago_nequi);
+    const pago_daviplata = toMontoNoNegativo(fila.pago_daviplata);
+    const pago_otros = toMontoNoNegativo(fila.pago_otros);
+    const abono_puesto = toMontoNoNegativo(fila.abono_puesto);
+    const medio_abono_puesto = fila.medio_abono_puesto || 'efectivo';
+    const aplica_comision_ventas = Boolean(fila.aplica_comision_ventas ?? true);
+
+    const totalPagoEmpleado = pago_efectivo + pago_nequi + pago_daviplata + pago_otros;
+    const topePagoDia = Math.max(Number(netoDia || 0), 0);
+    if (totalPagoEmpleado > topePagoDia) {
+      toast.warning(`El pago al empleado no puede superar ${formatMoney(topePagoDia)} para el día ${fecha}.`);
+      return;
+    }
+
+    setSavingCuadreDiaByKey((prev) => ({ ...prev, [key]: true }));
+    try {
+      await reportesService.liquidarDiaV2({
+        estilista_id: estilistaId,
+        fecha,
+        pago_efectivo,
+        pago_nequi,
+        pago_daviplata,
+        pago_otros,
+        abono_puesto,
+        medio_abono_puesto,
+        aplica_comision_ventas,
+        forzar_reemplazo_dia: true,
+        notas: `Cuadre diario ${fecha}`,
+      });
+
+      toast.success(`Cuadre diario guardado para ${fecha}.`);
+      await Promise.all([cargarTodo(), cargarCarteraLiquidacionGlobal()]);
+    } catch (error) {
+      const msg = error?.response?.data?.error || error?.message || 'No se pudo guardar el cuadre del día.';
+      toast.error(String(msg));
+    } finally {
+      setSavingCuadreDiaByKey((prev) => ({ ...prev, [key]: false }));
+    }
+  };
 
   const precargarCorreccionLiquidacion = (empleado, registroDia) => {
     const estilistaId = Number(empleado?.estilista_id || 0);
@@ -2576,8 +2576,8 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
             const cargoPuestoDiaAplicado = skipPuestoEstilista
               ? 0  // No aplicar descuento si skip está marcado
               : (tienePuestoManual
-                  ? Math.max(abonoPuestoCalculado, 0)
-                  : descuentoPuestoDiaSimple);
+                ? Math.max(abonoPuestoCalculado, 0)
+                : descuentoPuestoDiaSimple);
             const abonoPuestoDeudaAplicado = (!skipPuestoEstilista && cancelarDeudaPuesto)
               ? Math.min(Math.max(abonoPuestoDigitado, 0), puestoPendienteSimple)
               : 0;
@@ -3500,145 +3500,145 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                 </div>
 
                 {!vistaSimpleLiquidacion && (
-                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                  <div className="card border border-amber-200 bg-amber-50">
-                    <div className="mb-2 flex items-center justify-between gap-2">
-                      <h4 className="card-header">Facturas de consumo pendientes</h4>
-                      {deudasEmpleado.length > 0 && (
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            className="btn-secondary !py-1 !px-2 text-xs"
-                            onClick={() => seleccionarTodasDeudasConsumo(estId, deudasEmpleado)}
-                          >
-                            Seleccionar todas
-                          </button>
-                          <button
-                            type="button"
-                            className="btn-secondary !py-1 !px-2 text-xs"
-                            onClick={() => limpiarSeleccionDeudasConsumo(estId)}
-                          >
-                            Limpiar
-                          </button>
-                        </div>
-                      )}
+                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                    <div className="card border border-amber-200 bg-amber-50">
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <h4 className="card-header">Facturas de consumo pendientes</h4>
+                        {deudasEmpleado.length > 0 && (
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              className="btn-secondary !py-1 !px-2 text-xs"
+                              onClick={() => seleccionarTodasDeudasConsumo(estId, deudasEmpleado)}
+                            >
+                              Seleccionar todas
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-secondary !py-1 !px-2 text-xs"
+                              onClick={() => limpiarSeleccionDeudasConsumo(estId)}
+                            >
+                              Limpiar
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                      <div className="space-y-2 max-h-[280px] overflow-y-auto pr-1">
+                        {deudasEmpleado.length === 0 && <p className="text-sm text-slate-500">No tiene consumo pendiente.</p>}
+                        {deudasEmpleado.map((d) => (
+                          <div key={d.deuda_id} className="rounded-xl border border-amber-200 bg-white p-3">
+                            <label className="flex items-start gap-2 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                className="mt-1"
+                                checked={deudasConsumoSeleccionadas.includes(String(d.deuda_id))}
+                                onChange={() => toggleDeudaConsumoSeleccion(estId, d.deuda_id)}
+                              />
+                              <span className="text-sm font-semibold text-slate-900">{d.numero_factura || `Deuda ${d.deuda_id}`}</span>
+                            </label>
+                            <p className="text-xs text-slate-500">{d.fecha_hora || '-'}</p>
+                            <p className="text-xs text-rose-700 mt-1">Saldo: {formatMoney(d.saldo_pendiente)}</p>
+                          </div>
+                        ))}
+                      </div>
                     </div>
+
+                    <div className="card border border-sky-200 bg-sky-50">
+                      <h4 className="card-header mb-2">Historico de deuda de puesto (por dia)</h4>
+                      <div className="space-y-2 max-h-[280px] overflow-y-auto pr-1">
+                        {historialDiarioLiquidacion.length === 0 && <p className="text-sm text-slate-500">Sin movimientos registrados.</p>}
+                        {historialDiarioLiquidacion.map((h) => {
+                          const porcentajePuestoActual = Math.max(Number(porcentajePuestoPorEstilista[estId] || 0), 0);
+                          const baseDiaHist = Math.max(Number(generadoPorFecha[String(h.fecha || '')] || 0), 0);
+                          const cobroPuestoDia = modoCobroPuestoPorEstilista[estId] === 'porcentaje'
+                            ? Math.max(Math.round((baseDiaHist * porcentajePuestoActual) / 100), 0)
+                            : Math.max(Number(h.descuento_dia || 0), 0);
+                          const abonadoPuestoDia = Math.max(Number(h.abono_aplicado_dia || 0), 0);
+                          const saldoPuestoCierre = Math.max(Number(h.saldo_puesto_cierre || 0), 0);
+                          const usaPuestoPorcentaje = modoCobroPuestoPorEstilista[estId] === 'porcentaje';
+                          const saldoPuestoMostrado = usaPuestoPorcentaje
+                            ? Math.max(cobroPuestoDia - abonadoPuestoDia, 0)
+                            : saldoPuestoCierre;
+                          const estadoPuesto = saldoPuestoCierre > 0 ? 'Debe' : 'Liquidado';
+                          const pagoEmpleadoDia = Math.max(Number(h.pago_empleado_dia || 0), 0);
+                          const pagoConsumoDia = Math.max(Number(pagoConsumoPorFecha[String(h.fecha || '')] || 0), 0);
+
+                          return (
+                            <div key={`hist-dia-${h.fecha}`} className="rounded-xl border border-sky-200 bg-white p-3">
+                              <div className="flex justify-between gap-2 items-center">
+                                <p className="text-sm font-semibold text-slate-900">{h.fecha || '-'}</p>
+                                <div className="flex gap-1 items-center flex-wrap justify-end">
+                                  {h.skip_descuento_puesto && (
+                                    <span className="text-xs font-semibold px-2 py-1 rounded-full border bg-purple-100 text-purple-700 border-purple-200">
+                                      📌 Sin puesto
+                                    </span>
+                                  )}
+                                  <span className={`text-xs font-semibold px-2 py-1 rounded-full border ${estadoPuesto === 'Debe' ? 'bg-rose-100 text-rose-700 border-rose-200' : 'bg-emerald-100 text-emerald-700 border-emerald-200'}`}>
+                                    {estadoPuesto}
+                                  </span>
+                                </div>
+                              </div>
+                              <p className="text-xs text-slate-500">{h.fecha_cambio || '-'}</p>
+                              <p className="text-xs text-emerald-700 mt-1">Pago Empleado: {formatMoney(pagoEmpleadoDia)}</p>
+                              <p className="text-xs text-slate-700 mt-1">Cobro puesto del día: {formatMoney(cobroPuestoDia)}</p>
+                              <p className="text-xs text-sky-700">Cancelado de puesto: {formatMoney(abonadoPuestoDia)}</p>
+                              <p className="text-xs text-amber-700">Saldo acumulado pendiente: {formatMoney(saldoPuestoMostrado)}</p>
+                              <p className="text-xs text-slate-600">Medio abono: {h.medio_abono_puesto || 'efectivo'}</p>
+                              <p className="text-xs text-violet-700">Pago consumo: {formatMoney(pagoConsumoDia)}</p>
+                              <p className="text-xs text-violet-700">Valor acumulado pendiente: {formatMoney(consumoPendiente)}</p>
+                              {h.notas && h.notas.includes('Carga manual') && (
+                                <p className="text-xs text-blue-700 mt-1">📝 {h.notas}</p>
+                              )}
+                              <p className="text-xs text-slate-500">Usuario: {h.usuario_nombre || 'Sistema'}</p>
+                              {puedeCorregirLiquidacion && (
+                                <div className="mt-2 flex flex-wrap gap-2">
+                                  <button
+                                    type="button"
+                                    className="btn-secondary !py-1 !px-2 text-xs"
+                                    onClick={() => precargarCorreccionLiquidacion(empleado, h)}
+                                  >
+                                    Cargar para corregir
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn-danger !py-1 !px-2 text-xs"
+                                    onClick={() => eliminarRegistroHistorial({
+                                      id: h.historial_id,
+                                      estilista_nombre: empleado.estilista_nombre,
+                                      fecha: h.fecha,
+                                    })}
+                                    disabled={!h.historial_id}
+                                  >
+                                    Eliminar día
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {!vistaSimpleLiquidacion && (
+                  <div className="card border border-violet-200 bg-violet-50">
+                    <h4 className="card-header mb-2">Historial de abonos de consumo del empleado</h4>
                     <div className="space-y-2 max-h-[280px] overflow-y-auto pr-1">
-                      {deudasEmpleado.length === 0 && <p className="text-sm text-slate-500">No tiene consumo pendiente.</p>}
-                      {deudasEmpleado.map((d) => (
-                        <div key={d.deuda_id} className="rounded-xl border border-amber-200 bg-white p-3">
-                          <label className="flex items-start gap-2 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              className="mt-1"
-                              checked={deudasConsumoSeleccionadas.includes(String(d.deuda_id))}
-                              onChange={() => toggleDeudaConsumoSeleccion(estId, d.deuda_id)}
-                            />
-                            <span className="text-sm font-semibold text-slate-900">{d.numero_factura || `Deuda ${d.deuda_id}`}</span>
-                          </label>
-                          <p className="text-xs text-slate-500">{d.fecha_hora || '-'}</p>
-                          <p className="text-xs text-rose-700 mt-1">Saldo: {formatMoney(d.saldo_pendiente)}</p>
+                      {historialAbonosConsumo.length === 0 && <p className="text-sm text-slate-500">Sin abonos de consumo registrados.</p>}
+                      {historialAbonosConsumo.map((a) => (
+                        <div key={a.abono_id} className="rounded-xl border border-violet-200 bg-white p-3">
+                          <div className="flex justify-between gap-2">
+                            <p className="text-sm font-semibold text-slate-900">{a.numero_factura || '-'}</p>
+                            <p className="text-sm font-bold text-violet-700">{formatMoney(a.monto)}</p>
+                          </div>
+                          <p className="text-xs text-slate-500">{a.fecha_hora || '-'}</p>
+                          <p className="text-xs text-slate-600 mt-1">Medio: {a.medio_pago || '-'}</p>
+                          <p className="text-xs text-slate-600">{a.notas || 'Sin notas'}</p>
                         </div>
                       ))}
                     </div>
                   </div>
-
-                  <div className="card border border-sky-200 bg-sky-50">
-                    <h4 className="card-header mb-2">Historico de deuda de puesto (por dia)</h4>
-                    <div className="space-y-2 max-h-[280px] overflow-y-auto pr-1">
-                      {historialDiarioLiquidacion.length === 0 && <p className="text-sm text-slate-500">Sin movimientos registrados.</p>}
-                      {historialDiarioLiquidacion.map((h) => {
-                        const porcentajePuestoActual = Math.max(Number(porcentajePuestoPorEstilista[estId] || 0), 0);
-                        const baseDiaHist = Math.max(Number(generadoPorFecha[String(h.fecha || '')] || 0), 0);
-                        const cobroPuestoDia = modoCobroPuestoPorEstilista[estId] === 'porcentaje'
-                          ? Math.max(Math.round((baseDiaHist * porcentajePuestoActual) / 100), 0)
-                          : Math.max(Number(h.descuento_dia || 0), 0);
-                        const abonadoPuestoDia = Math.max(Number(h.abono_aplicado_dia || 0), 0);
-                        const saldoPuestoCierre = Math.max(Number(h.saldo_puesto_cierre || 0), 0);
-                        const usaPuestoPorcentaje = modoCobroPuestoPorEstilista[estId] === 'porcentaje';
-                        const saldoPuestoMostrado = usaPuestoPorcentaje
-                          ? Math.max(cobroPuestoDia - abonadoPuestoDia, 0)
-                          : saldoPuestoCierre;
-                        const estadoPuesto = saldoPuestoCierre > 0 ? 'Debe' : 'Liquidado';
-                        const pagoEmpleadoDia = Math.max(Number(h.pago_empleado_dia || 0), 0);
-                        const pagoConsumoDia = Math.max(Number(pagoConsumoPorFecha[String(h.fecha || '')] || 0), 0);
-
-                        return (
-                          <div key={`hist-dia-${h.fecha}`} className="rounded-xl border border-sky-200 bg-white p-3">
-                            <div className="flex justify-between gap-2 items-center">
-                              <p className="text-sm font-semibold text-slate-900">{h.fecha || '-'}</p>
-                              <div className="flex gap-1 items-center flex-wrap justify-end">
-                                {h.skip_descuento_puesto && (
-                                  <span className="text-xs font-semibold px-2 py-1 rounded-full border bg-purple-100 text-purple-700 border-purple-200">
-                                    📌 Sin puesto
-                                  </span>
-                                )}
-                                <span className={`text-xs font-semibold px-2 py-1 rounded-full border ${estadoPuesto === 'Debe' ? 'bg-rose-100 text-rose-700 border-rose-200' : 'bg-emerald-100 text-emerald-700 border-emerald-200'}`}>
-                                  {estadoPuesto}
-                                </span>
-                              </div>
-                            </div>
-                            <p className="text-xs text-slate-500">{h.fecha_cambio || '-'}</p>
-                            <p className="text-xs text-emerald-700 mt-1">Pago Empleado: {formatMoney(pagoEmpleadoDia)}</p>
-                            <p className="text-xs text-slate-700 mt-1">Cobro puesto del día: {formatMoney(cobroPuestoDia)}</p>
-                            <p className="text-xs text-sky-700">Cancelado de puesto: {formatMoney(abonadoPuestoDia)}</p>
-                            <p className="text-xs text-amber-700">Saldo acumulado pendiente: {formatMoney(saldoPuestoMostrado)}</p>
-                            <p className="text-xs text-slate-600">Medio abono: {h.medio_abono_puesto || 'efectivo'}</p>
-                            <p className="text-xs text-violet-700">Pago consumo: {formatMoney(pagoConsumoDia)}</p>
-                            <p className="text-xs text-violet-700">Valor acumulado pendiente: {formatMoney(consumoPendiente)}</p>
-                            {h.notas && h.notas.includes('Carga manual') && (
-                              <p className="text-xs text-blue-700 mt-1">📝 {h.notas}</p>
-                            )}
-                            <p className="text-xs text-slate-500">Usuario: {h.usuario_nombre || 'Sistema'}</p>
-                            {puedeCorregirLiquidacion && (
-                              <div className="mt-2 flex flex-wrap gap-2">
-                                <button
-                                  type="button"
-                                  className="btn-secondary !py-1 !px-2 text-xs"
-                                  onClick={() => precargarCorreccionLiquidacion(empleado, h)}
-                                >
-                                  Cargar para corregir
-                                </button>
-                                <button
-                                  type="button"
-                                  className="btn-danger !py-1 !px-2 text-xs"
-                                  onClick={() => eliminarRegistroHistorial({
-                                    id: h.historial_id,
-                                    estilista_nombre: empleado.estilista_nombre,
-                                    fecha: h.fecha,
-                                  })}
-                                  disabled={!h.historial_id}
-                                >
-                                  Eliminar día
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-                )}
-
-                {!vistaSimpleLiquidacion && (
-                <div className="card border border-violet-200 bg-violet-50">
-                  <h4 className="card-header mb-2">Historial de abonos de consumo del empleado</h4>
-                  <div className="space-y-2 max-h-[280px] overflow-y-auto pr-1">
-                    {historialAbonosConsumo.length === 0 && <p className="text-sm text-slate-500">Sin abonos de consumo registrados.</p>}
-                    {historialAbonosConsumo.map((a) => (
-                      <div key={a.abono_id} className="rounded-xl border border-violet-200 bg-white p-3">
-                        <div className="flex justify-between gap-2">
-                          <p className="text-sm font-semibold text-slate-900">{a.numero_factura || '-'}</p>
-                          <p className="text-sm font-bold text-violet-700">{formatMoney(a.monto)}</p>
-                        </div>
-                        <p className="text-xs text-slate-500">{a.fecha_hora || '-'}</p>
-                        <p className="text-xs text-slate-600 mt-1">Medio: {a.medio_pago || '-'}</p>
-                        <p className="text-xs text-slate-600">{a.notas || 'Sin notas'}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
                 )}
 
               </>
@@ -3744,8 +3744,8 @@ const guardarCuadreDiario = async ({ estilistaId, fecha, netoDia }) => {
                 const estadoClass = estado === 'cancelado'
                   ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
                   : estado === 'parcial'
-                  ? 'bg-amber-100 text-amber-700 border-amber-200'
-                  : 'bg-rose-100 text-rose-700 border-rose-200';
+                    ? 'bg-amber-100 text-amber-700 border-amber-200'
+                    : 'bg-rose-100 text-rose-700 border-rose-200';
                 return (
                   <tr
                     key={deudaId}

@@ -14,6 +14,7 @@ from .views import (
     liquidar_dia_v2, liquidar_operacion_integral, cargar_deuda_puesto_dia, eliminar_estado_pago_historial, mover_fecha_estado_pago_dia, qz_certificate, qz_sign,
     reporte_ajuste_diario_unificado, cancelar_deuda_puesto_dias, cancelar_facturas_deuda_empleado,
     liquidar_pago_empleado_dias, abonar_deuda_puesto_dias,
+    CreditoViewSet, AbonoCreditoViewSet,
 )
 
 # Crear router para los viewsets
@@ -26,6 +27,8 @@ router.register(r'productos', ProductoViewSet, basename='producto')
 router.register(r'servicios-realizados', ServicioRealizadoViewSet, basename='servicio-realizado')
 router.register(r'ventas', VentaProductoViewSet, basename='venta')
 router.register(r'movimientos-inventario', MovimientoInventarioViewSet, basename='movimiento-inventario')
+router.register(r'creditos', CreditoViewSet, basename='credito')
+router.register(r'abonos-credito', AbonoCreditoViewSet, basename='abono-credito')
 
 urlpatterns = [
     # Autenticación JWT

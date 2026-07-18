@@ -844,3 +844,248 @@ class SaldoDeudaPuesto(models.Model):
 
     def __str__(self):
         return f"{self.estilista.nombre}: puesto=${self.saldo} consumo=${self.saldo_consumo}"
+
+
+class Credito(models.Model):
+    """
+    Modelo para gestionar créditos otorgados a empleados.
+    Completamente independiente del sistema de deudas y facturas.
+    """
+    
+    ESTADOS = [
+        ('activo', 'Activo'),
+        ('cancelado', 'Cancelado'),
+        ('vencido', 'Vencido'),
+        ('proximo_vencer', 'Próximo a vencer'),
+    ]
+    
+    estilista = models.ForeignKey(
+        Estilista,
+        on_delete=models.CASCADE,
+        related_name='creditos',
+        verbose_name='Empleado'
+    )
+    
+    valor_prestado = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        verbose_name='Valor prestado'
+    )
+    
+    porcentaje_interes = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        verbose_name='Porcentaje de interés (%)'
+    )
+    
+    valor_interes = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        verbose_name='Valor del interés'
+    )
+    
+    valor_total = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        verbose_name='Valor total (prestado + interés)'
+    )
+    
+    saldo_actual = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        verbose_name='Saldo actual pendiente'
+    )
+    
+    fecha_inicio = models.DateField(verbose_name='Fecha de inicio')
+    
+    plazo_dias = models.IntegerField(
+        default=30,
+        verbose_name='Plazo en días'
+    )
+    
+    fecha_vencimiento = models.DateField(verbose_name='Fecha de vencimiento')
+    
+    estado = models.CharField(
+        max_length=20,
+        choices=ESTADOS,
+        default='activo',
+        verbose_name='Estado'
+    )
+    
+    observaciones = models.TextField(
+        blank=True,
+        null=True,
+        verbose_name='Observaciones'
+    )
+    
+    usuario_creador = models.ForeignKey(
+        Usuario,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='creditos_creados',
+        verbose_name='Usuario que creó el crédito'
+    )
+    
+    fecha_creacion = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name='Fecha de creación'
+    )
+
+    fecha_actualizacion = models.DateTimeField(
+        auto_now=True,
+        verbose_name='Última actualización'
+    )
+
+    usuario_editor = models.ForeignKey(
+        Usuario,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='creditos_editados',
+        verbose_name='Usuario que modificó el crédito'
+    )
+
+    class Meta:
+        db_table = 'creditos'
+        verbose_name = 'Crédito'
+        verbose_name_plural = 'Créditos'
+        ordering = ['-fecha_creacion']
+        indexes = [
+            models.Index(fields=['estilista', '-fecha_creacion']),
+            models.Index(fields=['estado', '-fecha_creacion']),
+            models.Index(fields=['fecha_vencimiento']),
+        ]
+    
+    def __str__(self):
+        return f"Crédito {self.id} - {self.estilista.nombre}: ${self.valor_total} ({self.estado})"
+
+
+class AbonoCredito(models.Model):
+    """
+    Modelo para registrar abonos a créditos.
+    """
+    
+    credito = models.ForeignKey(
+        Credito,
+        on_delete=models.CASCADE,
+        related_name='abonos',
+        verbose_name='Crédito'
+    )
+    
+    fecha = models.DateField(verbose_name='Fecha del abono')
+    
+    valor_abono = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        verbose_name='Valor abonado'
+    )
+    
+    saldo_anterior = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        verbose_name='Saldo anterior'
+    )
+    
+    saldo_restante = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        verbose_name='Saldo restante después del abono'
+    )
+    
+    observaciones = models.TextField(
+        blank=True,
+        null=True,
+        verbose_name='Observaciones'
+    )
+    
+    usuario = models.ForeignKey(
+        Usuario,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='abonos_credito',
+        verbose_name='Usuario que registró el abono'
+    )
+    
+    fecha_creacion = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name='Fecha de creación'
+    )
+    
+    class Meta:
+        db_table = 'abonos_credito'
+        verbose_name = 'Abono de Crédito'
+        verbose_name_plural = 'Abonos de Crédito'
+        ordering = ['-fecha']
+        indexes = [
+            models.Index(fields=['credito', '-fecha']),
+        ]
+    
+    def __str__(self):
+        return f"Abono {self.id} - Crédito {self.credito.id}: ${self.valor_abono}"
+
+
+class CreditoHistorial(models.Model):
+    """
+    Bitácora de auditoría de créditos y sus abonos, para trazabilidad y
+    consultas administrativas. Se conserva de forma permanente incluso si el
+    crédito referenciado llega a eliminarse (estilista queda como ancla).
+    """
+
+    ACCIONES = [
+        ('credito_creado', 'Crédito creado'),
+        ('credito_editado', 'Crédito editado'),
+        ('credito_cancelado', 'Crédito cancelado'),
+        ('credito_eliminado', 'Crédito eliminado'),
+        ('abono_creado', 'Abono registrado'),
+        ('abono_editado', 'Abono editado'),
+        ('abono_eliminado', 'Abono eliminado'),
+    ]
+
+    credito = models.ForeignKey(
+        Credito,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='historial',
+        verbose_name='Crédito'
+    )
+
+    estilista = models.ForeignKey(
+        Estilista,
+        on_delete=models.CASCADE,
+        related_name='historial_creditos',
+        verbose_name='Empleado'
+    )
+
+    accion = models.CharField(max_length=30, choices=ACCIONES, verbose_name='Acción')
+
+    detalle = models.TextField(blank=True, null=True, verbose_name='Detalle')
+
+    usuario = models.ForeignKey(
+        Usuario,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='historial_creditos_generado',
+        verbose_name='Usuario'
+    )
+
+    fecha = models.DateTimeField(auto_now_add=True, verbose_name='Fecha')
+
+    class Meta:
+        db_table = 'creditos_historial'
+        verbose_name = 'Historial de crédito'
+        verbose_name_plural = 'Historial de créditos'
+        ordering = ['-fecha']
+        indexes = [
+            models.Index(fields=['estilista', '-fecha']),
+            models.Index(fields=['credito', '-fecha']),
+        ]
+
+    def __str__(self):
+        return f"{self.get_accion_display()} - {self.estilista.nombre} ({self.fecha:%Y-%m-%d %H:%M})"

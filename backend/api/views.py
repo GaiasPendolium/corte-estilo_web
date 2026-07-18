@@ -26,14 +26,19 @@ from .models import (
     Usuario, Estilista, Servicio, Cliente, Producto,
     ServicioRealizado, VentaProducto, MovimientoInventario, EstadoPagoEstilistaDia,
     DeudaConsumoEmpleado, AbonoDeudaEmpleado, ServicioRealizadoAdicional,
-    EstadoPagoEstilistaHistorial, FactLiquidacionEstilistaDia, SaldoDeudaPuesto
+    EstadoPagoEstilistaHistorial, FactLiquidacionEstilistaDia, SaldoDeudaPuesto,
+    Credito, AbonoCredito, CreditoHistorial
 )
 from .serializers import (
     UsuarioSerializer, EstilistaSerializer, ServicioSerializer, ClienteSerializer,
     ProductoSerializer, ServicioRealizadoSerializer, VentaProductoSerializer,
     MovimientoInventarioSerializer, ReporteVentasSerializer,
-    ReporteServiciosSerializer, EstadisticasGeneralesSerializer
+    ReporteServiciosSerializer, EstadisticasGeneralesSerializer,
+    CreditoListSerializer, CreditoDetailSerializer, CreditoCreateSerializer,
+    CreditoUpdateSerializer, AbonoCreditoSerializer, EstilistaResumenCreditosSerializer,
+    ResumenCreditosSerializer, CreditoHistorialSerializer
 )
+from .serializers import _recalcular_cadena_abonos
 
 
 logger = logging.getLogger(__name__)
@@ -42,6 +47,33 @@ logger = logging.getLogger(__name__)
 def _es_admin_o_gerente(user):
     rol_user = (getattr(user, 'rol', '') or '').strip().lower()
     return rol_user in {'administrador', 'gerente'}
+
+
+def _tiene_permiso_ui(user, menu_key, action='view', submenu_key=None):
+    """
+    Valida `permisos_ui` (el mismo JSON que ya existe en Usuario y que el
+    frontend usa via hasMenuPermission/hasSubmenuPermission en
+    frontend/src/utils/permissions.js) tambien del lado del servidor. No es un
+    sistema de permisos nuevo: lee la misma fuente de datos, con la misma
+    forma de claves (menu -> accion, o menu -> submenus -> submenu -> accion).
+
+    Administrador/Gerente siempre tienen acceso completo, igual que en el
+    frontend (getDefaultPermissionsForRole).
+    """
+    rol_user = (getattr(user, 'rol', '') or '').strip().lower()
+    if rol_user in {'administrador', 'gerente'}:
+        return True
+
+    permisos = getattr(user, 'permisos_ui', None) or {}
+    menu = permisos.get(menu_key) or {}
+
+    if submenu_key:
+        if not menu.get('view'):
+            return False
+        submenu = (menu.get('submenus') or {}).get(submenu_key) or {}
+        return bool(submenu.get(action))
+
+    return bool(menu.get(action))
 
 
 def _qz_allowed_origins():
@@ -6629,3 +6661,384 @@ def bi_resumen_diario(request):
             'texto_resumen': texto,
         }
     )
+
+
+# ============================================================================
+# VIEWSETS PARA EL MÓDULO DE CRÉDITOS
+# ============================================================================
+
+class CreditoViewSet(viewsets.ModelViewSet):
+    """ViewSet para gestionar créditos a empleados"""
+
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['estilista', 'estado']
+    search_fields = ['estilista__nombre', 'observaciones']
+    ordering_fields = ['fecha_inicio', 'fecha_vencimiento', 'saldo_actual']
+    ordering = ['-fecha_creacion']
+
+    def get_queryset(self):
+        """Filtrar créditos con opciones avanzadas"""
+        if not _tiene_permiso_ui(self.request.user, 'creditos', 'view'):
+            raise PermissionDenied('No tienes permiso para ver el módulo de Créditos.')
+
+        queryset = Credito.objects.select_related('estilista', 'usuario_creador', 'usuario_editor').prefetch_related('abonos').all()
+
+        fecha_inicio = self.request.query_params.get('fecha_inicio_desde')
+        if fecha_inicio:
+            queryset = queryset.filter(fecha_inicio__gte=fecha_inicio)
+
+        fecha_vencimiento = self.request.query_params.get('fecha_vencimiento_hasta')
+        if fecha_vencimiento:
+            queryset = queryset.filter(fecha_vencimiento__lte=fecha_vencimiento)
+
+        return queryset
+
+    def get_serializer_class(self):
+        """Usar serializer adecuado según la acción"""
+        if self.action == 'retrieve':
+            return CreditoDetailSerializer
+        elif self.action == 'create':
+            return CreditoCreateSerializer
+        elif self.action in ('update', 'partial_update'):
+            return CreditoUpdateSerializer
+        return CreditoListSerializer
+
+    def _verificar_permiso(self, action_key):
+        if not _tiene_permiso_ui(self.request.user, 'creditos', action_key):
+            raise PermissionDenied('No tienes permiso para esta acción sobre Créditos.')
+
+    def create(self, request, *args, **kwargs):
+        self._verificar_permiso('create')
+        return super().create(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        self._verificar_permiso('edit')
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        self._verificar_permiso('edit')
+        return super().partial_update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        self._verificar_permiso('delete')
+        instance = self.get_object()
+        if instance.abonos.exists():
+            return Response(
+                {'error': 'No se puede eliminar un crédito que ya tiene abonos registrados.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        estilista = instance.estilista
+        CreditoHistorial.objects.create(
+            credito=None,
+            estilista=estilista,
+            accion='credito_eliminado',
+            detalle=f"Crédito #{instance.id} eliminado (valor total ${instance.valor_total}), sin abonos registrados.",
+            usuario=request.user,
+        )
+        instance.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    def perform_create(self, serializer):
+        """Crear crédito y registrar auditoría"""
+        serializer.context['request'] = self.request
+        credito = serializer.save()
+        CreditoHistorial.objects.create(
+            credito=credito,
+            estilista=credito.estilista,
+            accion='credito_creado',
+            detalle=(
+                f"Crédito creado: prestado ${credito.valor_prestado}, "
+                f"interés {credito.porcentaje_interes}%, total ${credito.valor_total}, "
+                f"vence {credito.fecha_vencimiento}."
+            ),
+            usuario=self.request.user,
+        )
+
+    def perform_update(self, serializer):
+        """Editar crédito y registrar auditoría"""
+        serializer.context['request'] = self.request
+        credito = serializer.save()
+        accion = 'credito_cancelado' if credito.estado == 'cancelado' else 'credito_editado'
+        CreditoHistorial.objects.create(
+            credito=credito,
+            estilista=credito.estilista,
+            accion=accion,
+            detalle=f"Crédito actualizado. Estado: {credito.estado}, saldo actual: ${credito.saldo_actual}.",
+            usuario=self.request.user,
+        )
+
+    @action(detail=False, methods=['get'])
+    def resumen(self, request):
+        """Obtener resumen general de créditos"""
+        if not _tiene_permiso_ui(request.user, 'creditos', 'view'):
+            raise PermissionDenied('No tienes permiso para ver el módulo de Créditos.')
+
+        creditos = Credito.objects.all()
+
+        total_prestado = creditos.aggregate(Sum('valor_prestado'))['valor_prestado__sum'] or 0
+        total_abonado = sum((c.valor_total - c.saldo_actual for c in creditos), Decimal(0))
+        saldo_pendiente = creditos.aggregate(Sum('saldo_actual'))['saldo_actual__sum'] or 0
+        creditos_activos = creditos.exclude(estado='cancelado').count()
+        creditos_cancelados = creditos.filter(estado='cancelado').count()
+        empleados_con_creditos = creditos.values('estilista').distinct().count()
+
+        data = {
+            'total_prestado': total_prestado,
+            'total_abonado': total_abonado,
+            'saldo_pendiente': saldo_pendiente,
+            'creditos_activos': creditos_activos,
+            'creditos_cancelados': creditos_cancelados,
+            'empleados_con_creditos': empleados_con_creditos
+        }
+
+        serializer = ResumenCreditosSerializer(data)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['get'])
+    def por_empleado(self, request):
+        """
+        Resumen de créditos por empleado. Se listan TODOS los empleados activos
+        (los mismos que en el resto de la app, ej. Empleados/Liquidación), no
+        solo los que ya tienen algún crédito -- si no, nunca se podría elegir a
+        alguien para otorgarle su primer crédito.
+        """
+        if not _tiene_permiso_ui(request.user, 'creditos', 'view'):
+            raise PermissionDenied('No tienes permiso para ver el módulo de Créditos.')
+
+        estilistas = Estilista.objects.filter(activo=True).order_by('nombre').prefetch_related('creditos')
+        serializer = EstilistaResumenCreditosSerializer(estilistas, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['get'])
+    def historial(self, request):
+        """Bitácora de auditoría de créditos, opcionalmente filtrada por estilista_id"""
+        if not _tiene_permiso_ui(request.user, 'creditos', 'view', 'reportes'):
+            raise PermissionDenied('No tienes permiso para ver el historial de auditoría de Créditos.')
+
+        qs = CreditoHistorial.objects.select_related('estilista', 'usuario', 'credito').all()
+        estilista_id = request.query_params.get('estilista_id')
+        if estilista_id:
+            qs = qs.filter(estilista_id=estilista_id)
+
+        serializer = CreditoHistorialSerializer(qs[:300], many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['get'], url_path='exportar-excel')
+    def exportar_excel(self, request):
+        """Exporta créditos a CSV (compatible con Excel), opcionalmente filtrado por estilista_id"""
+        if not _tiene_permiso_ui(request.user, 'creditos', 'export_excel', 'reportes'):
+            raise PermissionDenied('No tienes permiso para exportar Créditos a Excel.')
+
+        estilista_id = request.query_params.get('estilista_id')
+        creditos = Credito.objects.select_related('estilista')
+        if estilista_id:
+            creditos = creditos.filter(estilista_id=estilista_id)
+
+        hoy = timezone.localdate()
+        response = HttpResponse(content_type='text/csv; charset=utf-8')
+        response['Content-Disposition'] = f'attachment; filename="creditos_{hoy}.csv"'
+        writer = csv.writer(response)
+        writer.writerow(['REPORTE DE CRÉDITOS'])
+        writer.writerow(['Generado', timezone.localtime().strftime('%Y-%m-%d %H:%M:%S')])
+        writer.writerow([])
+        writer.writerow([
+            'Empleado', 'Fecha inicio', 'Valor prestado', 'Interés %', 'Valor interés',
+            'Valor total', 'Total abonado', 'Saldo pendiente', 'Fecha vencimiento', 'Estado',
+        ])
+        for c in creditos.order_by('estilista__nombre', '-fecha_creacion'):
+            estado = 'vencido' if c.estado == 'activo' and c.saldo_actual > 0 and c.fecha_vencimiento < hoy else c.estado
+            writer.writerow([
+                c.estilista.nombre,
+                c.fecha_inicio.strftime('%Y-%m-%d'),
+                f"${float(c.valor_prestado):,.2f}",
+                f"{c.porcentaje_interes}%",
+                f"${float(c.valor_interes):,.2f}",
+                f"${float(c.valor_total):,.2f}",
+                f"${float(c.valor_total - c.saldo_actual):,.2f}",
+                f"${float(c.saldo_actual):,.2f}",
+                c.fecha_vencimiento.strftime('%Y-%m-%d'),
+                estado,
+            ])
+        return response
+
+    @action(detail=False, methods=['get'], url_path='exportar-pdf')
+    def exportar_pdf(self, request):
+        """Exporta créditos a PDF, opcionalmente filtrado por estilista_id"""
+        if not _tiene_permiso_ui(request.user, 'creditos', 'export_pdf', 'reportes'):
+            raise PermissionDenied('No tienes permiso para exportar Créditos a PDF.')
+
+        try:
+            from reportlab.lib.pagesizes import letter
+            from reportlab.lib import colors
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.lib.units import inch
+            from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+            from reportlab.lib.enums import TA_CENTER
+        except Exception:
+            return Response(
+                {'error': 'La exportación PDF requiere instalar reportlab.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        estilista_id = request.query_params.get('estilista_id')
+        creditos = Credito.objects.select_related('estilista')
+        if estilista_id:
+            creditos = creditos.filter(estilista_id=estilista_id)
+        creditos = list(creditos.order_by('estilista__nombre', '-fecha_creacion'))
+
+        try:
+            buffer = io.BytesIO()
+            doc = SimpleDocTemplate(buffer, pagesize=letter, topMargin=0.5 * inch, bottomMargin=0.5 * inch)
+            styles = getSampleStyleSheet()
+            title_style = ParagraphStyle(
+                'CreditoTitle', parent=styles['Heading1'], fontSize=16,
+                alignment=TA_CENTER, textColor=colors.HexColor('#5b21b6'),
+            )
+            hoy = timezone.localdate()
+            story = [
+                Paragraph('Reporte de Créditos', title_style),
+                Paragraph(f'Generado: {timezone.localtime().strftime("%Y-%m-%d %H:%M:%S")}', styles['Normal']),
+                Spacer(1, 0.25 * inch),
+            ]
+            data = [['Empleado', 'Prestado', 'Interés', 'Total', 'Abonado', 'Saldo', 'Vence', 'Estado']]
+            for c in creditos:
+                estado = 'Vencido' if c.estado == 'activo' and c.saldo_actual > 0 and c.fecha_vencimiento < hoy else c.estado.capitalize()
+                data.append([
+                    c.estilista.nombre,
+                    f"${float(c.valor_prestado):,.0f}",
+                    f"{c.porcentaje_interes}%",
+                    f"${float(c.valor_total):,.0f}",
+                    f"${float(c.valor_total - c.saldo_actual):,.0f}",
+                    f"${float(c.saldo_actual):,.0f}",
+                    c.fecha_vencimiento.strftime('%Y-%m-%d'),
+                    estado,
+                ])
+            tabla = Table(data, repeatRows=1)
+            tabla.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#5b21b6')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f5f3ff')]),
+            ]))
+            story.append(tabla)
+            doc.build(story)
+            buffer.seek(0)
+        except Exception as e:
+            return Response(
+                {'error': f'Error generando PDF: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        response = HttpResponse(buffer.read(), content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="creditos_{timezone.localdate()}.pdf"'
+        return response
+
+
+class AbonoCreditoViewSet(viewsets.ModelViewSet):
+    """ViewSet para registrar, editar y eliminar abonos a créditos"""
+
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['credito', 'credito__estilista']
+    search_fields = ['observaciones']
+    ordering_fields = ['fecha']
+    ordering = ['-fecha']
+    serializer_class = AbonoCreditoSerializer
+
+    def get_queryset(self):
+        """Filtrar abonos con opciones avanzadas"""
+        if not _tiene_permiso_ui(self.request.user, 'creditos', 'view'):
+            raise PermissionDenied('No tienes permiso para ver el módulo de Créditos.')
+
+        queryset = AbonoCredito.objects.select_related('credito', 'credito__estilista', 'usuario').all()
+
+        fecha_desde = self.request.query_params.get('fecha_desde')
+        if fecha_desde:
+            queryset = queryset.filter(fecha__gte=fecha_desde)
+
+        fecha_hasta = self.request.query_params.get('fecha_hasta')
+        if fecha_hasta:
+            queryset = queryset.filter(fecha__lte=fecha_hasta)
+
+        return queryset
+
+    def _verificar_permiso(self, action_key):
+        if not _tiene_permiso_ui(self.request.user, 'creditos', action_key, 'abonos'):
+            raise PermissionDenied('No tienes permiso para esta acción sobre abonos de Créditos.')
+
+    def create(self, request, *args, **kwargs):
+        self._verificar_permiso('create')
+        return super().create(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        self._verificar_permiso('edit')
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        self._verificar_permiso('edit')
+        return super().partial_update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        self._verificar_permiso('delete')
+        instance = self.get_object()
+        credito = instance.credito
+        detalle = f"Abono de ${instance.valor_abono} del {instance.fecha} eliminado."
+        instance.delete()
+        _recalcular_cadena_abonos(credito)
+        CreditoHistorial.objects.create(
+            credito=credito,
+            estilista=credito.estilista,
+            accion='abono_eliminado',
+            detalle=detalle,
+            usuario=request.user,
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    def perform_create(self, serializer):
+        """Registrar abono, asignar usuario actual y auditar"""
+        abono = serializer.save(usuario=self.request.user)
+        CreditoHistorial.objects.create(
+            credito=abono.credito,
+            estilista=abono.credito.estilista,
+            accion='abono_creado',
+            detalle=f"Abono de ${abono.valor_abono} registrado. Saldo restante: ${abono.saldo_restante}.",
+            usuario=self.request.user,
+        )
+
+    def perform_update(self, serializer):
+        """Editar abono y auditar"""
+        abono = serializer.save()
+        CreditoHistorial.objects.create(
+            credito=abono.credito,
+            estilista=abono.credito.estilista,
+            accion='abono_editado',
+            detalle=f"Abono editado a ${abono.valor_abono}. Saldo restante: ${abono.saldo_restante}.",
+            usuario=self.request.user,
+        )
+
+    @action(detail=False, methods=['get'])
+    def por_credito(self, request):
+        """Obtener abonos de un crédito específico"""
+        if not _tiene_permiso_ui(request.user, 'creditos', 'view'):
+            raise PermissionDenied('No tienes permiso para ver el módulo de Créditos.')
+
+        credito_id = request.query_params.get('credito_id')
+        if not credito_id:
+            return Response(
+                {'error': 'Parámetro credito_id es requerido'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            credito = Credito.objects.get(id=credito_id)
+            abonos = credito.abonos.all()
+            serializer = AbonoCreditoSerializer(abonos, many=True)
+            return Response(serializer.data)
+        except Credito.DoesNotExist:
+            return Response(
+                {'error': 'Crédito no encontrado'},
+                status=status.HTTP_404_NOT_FOUND
+            )

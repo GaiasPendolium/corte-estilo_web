@@ -8,6 +8,7 @@ import Servicios from './pages/Servicios';
 import Productos from './pages/Productos';
 import Ventas from './pages/Ventas';
 import Reportes from './pages/Reportes';
+import Creditos from './pages/Creditos';
 import PantallaCliente from './pages/PantallaCliente';
 import ImpresionPOS from './pages/ImpresionPOS';
 import Layout from './components/Layout';
@@ -67,6 +68,7 @@ function App() {
           <Route path="ventas" element={<MenuRoute menuKey="ventas"><Ventas /></MenuRoute>} />
           <Route path="impresion-pos" element={<MenuRoute menuKey="impresion_pos"><ImpresionPOS /></MenuRoute>} />
           <Route path="reportes" element={<MenuRoute menuKey="reportes"><Reportes /></MenuRoute>} />
+          <Route path="creditos" element={<MenuRoute menuKey="creditos"><Creditos /></MenuRoute>} />
         </Route>
 
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

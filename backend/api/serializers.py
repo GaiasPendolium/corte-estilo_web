@@ -1,9 +1,12 @@
+from decimal import Decimal
+
 from rest_framework import serializers
 from django.utils import timezone
 from django.db import IntegrityError, connection, transaction
 from .models import (
     Usuario, Estilista, Servicio, Cliente, Producto,
-    ServicioRealizado, ServicioRealizadoAdicional, VentaProducto, MovimientoInventario
+    ServicioRealizado, ServicioRealizadoAdicional, VentaProducto, MovimientoInventario,
+    Credito, AbonoCredito, CreditoHistorial
 )
 
 
@@ -1375,3 +1378,391 @@ class EstadisticasGeneralesSerializer(serializers.Serializer):
     cantidad_ventas = serializers.IntegerField()
     cantidad_servicios = serializers.IntegerField()
     productos_bajo_stock = serializers.IntegerField()
+
+
+# ============================================================================
+# SERIALIZERS PARA EL MÓDULO DE CRÉDITOS
+# ============================================================================
+
+def _recalcular_cadena_abonos(credito):
+    """
+    Recalcula saldo_anterior/saldo_restante de TODOS los abonos de un crédito
+    en orden cronológico, y actualiza saldo_actual/estado del crédito.
+
+    Se debe llamar despues de CUALQUIER creacion, edicion o eliminacion de un
+    abono -- no solo actualizar el abono tocado -- para que la cadena de saldos
+    quede siempre consistente (mismo tipo de bug que SaldoDeudaPuesto/saldo_consumo
+    en el modulo de Reportes: un saldo encadenado que se desincroniza si solo se
+    toca el registro editado sin propagar el efecto a los siguientes).
+    """
+    saldo = Decimal(credito.valor_total or 0)
+    for abono in credito.abonos.order_by('fecha', 'id'):
+        abono.saldo_anterior = saldo
+        saldo = max(saldo - Decimal(abono.valor_abono or 0), Decimal(0))
+        abono.saldo_restante = saldo
+        abono.save(update_fields=['saldo_anterior', 'saldo_restante'])
+
+    credito.saldo_actual = saldo
+    if saldo <= 0:
+        credito.estado = 'cancelado'
+    elif credito.estado == 'cancelado':
+        # Se elimino/redujo un abono y el credito vuelve a tener saldo pendiente.
+        credito.estado = 'activo'
+    credito.save(update_fields=['saldo_actual', 'estado'])
+
+
+class AbonoCreditoSerializer(serializers.ModelSerializer):
+    """Serializador para registro y edición de abonos a créditos"""
+
+    usuario_nombre = serializers.CharField(source='usuario.nombre_completo', read_only=True)
+
+    class Meta:
+        model = AbonoCredito
+        fields = [
+            'id', 'credito', 'fecha', 'valor_abono',
+            'saldo_anterior', 'saldo_restante', 'observaciones',
+            'usuario', 'usuario_nombre', 'fecha_creacion'
+        ]
+        read_only_fields = ['saldo_anterior', 'saldo_restante', 'fecha_creacion']
+
+    def validate_valor_abono(self, value):
+        """Validar que el abono sea positivo"""
+        if value <= 0:
+            raise serializers.ValidationError('El valor abonado debe ser mayor a cero.')
+        return value
+
+    def validate(self, data):
+        """Validar que el abono no exceda el saldo disponible del crédito"""
+        credito = data.get('credito') or getattr(self.instance, 'credito', None)
+        valor_abono = data.get('valor_abono', getattr(self.instance, 'valor_abono', None))
+
+        if credito and valor_abono:
+            saldo_disponible = Decimal(credito.saldo_actual or 0)
+            if self.instance is not None:
+                # Al editar, el efecto del valor anterior de ESTE abono se va a
+                # recalcular de cero, asi que se devuelve antes de comparar.
+                saldo_disponible += Decimal(self.instance.valor_abono or 0)
+            if Decimal(valor_abono) > saldo_disponible:
+                raise serializers.ValidationError({
+                    'valor_abono': f'No puede abonar más del saldo disponible (${saldo_disponible:.2f})'
+                })
+
+        return data
+
+    def create(self, validated_data):
+        """Crear abono y recalcular la cadena de saldos del crédito"""
+        credito = validated_data['credito']
+        # saldo_anterior/saldo_restante son read_only (calculados), asi que no
+        # llegan en validated_data. Se crean en 0 como placeholder -- el
+        # recalculo de la cadena que sigue los deja con el valor correcto.
+        abono = AbonoCredito.objects.create(
+            **validated_data,
+            saldo_anterior=Decimal(0),
+            saldo_restante=Decimal(0),
+        )
+        _recalcular_cadena_abonos(credito)
+        abono.refresh_from_db()
+        return abono
+
+    def update(self, instance, validated_data):
+        """Editar un abono existente y recalcular la cadena completa del crédito"""
+        credito = validated_data.get('credito', instance.credito)
+        instance.fecha = validated_data.get('fecha', instance.fecha)
+        instance.valor_abono = validated_data.get('valor_abono', instance.valor_abono)
+        instance.observaciones = validated_data.get('observaciones', instance.observaciones)
+        instance.save(update_fields=['fecha', 'valor_abono', 'observaciones'])
+        _recalcular_cadena_abonos(credito)
+        instance.refresh_from_db()
+        return instance
+
+
+class CreditoListSerializer(serializers.ModelSerializer):
+    """Serializador para listar créditos (versión compacta)"""
+
+    estilista_nombre = serializers.CharField(source='estilista.nombre', read_only=True)
+    usuario_creador_nombre = serializers.CharField(source='usuario_creador.nombre_completo', read_only=True)
+    usuario_editor_nombre = serializers.CharField(source='usuario_editor.nombre_completo', read_only=True)
+    porcentaje_pagado = serializers.SerializerMethodField()
+    estado_calculado = serializers.SerializerMethodField()
+    abonos_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Credito
+        fields = [
+            'id', 'estilista', 'estilista_nombre', 'valor_prestado',
+            'porcentaje_interes', 'valor_interes', 'valor_total',
+            'saldo_actual', 'fecha_inicio', 'fecha_vencimiento', 'plazo_dias',
+            'estado', 'estado_calculado', 'usuario_creador_nombre',
+            'usuario_editor_nombre', 'fecha_creacion', 'fecha_actualizacion',
+            'porcentaje_pagado', 'abonos_count',
+        ]
+
+    def get_abonos_count(self, obj):
+        # obj.abonos.all() ya viene precargado via prefetch_related en el
+        # queryset del ViewSet; usar .all() en vez de .count() evita una
+        # query nueva por fila.
+        return len(obj.abonos.all())
+
+    def get_porcentaje_pagado(self, obj):
+        """Calcular porcentaje de pago"""
+        if obj.valor_total == 0:
+            return 0
+        pagado = obj.valor_total - obj.saldo_actual
+        porcentaje = (pagado / obj.valor_total) * 100
+        return round(porcentaje, 2)
+
+    def get_estado_calculado(self, obj):
+        """Estado real considerando vencimiento (no hay tarea en segundo plano
+        que actualice 'estado' cuando se vence; se calcula en lectura)."""
+        from datetime import date
+        if obj.estado == 'activo' and obj.saldo_actual > 0 and obj.fecha_vencimiento < date.today():
+            return 'vencido'
+        return obj.estado
+
+
+class CreditoDetailSerializer(serializers.ModelSerializer):
+    """Serializador detallado para créditos"""
+
+    estilista_nombre = serializers.CharField(source='estilista.nombre', read_only=True)
+    usuario_creador_nombre = serializers.CharField(source='usuario_creador.nombre_completo', read_only=True)
+    usuario_editor_nombre = serializers.CharField(source='usuario_editor.nombre_completo', read_only=True)
+    abonos = AbonoCreditoSerializer(many=True, read_only=True)
+    porcentaje_pagado = serializers.SerializerMethodField()
+    total_abonado = serializers.SerializerMethodField()
+    dias_restantes = serializers.SerializerMethodField()
+    dias_transcurridos = serializers.SerializerMethodField()
+    estado_calculado = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Credito
+        fields = [
+            'id', 'estilista', 'estilista_nombre', 'valor_prestado',
+            'porcentaje_interes', 'valor_interes', 'valor_total',
+            'saldo_actual', 'total_abonado', 'fecha_inicio', 'fecha_vencimiento',
+            'plazo_dias', 'dias_restantes', 'dias_transcurridos', 'estado',
+            'estado_calculado', 'observaciones',
+            'usuario_creador', 'usuario_creador_nombre',
+            'usuario_editor', 'usuario_editor_nombre',
+            'fecha_creacion', 'fecha_actualizacion', 'abonos', 'porcentaje_pagado'
+        ]
+        read_only_fields = ['fecha_creacion', 'fecha_actualizacion']
+
+    def get_porcentaje_pagado(self, obj):
+        """Calcular porcentaje de pago"""
+        if obj.valor_total == 0:
+            return 0
+        pagado = obj.valor_total - obj.saldo_actual
+        porcentaje = (pagado / obj.valor_total) * 100
+        return round(porcentaje, 2)
+
+    def get_total_abonado(self, obj):
+        """Obtener total abonado"""
+        return obj.valor_total - obj.saldo_actual
+
+    def get_dias_restantes(self, obj):
+        """Calcular días restantes hasta vencimiento"""
+        from datetime import date
+        hoy = date.today()
+        if obj.fecha_vencimiento > hoy:
+            return (obj.fecha_vencimiento - hoy).days
+        return 0
+
+    def get_dias_transcurridos(self, obj):
+        """Calcular días transcurridos desde el inicio del crédito"""
+        from datetime import date
+        hoy = date.today()
+        if hoy > obj.fecha_inicio:
+            return (hoy - obj.fecha_inicio).days
+        return 0
+
+    def get_estado_calculado(self, obj):
+        from datetime import date
+        if obj.estado == 'activo' and obj.saldo_actual > 0 and obj.fecha_vencimiento < date.today():
+            return 'vencido'
+        return obj.estado
+
+
+class CreditoCreateSerializer(serializers.ModelSerializer):
+    """Serializador para crear créditos"""
+
+    class Meta:
+        model = Credito
+        fields = [
+            'id', 'estilista', 'valor_prestado', 'porcentaje_interes',
+            'plazo_dias', 'fecha_inicio', 'observaciones'
+        ]
+        read_only_fields = ['id']
+
+    def validate_valor_prestado(self, value):
+        """Validar que el valor prestado sea mayor a cero"""
+        if value <= 0:
+            raise serializers.ValidationError('El valor prestado debe ser mayor a cero.')
+        return value
+
+    def validate_porcentaje_interes(self, value):
+        """Validar que el interés no sea negativo"""
+        if value < 0:
+            raise serializers.ValidationError('El porcentaje de interés no puede ser negativo.')
+        return value
+
+    def validate_plazo_dias(self, value):
+        """Validar que el plazo sea positivo"""
+        if value <= 0:
+            raise serializers.ValidationError('El plazo debe ser mayor a cero.')
+        return value
+
+    def create(self, validated_data):
+        """Crear crédito calculando automáticamente interés, total y fecha de vencimiento"""
+        from datetime import timedelta
+
+        valor_prestado = validated_data['valor_prestado']
+        porcentaje_interes = validated_data['porcentaje_interes']
+        plazo_dias = validated_data['plazo_dias']
+        fecha_inicio = validated_data['fecha_inicio']
+
+        valor_interes = valor_prestado * porcentaje_interes / 100
+        valor_total = valor_prestado + valor_interes
+        fecha_vencimiento = fecha_inicio + timedelta(days=plazo_dias)
+
+        credito = Credito.objects.create(
+            estilista=validated_data['estilista'],
+            valor_prestado=valor_prestado,
+            porcentaje_interes=porcentaje_interes,
+            valor_interes=valor_interes,
+            valor_total=valor_total,
+            saldo_actual=valor_total,
+            fecha_inicio=fecha_inicio,
+            plazo_dias=plazo_dias,
+            fecha_vencimiento=fecha_vencimiento,
+            estado='activo',
+            observaciones=validated_data.get('observaciones', ''),
+            usuario_creador=self.context['request'].user if 'request' in self.context else None
+        )
+
+        return credito
+
+
+class CreditoUpdateSerializer(serializers.ModelSerializer):
+    """
+    Serializador para actualizar créditos. Los términos financieros
+    (porcentaje_interes/plazo_dias/fecha_inicio) solo son editables si el
+    crédito todavía no tiene abonos registrados -- una vez hay movimientos,
+    cambiar esos valores corrompería la cadena de saldos de los abonos ya
+    guardados. Con abonos, solo quedan editables observaciones/estado.
+    """
+
+    class Meta:
+        model = Credito
+        fields = ['observaciones', 'estado', 'porcentaje_interes', 'plazo_dias', 'fecha_inicio']
+        extra_kwargs = {
+            'porcentaje_interes': {'required': False},
+            'plazo_dias': {'required': False},
+            'fecha_inicio': {'required': False},
+        }
+
+    def validate_estado(self, value):
+        instance = self.instance
+        if instance and instance.estado == 'cancelado' and value != 'cancelado':
+            raise serializers.ValidationError('No se puede reabrir un crédito cancelado.')
+        return value
+
+    def validate(self, data):
+        instance = self.instance
+        campos_financieros = {'porcentaje_interes', 'plazo_dias', 'fecha_inicio'}
+        if instance and instance.abonos.exists() and campos_financieros.intersection(data.keys()):
+            raise serializers.ValidationError(
+                'El crédito ya tiene abonos registrados; solo se pueden editar observaciones o cancelarlo.'
+            )
+        return data
+
+    def update(self, instance, validated_data):
+        from datetime import timedelta
+
+        recalcular = any(k in validated_data for k in ('porcentaje_interes', 'plazo_dias', 'fecha_inicio'))
+
+        instance.observaciones = validated_data.get('observaciones', instance.observaciones)
+        instance.estado = validated_data.get('estado', instance.estado)
+
+        if recalcular:
+            instance.porcentaje_interes = validated_data.get('porcentaje_interes', instance.porcentaje_interes)
+            instance.plazo_dias = validated_data.get('plazo_dias', instance.plazo_dias)
+            instance.fecha_inicio = validated_data.get('fecha_inicio', instance.fecha_inicio)
+            instance.valor_interes = instance.valor_prestado * instance.porcentaje_interes / 100
+            instance.valor_total = instance.valor_prestado + instance.valor_interes
+            instance.saldo_actual = instance.valor_total
+            instance.fecha_vencimiento = instance.fecha_inicio + timedelta(days=instance.plazo_dias)
+
+        request = self.context.get('request')
+        if request is not None:
+            instance.usuario_editor = request.user
+
+        instance.save()
+        return instance
+
+
+class CreditoHistorialSerializer(serializers.ModelSerializer):
+    """Serializador de la bitácora de auditoría de créditos"""
+
+    usuario_nombre = serializers.CharField(source='usuario.nombre_completo', read_only=True)
+    estilista_nombre = serializers.CharField(source='estilista.nombre', read_only=True)
+    accion_display = serializers.CharField(source='get_accion_display', read_only=True)
+
+    class Meta:
+        model = CreditoHistorial
+        fields = [
+            'id', 'credito', 'estilista', 'estilista_nombre', 'accion',
+            'accion_display', 'detalle', 'usuario', 'usuario_nombre', 'fecha',
+        ]
+
+
+class EstilistaResumenCreditosSerializer(serializers.ModelSerializer):
+    """Serializador para obtener resumen de créditos por empleado"""
+
+    total_prestado = serializers.SerializerMethodField()
+    total_otorgado = serializers.SerializerMethodField()
+    total_abonado = serializers.SerializerMethodField()
+    saldo_pendiente = serializers.SerializerMethodField()
+    creditos_activos = serializers.SerializerMethodField()
+    creditos_cancelados = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Estilista
+        fields = [
+            'id', 'nombre', 'total_prestado', 'total_otorgado', 'total_abonado',
+            'saldo_pendiente', 'creditos_activos', 'creditos_cancelados'
+        ]
+
+    def get_total_prestado(self, obj):
+        """Sumar valores prestados (capital, sin interés) de todos los créditos"""
+        return sum((c.valor_prestado for c in obj.creditos.all()), Decimal(0))
+
+    def get_total_otorgado(self, obj):
+        """Sumar valor total otorgado (capital + interés) de todos los créditos"""
+        return sum((c.valor_total for c in obj.creditos.all()), Decimal(0))
+
+    def get_total_abonado(self, obj):
+        """Sumar total abonado de todos los créditos"""
+        return sum((c.valor_total - c.saldo_actual for c in obj.creditos.all()), Decimal(0))
+
+    def get_saldo_pendiente(self, obj):
+        """Sumar saldos pendientes de todos los créditos"""
+        return sum((c.saldo_actual for c in obj.creditos.all()), Decimal(0))
+
+    def get_creditos_activos(self, obj):
+        """Contar créditos activos (incluye vencidos, siguen con saldo pendiente)"""
+        return sum(1 for c in obj.creditos.all() if c.estado != 'cancelado')
+
+    def get_creditos_cancelados(self, obj):
+        """Contar créditos cancelados"""
+        return sum(1 for c in obj.creditos.all() if c.estado == 'cancelado')
+
+
+class ResumenCreditosSerializer(serializers.Serializer):
+    """Serializador para resumen general de créditos"""
+
+    total_prestado = serializers.DecimalField(max_digits=12, decimal_places=2)
+    total_abonado = serializers.DecimalField(max_digits=12, decimal_places=2)
+    saldo_pendiente = serializers.DecimalField(max_digits=12, decimal_places=2)
+    creditos_activos = serializers.IntegerField()
+    creditos_cancelados = serializers.IntegerField()
+    empleados_con_creditos = serializers.IntegerField()

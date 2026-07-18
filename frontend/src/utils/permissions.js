@@ -5,6 +5,9 @@ export const ACTION_LABELS = {
   create: 'Crear',
   edit: 'Editar',
   delete: 'Eliminar',
+  export_excel: 'Exportar Excel',
+  export_pdf: 'Exportar PDF',
+  print: 'Imprimir',
 };
 
 export const MENU_PERMISSION_DEFINITIONS = [
@@ -54,6 +57,16 @@ export const MENU_PERMISSION_DEFINITIONS = [
       { key: 'cartera', label: 'Cartera empleado', actions: ['view', 'edit', 'delete'] },
       { key: 'ajuste', label: 'Ajuste diario', actions: ['view', 'edit'] },
       { key: 'agotarse', label: 'Productos por agotarse', actions: ['view'] },
+    ],
+  },
+  {
+    key: 'creditos',
+    label: 'Créditos',
+    path: '/creditos',
+    actions: ['view', 'create', 'edit', 'delete'],
+    submenus: [
+      { key: 'abonos', label: 'Abonos', actions: ['create', 'edit', 'delete'] },
+      { key: 'reportes', label: 'Reportes', actions: ['view', 'export_excel', 'export_pdf', 'print'] },
     ],
   },
 ];
@@ -127,6 +140,16 @@ export const getDefaultPermissionsForRole = (rol) => {
         cartera: { view: false, edit: false, delete: false },
         ajuste: { view: true, edit: false },
         agotarse: { view: false },
+      },
+    },
+    creditos: {
+      view: false,
+      create: false,
+      edit: false,
+      delete: false,
+      submenus: {
+        abonos: { create: false, edit: false, delete: false },
+        reportes: { view: false, export_excel: false, export_pdf: false, print: false },
       },
     },
   };
