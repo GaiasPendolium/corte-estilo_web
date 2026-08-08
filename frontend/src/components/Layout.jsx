@@ -8,6 +8,7 @@ import useAuthStore from '../store/authStore';
 import { toast } from 'react-toastify';
 import { roleLabel, isManagerRole } from '../utils/roles';
 import { hasMenuPermission } from '../utils/permissions';
+import { customerDisplayService } from '../services/customerDisplayService';
 
 const logoSalon = '/corte_estilo_logo.png';
 
@@ -25,7 +26,7 @@ const Layout = () => {
   };
 
   const abrirPantallaCliente = () => {
-    window.open('/pantalla-cliente', 'pantalla_cliente', 'noopener,noreferrer');
+    customerDisplayService.abrirVentana();
   };
 
   const esAdmin = isManagerRole(user?.rol);

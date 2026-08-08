@@ -3,6 +3,7 @@ import { Navigate } from 'react-router-dom';
 import { FiUser, FiLock, FiEye, FiEyeOff } from 'react-icons/fi';
 import { toast } from 'react-toastify';
 import useAuthStore from '../store/authStore';
+import { customerDisplayService } from '../services/customerDisplayService';
 
 const logoSalon = '/corte_estilo_logo.png';
 
@@ -35,6 +36,11 @@ const Login = () => {
     
     if (result.success) {
       toast.success('¡Bienvenido!');
+      // Abre sola la pantalla cliente en el segundo monitor -- el personal
+      // no tiene que acordarse de hacerlo. Si el navegador bloquea el popup
+      // (poco probable justo después de un clic del usuario), queda el
+      // botón manual del menú lateral como respaldo.
+      customerDisplayService.abrirVentana();
     } else {
       toast.error(result.error || 'Error al iniciar sesión');
     }

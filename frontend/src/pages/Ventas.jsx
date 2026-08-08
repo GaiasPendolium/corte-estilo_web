@@ -521,7 +521,7 @@ const Ventas = () => {
       await ticketPrintService.reprintProductSale(venta);
       toast.success('Ticket reenviado a impresora POS');
     } catch (error) {
-      toast.error(error?.message || 'No se pudo reenviar el ticket a QZ Tray');
+      toast.error('No se pudo reenviar el ticket a la impresora.');
     }
   };
 
@@ -530,7 +530,7 @@ const Ventas = () => {
       await ticketPrintService.reprintServiceSale(servicio);
       toast.success('Ticket reenviado a impresora POS');
     } catch (error) {
-      toast.error(error?.message || 'No se pudo reenviar el ticket a QZ Tray');
+      toast.error('No se pudo reenviar el ticket a la impresora.');
     }
   };
 
@@ -539,7 +539,7 @@ const Ventas = () => {
       await qzTrayService.openDrawer();
       toast.success('Comando de apertura enviado al cajon');
     } catch (error) {
-      toast.error(error.message || 'No se pudo abrir el cajon SAT');
+      toast.error('No se pudo abrir la caja registradora.');
     }
   };
 
@@ -1128,9 +1128,14 @@ const Ventas = () => {
                     const valorAuto = Number(estilistaCfg?.valor_cobro_espacio || 0);
                     const tipoActual = servicioVisualizar.tipo_reparto_establecimiento || '';
                     const valorActual = Number(servicioVisualizar.valor_reparto_establecimiento || 0);
+                    const tipoAutoLabel = {
+                      sin_cobro: 'Sin cobro',
+                      porcentaje_neto: `${valorAuto}% sobre neto`,
+                      costo_fijo_neto: `$${valorAuto.toLocaleString('es-CO')} fijo`,
+                    }[tipoAuto] || 'Sin cobro';
                     const origenReparto = tipoActual
-                      ? `${tipoActual} ${tipoActual === 'porcentaje' ? `${valorActual}%` : `$${valorActual.toFixed(2)}`}`
-                      : `Automatico por empleado: ${tipoAuto}${tipoAuto === 'porcentaje_neto' ? ` ${valorAuto}%` : tipoAuto === 'costo_fijo_neto' ? ` $${valorAuto.toFixed(2)}` : ''}`;
+                      ? (tipoActual === 'porcentaje' ? `${valorActual}%` : `$${valorActual.toLocaleString('es-CO')} fijo`)
+                      : `Automático según empleado (${tipoAutoLabel})`;
                     return (
                   <div className="grid grid-cols-2 gap-4">
                     <div>

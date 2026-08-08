@@ -141,8 +141,13 @@ STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 # Media files
+# MEDIA_ROOT_PATH permite apuntar a un volumen persistente de Railway (ej.
+# /data/media) para que las imágenes subidas (QR de pago de empleados, etc.)
+# no se pierdan en cada redeploy -- el filesystem del contenedor por defecto
+# es efímero. Si no está configurada la variable de entorno, usa el path
+# relativo local de siempre (comportamiento sin cambios en desarrollo).
 MEDIA_URL = 'media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+MEDIA_ROOT = config('MEDIA_ROOT_PATH', default=str(BASE_DIR / 'media'))
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'

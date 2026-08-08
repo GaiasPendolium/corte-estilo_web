@@ -10,7 +10,7 @@ from django.db.utils import OperationalError, ProgrammingError
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.http import HttpResponse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from decimal import Decimal
 from collections import defaultdict
 import base64
@@ -27,7 +27,8 @@ from .models import (
     ServicioRealizado, VentaProducto, MovimientoInventario, EstadoPagoEstilistaDia,
     DeudaConsumoEmpleado, AbonoDeudaEmpleado, ServicioRealizadoAdicional,
     EstadoPagoEstilistaHistorial, FactLiquidacionEstilistaDia, SaldoDeudaPuesto,
-    Credito, AbonoCredito, CreditoHistorial
+    Credito, AbonoCredito, CreditoHistorial, PersonaCredito,
+    DeudaEntreEmpleados, AbonoDeudaEntreEmpleados,
 )
 from .serializers import (
     UsuarioSerializer, EstilistaSerializer, ServicioSerializer, ClienteSerializer,
@@ -36,17 +37,14 @@ from .serializers import (
     ReporteServiciosSerializer, EstadisticasGeneralesSerializer,
     CreditoListSerializer, CreditoDetailSerializer, CreditoCreateSerializer,
     CreditoUpdateSerializer, AbonoCreditoSerializer, EstilistaResumenCreditosSerializer,
-    ResumenCreditosSerializer, CreditoHistorialSerializer
+    ResumenCreditosSerializer, CreditoHistorialSerializer,
+    PersonaCreditoSerializer, PersonaCreditoResumenSerializer,
+    DeudaEntreEmpleadosSerializer, AbonoDeudaEntreEmpleadosSerializer,
 )
 from .serializers import _recalcular_cadena_abonos
 
 
 logger = logging.getLogger(__name__)
-
-
-def _es_admin_o_gerente(user):
-    rol_user = (getattr(user, 'rol', '') or '').strip().lower()
-    return rol_user in {'administrador', 'gerente'}
 
 
 def _tiene_permiso_ui(user, menu_key, action='view', submenu_key=None):
@@ -74,6 +72,17 @@ def _tiene_permiso_ui(user, menu_key, action='view', submenu_key=None):
         return bool(submenu.get(action))
 
     return bool(menu.get(action))
+
+
+def _requerir_permiso_ui(user, menu_key, action='view', submenu_key=None, mensaje=None):
+    """Lanza PermissionDenied si el usuario no tiene el permiso_ui indicado.
+
+    Reemplaza los checks hardcodeados por rol para que lo que el
+    administrador/gerente habilite en Usuarios sea lo que efectivamente
+    decide qué puede hacer cada usuario, en vez del rol.
+    """
+    if not _tiene_permiso_ui(user, menu_key, action, submenu_key):
+        raise PermissionDenied(mensaje or 'No tienes permiso para realizar esta acción.')
 
 
 def _qz_allowed_origins():
@@ -161,18 +170,8 @@ def qz_sign(request):
         return HttpResponse('No se pudo firmar la solicitud', status=500, content_type='text/plain; charset=utf-8')
 
 
-def _es_recepcion(user):
-    rol_user = (getattr(user, 'rol', '') or '').strip().lower()
-    return rol_user in {'recepcion', 'recepcionista', 'recepción'}
-
-
-def _validar_edicion_admin_gerente(user, recurso):
-    if not _es_admin_o_gerente(user):
-        raise PermissionDenied(f'Solo administrador o gerente puede modificar {recurso}.')
-
-
 def _sanitizar_bi_para_recepcion(data):
-    """Oculta datos de módulos restringidos para recepción."""
+    """Oculta datos de módulos restringidos cuando el usuario no tiene permiso de ver 'agotarse'."""
     if not isinstance(data, dict):
         return data
     data['productos_bajo_stock'] = []
@@ -284,6 +283,34 @@ def _monto_establecimiento_resuelto(srv):
         return monto_establecimiento
 
     return Decimal(0)
+
+
+def _crear_deuda_entre_empleados_si_aplica(servicio_realizado):
+    """
+    Si un servicio se finaliza con `cobrado_por` distinto del `estilista` que
+    lo realizó (el cliente pagó una sola vez con el QR de un compañero, en
+    una visita con varios servicios de varios empleados), registra
+    automáticamente la deuda del que cobró hacia el que realizó el servicio,
+    por la parte que a este último le corresponde. Completamente aislado del
+    motor de liquidación con el negocio.
+    """
+    cobrado_por_id = servicio_realizado.cobrado_por_id
+    if not cobrado_por_id or cobrado_por_id == servicio_realizado.estilista_id:
+        return
+
+    monto = _monto_estilista_resuelto(servicio_realizado)
+    if monto <= 0:
+        return
+
+    DeudaEntreEmpleados.objects.create(
+        deudor_id=cobrado_por_id,
+        acreedor_id=servicio_realizado.estilista_id,
+        servicio_realizado=servicio_realizado,
+        monto=monto,
+        monto_abonado=Decimal(0),
+        saldo_pendiente=monto,
+        estado='pendiente',
+    )
 
 
 def _descuento_puesto_dia(estilista, base_servicio_dia):
@@ -421,18 +448,201 @@ def _listar_historial_legacy(fecha_inicio, fecha_fin, estilista_id=None, limit=1
     return registros
 
 
+def _campos_liquidacion_v3_dia(estado_dia):
+    """
+    Campos de solo lectura del régimen "solo efectivo" para un
+    EstadoPagoEstilistaDia, usados por el GET de estado_pago_estilista_dia
+    (consumidos por la UI de liquidación, Fase 6).
+    """
+    return {
+        'motor_calculo': getattr(estado_dia, 'motor_calculo', 'v2_mixed') or 'v2_mixed',
+        'ganancia_efectivo_dia': float(getattr(estado_dia, 'ganancia_efectivo_dia', 0) or 0),
+        'ganancia_electronica_dia': float(getattr(estado_dia, 'ganancia_electronica_dia', 0) or 0),
+        'ganancia_electronica_nequi': float(getattr(estado_dia, 'ganancia_electronica_nequi', 0) or 0),
+        'ganancia_electronica_daviplata': float(getattr(estado_dia, 'ganancia_electronica_daviplata', 0) or 0),
+        'ganancia_electronica_otros': float(getattr(estado_dia, 'ganancia_electronica_otros', 0) or 0),
+        'comision_producto_dia': float(getattr(estado_dia, 'comision_producto_dia', 0) or 0),
+        'reparto_establecimiento_electronico_pendiente': float(getattr(estado_dia, 'reparto_establecimiento_electronico_pendiente', 0) or 0),
+        'descuento_consumo_dia': float(getattr(estado_dia, 'descuento_consumo_dia', 0) or 0),
+        'saltar_descuento_consumo': bool(getattr(estado_dia, 'saltar_descuento_consumo', False)),
+        'total_deducciones_dia': float(getattr(estado_dia, 'total_deducciones_dia', 0) or 0),
+        'monto_transferir_empleado': float(getattr(estado_dia, 'monto_transferir_empleado', 0) or 0),
+        'monto_transferir_recibido': float(getattr(estado_dia, 'monto_transferir_recibido', 0) or 0),
+        'pendiente_transferencia_empleado': float(getattr(estado_dia, 'pendiente_transferencia_empleado', 0) or 0),
+        'monto_pagar_establecimiento': float(getattr(estado_dia, 'monto_pagar_establecimiento', 0) or 0),
+        'monto_pagar_entregado': float(getattr(estado_dia, 'monto_pagar_entregado', 0) or 0),
+        'pendiente_pago_empleado_efectivo': float(getattr(estado_dia, 'pendiente_pago_empleado_efectivo', 0) or 0),
+    }
+
+
+def _normalizar_medio_pago_efectivo_electronico(medio_pago):
+    """
+    Normaliza medio_pago a uno de: 'efectivo', 'nequi', 'daviplata', 'otros'.
+    Nulo/desconocido se trata como 'efectivo' -- decision conservadora para no
+    inflar "ganancia electronica" con datos incompletos (ver plan de la fase
+    de liquidacion "solo efectivo").
+    """
+    medio = str(medio_pago or '').strip().lower()
+    if medio in {'nequi', 'daviplata', 'otros'}:
+        return medio
+    return 'efectivo'
+
+
 def calcular_liquidacion_dia_estilista(estilista, fecha_dia, aplica_comision_ventas=True):
     """
-    LIQUIDADOR SIMPLIFICADO Y CLARO:
-    
+    Dispatcher: decide el motor de calculo segun la fecha (ver
+    `_usa_motor_cash_only`). Fechas anteriores a LIQUIDACION_CASH_ONLY_DESDE
+    usan el motor legacy intacto (Nequi/Daviplata eran ingreso del negocio);
+    fechas desde el corte usan el motor "solo efectivo".
+    """
+    if _usa_motor_cash_only(fecha_dia):
+        return _calcular_liquidacion_dia_estilista_v3(estilista, fecha_dia, aplica_comision_ventas)
+    return _calcular_liquidacion_dia_estilista_v2_legacy(estilista, fecha_dia, aplica_comision_ventas)
+
+
+def _calcular_liquidacion_dia_estilista_v3(estilista, fecha_dia, aplica_comision_ventas=True):
+    """
+    Motor de liquidacion para el regimen "solo efectivo": el negocio ya no
+    recibe Nequi/Daviplata/transferencias en su cuenta -- ese dinero lo recibe
+    directo el empleado. Este motor separa la ganancia del empleado en
+    efectivo (dinero real en caja) vs electronica (informativa, ya en manos
+    del empleado), y calcula cuanto del % de establecimiento quedo pendiente
+    de recuperar por haberse pagado electronico.
+    """
+    ganancia_efectivo = Decimal(0)
+    ganancia_electronica = Decimal(0)
+    ganancia_nequi = Decimal(0)
+    ganancia_daviplata = Decimal(0)
+    ganancia_otros = Decimal(0)
+    reparto_establecimiento_electronico = Decimal(0)
+
+    servicios_dia = ServicioRealizado.objects.select_related('servicio', 'estilista').filter(
+        estado='finalizado',
+        estilista=estilista,
+        fecha_hora__date=fecha_dia,
+    )
+    for srv in servicios_dia:
+        monto_emp = _monto_estilista_resuelto(srv)
+        medio = _normalizar_medio_pago_efectivo_electronico(srv.medio_pago)
+        if medio == 'efectivo':
+            ganancia_efectivo += monto_emp
+        else:
+            ganancia_electronica += monto_emp
+            reparto_establecimiento_electronico += _monto_establecimiento_resuelto(srv)
+            if medio == 'nequi':
+                ganancia_nequi += monto_emp
+            elif medio == 'daviplata':
+                ganancia_daviplata += monto_emp
+            else:
+                ganancia_otros += monto_emp
+
+    adicionales_dia = ServicioRealizadoAdicional.objects.select_related('servicio_realizado').filter(
+        estilista=estilista,
+        servicio_realizado__estado='finalizado',
+        servicio_realizado__fecha_hora__date=fecha_dia,
+    )
+    for ad in adicionales_dia:
+        valor_cobrado = Decimal(ad.valor_cobrado or 0)
+        pct_est = Decimal(ad.porcentaje_establecimiento or 0) if ad.aplica_porcentaje_establecimiento else Decimal(0)
+        pct_est = max(Decimal(0), min(Decimal(100), pct_est))
+        monto_emp = valor_cobrado - (valor_cobrado * pct_est / Decimal(100))
+        monto_est = valor_cobrado - monto_emp
+        medio = _normalizar_medio_pago_efectivo_electronico(ad.servicio_realizado.medio_pago)
+        if medio == 'efectivo':
+            ganancia_efectivo += monto_emp
+        else:
+            ganancia_electronica += monto_emp
+            reparto_establecimiento_electronico += monto_est
+            if medio == 'nequi':
+                ganancia_nequi += monto_emp
+            elif medio == 'daviplata':
+                ganancia_daviplata += monto_emp
+            else:
+                ganancia_otros += monto_emp
+
+    # Comision por venta de producto en caja + producto adicional en servicio:
+    # formula identica al motor legacy (no cambia con este requerimiento). Esta
+    # plata siempre entro a caja del negocio al vender el producto -- nunca fue
+    # efectivo fisico en mano del empleado -- asi que no se bucketiza por medio
+    # de pago del servicio.
+    ventas_dia = VentaProducto.objects.select_related('producto').filter(
+        estilista=estilista,
+        tipo_operacion='venta',
+        fecha_hora__date=fecha_dia,
+    )
+    comisiones_ventas_caja = Decimal(0)
+    for venta in ventas_dia:
+        monto_venta = Decimal(venta.total or 0)
+        pct_comision = Decimal(venta.producto.comision_estilista or 0)
+        pct_comision = max(Decimal(0), min(Decimal(100), pct_comision))
+        comisiones_ventas_caja += (monto_venta * pct_comision) / Decimal(100)
+
+    servicios_con_producto_adicional = ServicioRealizado.objects.select_related('adicional_otro_producto').filter(
+        estado='finalizado',
+        fecha_hora__date=fecha_dia,
+        adicional_otro_producto__isnull=False,
+        adicional_otro_estilista=estilista,
+    )
+    comisiones_ventas_servicios = Decimal(0)
+    for srv in servicios_con_producto_adicional:
+        cantidad = Decimal(srv.adicional_otro_cantidad or 1)
+        precio_venta = Decimal(srv.adicional_otro_producto.precio_venta or 0)
+        monto_venta = precio_venta * cantidad
+        pct_comision = Decimal(srv.adicional_otro_producto.comision_estilista or 0)
+        pct_comision = max(Decimal(0), min(Decimal(100), pct_comision))
+        comisiones_ventas_servicios += (monto_venta * pct_comision) / Decimal(100)
+
+    comision_producto_dia = comisiones_ventas_caja + comisiones_ventas_servicios
+    if not aplica_comision_ventas:
+        comision_producto_dia = Decimal(0)
+
+    ganancias_totales = ganancia_efectivo + ganancia_electronica + comision_producto_dia
+
+    # Descuento de puesto: misma formula que el motor legacy, sobre la base de
+    # ganancias por servicio del empleado (efectivo + electronico), sin
+    # comisiones de producto.
+    base_puesto = ganancia_efectivo + ganancia_electronica
+    descuento_puesto = _descuento_puesto_dia(estilista, base_puesto)
+    total_pagable = max(ganancias_totales - descuento_puesto, Decimal(0))
+
+    return {
+        # Claves nuevas del regimen "solo efectivo"
+        'ganancia_efectivo_dia': ganancia_efectivo,
+        'ganancia_electronica_dia': ganancia_electronica,
+        'ganancia_electronica_nequi': ganancia_nequi,
+        'ganancia_electronica_daviplata': ganancia_daviplata,
+        'ganancia_electronica_otros': ganancia_otros,
+        'reparto_establecimiento_electronico_pendiente': reparto_establecimiento_electronico,
+        'comision_producto_dia': comision_producto_dia,
+        # Claves compartidas con el motor legacy, para no romper codigo que
+        # aun no conoce el regimen "solo efectivo" (ej. _upsert_fact_liquidacion_dia).
+        'servicios_base': ganancia_efectivo + ganancia_electronica,
+        'comisiones_adicionales': Decimal(0),
+        'ganancias_totales': ganancias_totales,
+        'comisiones_ventas_caja': comisiones_ventas_caja,
+        'comisiones_ventas_servicios': comisiones_ventas_servicios,
+        'comisiones_ventas': comision_producto_dia,
+        'aplica_comision_ventas': bool(aplica_comision_ventas),
+        'descuento_puesto': descuento_puesto,
+        'total_pagable': total_pagable,
+        'motor_calculo': 'v3_efectivo',
+    }
+
+
+def _calcular_liquidacion_dia_estilista_v2_legacy(estilista, fecha_dia, aplica_comision_ventas=True):
+    """
+    LIQUIDADOR SIMPLIFICADO Y CLARO (motor legacy, vigente para fechas
+    anteriores a LIQUIDACION_CASH_ONLY_DESDE -- Nequi/Daviplata eran ingreso
+    del negocio):
+
     Calcula para UN DÍA:
     1. GANANCIAS TOTALES = servicios base + comisiones (producto + adicionales)
     2. DESCUENTO PUESTO = ganancias × % (o monto fijo)
     3. TOTAL PAGABLE = ganancias - descuento
-    
+
     Returns: dict con todos los cálculos {ganancias, descuento, pagable}
     """
-    
+
     # ============ [1] SERVICIOS BASE (PAGABLE AL EMPLEADO) ============
     servicios_dia = ServicioRealizado.objects.select_related('servicio', 'estilista').filter(
         estado='finalizado',
@@ -513,6 +723,7 @@ def calcular_liquidacion_dia_estilista(estilista, fecha_dia, aplica_comision_ven
         'aplica_comision_ventas': bool(aplica_comision_ventas),
         'descuento_puesto': descuento_puesto,
         'total_pagable': total_pagable,
+        'motor_calculo': 'v2_mixed',
     }
 
 
@@ -582,9 +793,113 @@ def _precargar_datos_liquidacion_rango(estilista_ids, fecha_inicio_dt, fecha_fin
 
 def _calcular_liquidacion_dia_estilista_bulk(datos_precargados, estilista, fecha_dia, aplica_comision_ventas=True):
     """
-    Misma formula que `calcular_liquidacion_dia_estilista`, pero usando datos
-    precargados en bloque (ver `_precargar_datos_liquidacion_rango`) en vez de
-    lanzar 4 queries nuevas por cada combinacion estilista/dia.
+    Dispatcher bulk: mismo criterio que `calcular_liquidacion_dia_estilista`
+    (decide por la fecha del dia, no por la fecha actual).
+    """
+    if _usa_motor_cash_only(fecha_dia):
+        return _calcular_liquidacion_dia_estilista_bulk_v3(datos_precargados, estilista, fecha_dia, aplica_comision_ventas)
+    return _calcular_liquidacion_dia_estilista_bulk_v2_legacy(datos_precargados, estilista, fecha_dia, aplica_comision_ventas)
+
+
+def _calcular_liquidacion_dia_estilista_bulk_v3(datos_precargados, estilista, fecha_dia, aplica_comision_ventas=True):
+    """
+    Misma formula que `_calcular_liquidacion_dia_estilista_v3`, pero usando
+    datos precargados en bloque (ver `_precargar_datos_liquidacion_rango`).
+    """
+    key = (int(estilista.id), fecha_dia)
+
+    ganancia_efectivo = Decimal(0)
+    ganancia_electronica = Decimal(0)
+    ganancia_nequi = Decimal(0)
+    ganancia_daviplata = Decimal(0)
+    ganancia_otros = Decimal(0)
+    reparto_establecimiento_electronico = Decimal(0)
+
+    for srv in datos_precargados['servicios'].get(key, []):
+        monto_emp = _monto_estilista_resuelto(srv)
+        medio = _normalizar_medio_pago_efectivo_electronico(srv.medio_pago)
+        if medio == 'efectivo':
+            ganancia_efectivo += monto_emp
+        else:
+            ganancia_electronica += monto_emp
+            reparto_establecimiento_electronico += _monto_establecimiento_resuelto(srv)
+            if medio == 'nequi':
+                ganancia_nequi += monto_emp
+            elif medio == 'daviplata':
+                ganancia_daviplata += monto_emp
+            else:
+                ganancia_otros += monto_emp
+
+    for ad in datos_precargados['adicionales'].get(key, []):
+        valor_cobrado = Decimal(ad.valor_cobrado or 0)
+        pct_est = Decimal(ad.porcentaje_establecimiento or 0) if ad.aplica_porcentaje_establecimiento else Decimal(0)
+        pct_est = max(Decimal(0), min(Decimal(100), pct_est))
+        monto_emp = valor_cobrado - (valor_cobrado * pct_est / Decimal(100))
+        monto_est = valor_cobrado - monto_emp
+        medio = _normalizar_medio_pago_efectivo_electronico(ad.servicio_realizado.medio_pago)
+        if medio == 'efectivo':
+            ganancia_efectivo += monto_emp
+        else:
+            ganancia_electronica += monto_emp
+            reparto_establecimiento_electronico += monto_est
+            if medio == 'nequi':
+                ganancia_nequi += monto_emp
+            elif medio == 'daviplata':
+                ganancia_daviplata += monto_emp
+            else:
+                ganancia_otros += monto_emp
+
+    comisiones_ventas_caja = Decimal(0)
+    for venta in datos_precargados['ventas'].get(key, []):
+        monto_venta = Decimal(venta.total or 0)
+        pct_comision = Decimal(venta.producto.comision_estilista or 0)
+        pct_comision = max(Decimal(0), min(Decimal(100), pct_comision))
+        comisiones_ventas_caja += (monto_venta * pct_comision) / Decimal(100)
+
+    comisiones_ventas_servicios = Decimal(0)
+    for srv in datos_precargados['servicios_producto_adicional'].get(key, []):
+        cantidad = Decimal(srv.adicional_otro_cantidad or 1)
+        precio_venta = Decimal(srv.adicional_otro_producto.precio_venta or 0)
+        monto_venta = precio_venta * cantidad
+        pct_comision = Decimal(srv.adicional_otro_producto.comision_estilista or 0)
+        pct_comision = max(Decimal(0), min(Decimal(100), pct_comision))
+        comisiones_ventas_servicios += (monto_venta * pct_comision) / Decimal(100)
+
+    comision_producto_dia = comisiones_ventas_caja + comisiones_ventas_servicios
+    if not aplica_comision_ventas:
+        comision_producto_dia = Decimal(0)
+
+    ganancias_totales = ganancia_efectivo + ganancia_electronica + comision_producto_dia
+    base_puesto = ganancia_efectivo + ganancia_electronica
+    descuento_puesto = _descuento_puesto_dia(estilista, base_puesto)
+    total_pagable = max(ganancias_totales - descuento_puesto, Decimal(0))
+
+    return {
+        'ganancia_efectivo_dia': ganancia_efectivo,
+        'ganancia_electronica_dia': ganancia_electronica,
+        'ganancia_electronica_nequi': ganancia_nequi,
+        'ganancia_electronica_daviplata': ganancia_daviplata,
+        'ganancia_electronica_otros': ganancia_otros,
+        'reparto_establecimiento_electronico_pendiente': reparto_establecimiento_electronico,
+        'comision_producto_dia': comision_producto_dia,
+        'servicios_base': ganancia_efectivo + ganancia_electronica,
+        'comisiones_adicionales': Decimal(0),
+        'ganancias_totales': ganancias_totales,
+        'comisiones_ventas_caja': comisiones_ventas_caja,
+        'comisiones_ventas_servicios': comisiones_ventas_servicios,
+        'comisiones_ventas': comision_producto_dia,
+        'aplica_comision_ventas': bool(aplica_comision_ventas),
+        'descuento_puesto': descuento_puesto,
+        'total_pagable': total_pagable,
+        'motor_calculo': 'v3_efectivo',
+    }
+
+
+def _calcular_liquidacion_dia_estilista_bulk_v2_legacy(datos_precargados, estilista, fecha_dia, aplica_comision_ventas=True):
+    """
+    Misma formula que `_calcular_liquidacion_dia_estilista_v2_legacy`, pero
+    usando datos precargados en bloque (ver `_precargar_datos_liquidacion_rango`)
+    en vez de lanzar 4 queries nuevas por cada combinacion estilista/dia.
     """
     key = (int(estilista.id), fecha_dia)
 
@@ -635,6 +950,7 @@ def _calcular_liquidacion_dia_estilista_bulk(datos_precargados, estilista, fecha
         'aplica_comision_ventas': bool(aplica_comision_ventas),
         'descuento_puesto': descuento_puesto,
         'total_pagable': total_pagable,
+        'motor_calculo': 'v2_mixed',
     }
 
 
@@ -653,6 +969,47 @@ def _calcular_neto_dia_estilista(estilista, fecha_dia):
 def _usar_fact_liquidacion_en_reportes():
     raw = (os.environ.get('USE_FACT_LIQUIDACION_REPORTES') or '').strip().lower()
     return raw in {'1', 'true', 'si', 'sí', 'yes'}
+
+
+def _fecha_corte_liquidacion_cash_only():
+    """
+    Fecha desde la cual el negocio dejo de recibir Nequi/Daviplata/transferencias
+    en su propia cuenta (solo efectivo en caja). Se configura por variable de
+    entorno para poder activarla en Railway sin un nuevo deploy, o en el
+    archivo .env en desarrollo local. Se lee con decouple.config (no con
+    os.environ directamente) porque python-decouple NO copia el contenido de
+    .env a os.environ -- solo os.environ.get() nunca veria un valor puesto
+    unicamente en .env. Si no esta configurada, ninguna fecha usa el motor
+    nuevo -- el sistema sigue funcionando exactamente igual que antes.
+    """
+    from decouple import config as _decouple_config
+    raw = str(_decouple_config('LIQUIDACION_CASH_ONLY_DESDE', default='')).strip()
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(raw, '%Y-%m-%d').date()
+    except Exception:
+        logger.warning('LIQUIDACION_CASH_ONLY_DESDE tiene un formato invalido (usa YYYY-MM-DD): %r', raw)
+        return None
+
+
+def _usa_motor_cash_only(fecha_dia):
+    """
+    Decide si una fecha usa el motor de liquidacion "solo efectivo" (v3) o el
+    motor legacy (v2, donde Nequi/Daviplata entraban a caja del negocio).
+    Se decide SIEMPRE por la fecha del registro/operacion, nunca por la fecha
+    en que se ejecuta el calculo o el reporte -- asi un reporte que cruce la
+    fecha de corte suma correctamente ambos regimenes sin reinterpretar el
+    historico.
+    """
+    corte = _fecha_corte_liquidacion_cash_only()
+    if corte is None:
+        return False
+    if isinstance(fecha_dia, datetime):
+        fecha_dia = timezone.localtime(fecha_dia).date() if timezone.is_aware(fecha_dia) else fecha_dia.date()
+    elif not isinstance(fecha_dia, date):
+        fecha_dia = datetime.strptime(str(fecha_dia), '%Y-%m-%d').date()
+    return fecha_dia >= corte
 
 
 def _to_bool_flag(value, default=True):
@@ -703,6 +1060,13 @@ def _upsert_fact_liquidacion_dia(
     usuario,
     notas,
     origen='liquidar_dia_v2',
+    saltar_descuento_consumo=False,
+    descuento_consumo_dia=0,
+    total_deducciones_dia=0,
+    monto_transferir_empleado=0,
+    monto_transferir_recibido=0,
+    monto_pagar_establecimiento=0,
+    monto_pagar_entregado=0,
 ):
     """Sincroniza la versión vigente de fact diaria por estilista y fecha."""
     try:
@@ -749,10 +1113,26 @@ def _upsert_fact_liquidacion_dia(
             )
             fact.pendiente_pago_empleado = Decimal(pendiente_pago or 0)
             fact.cobro_consumo_dia = _cobro_consumo_dia_estilista(estilista.id, fecha)
+            fact.saltar_descuento_consumo = bool(saltar_descuento_consumo)
             fact.estado_liquidacion = estado_liquidacion
             fact.forzar_reemplazo_dia = bool(forzar_reemplazo_dia)
             fact.usuario_liquida = usuario if getattr(usuario, 'is_authenticated', False) else None
             fact.notas = notas
+
+            # Régimen "solo efectivo" -- en filas legacy (calc sin estas claves)
+            # todo queda en 0, que es el valor correcto para esas fechas.
+            fact.ganancia_efectivo = Decimal(calc.get('ganancia_efectivo_dia') or 0)
+            fact.ganancia_electronica = Decimal(calc.get('ganancia_electronica_dia') or 0)
+            fact.ganancia_electronica_nequi = Decimal(calc.get('ganancia_electronica_nequi') or 0)
+            fact.ganancia_electronica_daviplata = Decimal(calc.get('ganancia_electronica_daviplata') or 0)
+            fact.ganancia_electronica_otros = Decimal(calc.get('ganancia_electronica_otros') or 0)
+            fact.reparto_establecimiento_electronico_pendiente = Decimal(calc.get('reparto_establecimiento_electronico_pendiente') or 0)
+            fact.total_deducciones_dia = Decimal(total_deducciones_dia or 0)
+            fact.monto_transferir_empleado = Decimal(monto_transferir_empleado or 0)
+            fact.monto_transferir_recibido = Decimal(monto_transferir_recibido or 0)
+            fact.monto_pagar_establecimiento = Decimal(monto_pagar_establecimiento or 0)
+            fact.monto_pagar_entregado = Decimal(monto_pagar_entregado or 0)
+
             fact.payload_fuente = {
                 'ganancias_totales': float(Decimal(calc.get('ganancias_totales') or 0)),
                 'descuento_puesto': float(Decimal(calc.get('descuento_puesto') or 0)),
@@ -761,6 +1141,8 @@ def _upsert_fact_liquidacion_dia(
                 'comisiones_ventas_servicios': float(comision_servicios),
                 'comisiones_ventas': float(comisiones_totales),
                 'aplica_comision_ventas': bool(aplica_comision_ventas),
+                'motor_calculo': calc.get('motor_calculo') or 'v2_mixed',
+                'descuento_consumo_dia': float(Decimal(descuento_consumo_dia or 0)),
             }
             fact.save()
     except Exception:
@@ -891,19 +1273,19 @@ class ServicioViewSet(viewsets.ModelViewSet):
     ordering = ['nombre']
 
     def create(self, request, *args, **kwargs):
-        _validar_edicion_admin_gerente(request.user, 'servicios')
+        _requerir_permiso_ui(request.user, 'productos', 'create', 'servicios', 'No tienes permiso para crear servicios del catálogo.')
         return super().create(request, *args, **kwargs)
 
     def update(self, request, *args, **kwargs):
-        _validar_edicion_admin_gerente(request.user, 'servicios')
+        _requerir_permiso_ui(request.user, 'productos', 'edit', 'servicios', 'No tienes permiso para editar servicios del catálogo.')
         return super().update(request, *args, **kwargs)
 
     def partial_update(self, request, *args, **kwargs):
-        _validar_edicion_admin_gerente(request.user, 'servicios')
+        _requerir_permiso_ui(request.user, 'productos', 'edit', 'servicios', 'No tienes permiso para editar servicios del catálogo.')
         return super().partial_update(request, *args, **kwargs)
 
     def destroy(self, request, *args, **kwargs):
-        _validar_edicion_admin_gerente(request.user, 'servicios')
+        _requerir_permiso_ui(request.user, 'productos', 'delete', 'servicios', 'No tienes permiso para eliminar servicios del catálogo.')
         return super().destroy(request, *args, **kwargs)
 
 
@@ -932,19 +1314,19 @@ class ProductoViewSet(viewsets.ModelViewSet):
     ordering = ['nombre']
 
     def create(self, request, *args, **kwargs):
-        _validar_edicion_admin_gerente(request.user, 'productos')
+        _requerir_permiso_ui(request.user, 'productos', 'create', 'inventario', 'No tienes permiso para crear productos.')
         return super().create(request, *args, **kwargs)
 
     def update(self, request, *args, **kwargs):
-        _validar_edicion_admin_gerente(request.user, 'productos')
+        _requerir_permiso_ui(request.user, 'productos', 'edit', 'inventario', 'No tienes permiso para editar productos.')
         return super().update(request, *args, **kwargs)
 
     def partial_update(self, request, *args, **kwargs):
-        _validar_edicion_admin_gerente(request.user, 'productos')
+        _requerir_permiso_ui(request.user, 'productos', 'edit', 'inventario', 'No tienes permiso para editar productos.')
         return super().partial_update(request, *args, **kwargs)
 
     def destroy(self, request, *args, **kwargs):
-        _validar_edicion_admin_gerente(request.user, 'productos')
+        _requerir_permiso_ui(request.user, 'productos', 'delete', 'inventario', 'No tienes permiso para eliminar productos.')
         return super().destroy(request, *args, **kwargs)
     
     @action(detail=False, methods=['get'])
@@ -1014,19 +1396,24 @@ class ServicioRealizadoViewSet(viewsets.ModelViewSet):
     ordering = ['-fecha_hora']
 
     def update(self, request, *args, **kwargs):
-        _validar_edicion_admin_gerente(request.user, 'servicios facturados')
+        _requerir_permiso_ui(request.user, 'ventas', 'edit', 'servicios', 'No tienes permiso para editar servicios facturados.')
         return super().update(request, *args, **kwargs)
 
     def partial_update(self, request, *args, **kwargs):
-        _validar_edicion_admin_gerente(request.user, 'servicios facturados')
+        _requerir_permiso_ui(request.user, 'ventas', 'edit', 'servicios', 'No tienes permiso para editar servicios facturados.')
         return super().partial_update(request, *args, **kwargs)
 
     def destroy(self, request, *args, **kwargs):
-        _validar_edicion_admin_gerente(request.user, 'servicios facturados')
+        _requerir_permiso_ui(request.user, 'ventas', 'delete', 'servicios', 'No tienes permiso para eliminar servicios facturados.')
         return super().destroy(request, *args, **kwargs)
 
     def perform_create(self, serializer):
-        serializer.save(usuario=self.request.user)
+        instance = serializer.save(usuario=self.request.user)
+        # Facturación directa (crea el servicio ya 'finalizado' en un solo
+        # paso, sin pasar por la acción finalizar): también debe generar la
+        # deuda entre empleados si se marcó "cobrado_por" otro compañero.
+        if instance.estado == 'finalizado':
+            _crear_deuda_entre_empleados_si_aplica(instance)
 
     def perform_destroy(self, instance):
         """Al eliminar un servicio, revierte inventario pendiente de su adicional de producto."""
@@ -1147,6 +1534,7 @@ class ServicioRealizadoViewSet(viewsets.ModelViewSet):
             'adicional_otro_precio_unitario': request.data.get('adicional_otro_precio_unitario'),
             'tipo_reparto_establecimiento': request.data.get('tipo_reparto_establecimiento'),
             'valor_reparto_establecimiento': request.data.get('valor_reparto_establecimiento'),
+            'cobrado_por': request.data.get('cobrado_por'),
             'notas': request.data.get('notas', servicio_realizado.notas),
             'usuario': request.user.id,
             'fecha_fin': timezone.now(),
@@ -1155,6 +1543,9 @@ class ServicioRealizadoViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(servicio_realizado, data=payload, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
+
+        _crear_deuda_entre_empleados_si_aplica(servicio_realizado)
+
         return Response(serializer.data)
 
     @action(detail=True, methods=['get'])
@@ -1185,17 +1576,17 @@ class VentaProductoViewSet(viewsets.ModelViewSet):
         return super().create(request, *args, **kwargs)
 
     def update(self, request, *args, **kwargs):
-        _validar_edicion_admin_gerente(request.user, 'facturas de venta')
+        _requerir_permiso_ui(request.user, 'ventas', 'edit', 'ventas', 'No tienes permiso para editar facturas de venta.')
         return super().update(request, *args, **kwargs)
 
     def partial_update(self, request, *args, **kwargs):
-        _validar_edicion_admin_gerente(request.user, 'facturas de venta')
+        _requerir_permiso_ui(request.user, 'ventas', 'edit', 'ventas', 'No tienes permiso para editar facturas de venta.')
         return super().partial_update(request, *args, **kwargs)
 
     def destroy(self, request, *args, **kwargs):
-        _validar_edicion_admin_gerente(request.user, 'facturas de venta')
+        _requerir_permiso_ui(request.user, 'ventas', 'delete', 'ventas', 'No tienes permiso para eliminar facturas de venta.')
         return super().destroy(request, *args, **kwargs)
-    
+
     def get_queryset(self):
         """Filtrar por rango de fechas si se proporciona"""
         queryset = super().get_queryset()
@@ -1339,7 +1730,7 @@ class VentaProductoViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'], url_path='cancelar-factura')
     def cancelar_factura(self, request):
         """Cancela una factura completa de productos y restablece inventario."""
-        _validar_edicion_admin_gerente(request.user, 'facturas de venta')
+        _requerir_permiso_ui(request.user, 'ventas', 'delete', 'ventas', 'No tienes permiso para cancelar facturas de venta.')
 
         numero_factura = (request.data.get('numero_factura') or '').strip()
         if not numero_factura:
@@ -1371,7 +1762,7 @@ class VentaProductoViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'], url_path='editar-factura')
     def editar_factura(self, request):
         """Edita una factura completa (items/precios/productos) preservando el número de factura."""
-        _validar_edicion_admin_gerente(request.user, 'facturas de venta')
+        _requerir_permiso_ui(request.user, 'ventas', 'edit', 'ventas', 'No tienes permiso para editar facturas de venta.')
 
         numero_factura = (request.data.get('numero_factura') or '').strip()
         items = request.data.get('items') or []
@@ -1760,7 +2151,7 @@ def _calcular_datos_bi(request):
     )
     ventas_pagadas_qs = ventas_qs.exclude(tipo_operacion='consumo_empleado')
     servicios_qs = ServicioRealizado.objects.select_related(
-        'estilista', 'adicional_otro_producto', 'adicional_otro_estilista'
+        'servicio', 'estilista', 'adicional_otro_producto', 'adicional_otro_estilista'
     ).filter(
         estado='finalizado',
         fecha_hora__date__gte=fecha_inicio_dt,
@@ -2104,21 +2495,39 @@ def _calcular_datos_bi(request):
             if fact_dia:
                 descuento_dia = Decimal(fact_dia.descuento_puesto_dia or descuento_dia)
                 ganancias_dia = Decimal(fact_dia.ganancias_totales or ganancias_dia)
-                pago_empleado_dia = (
-                    Decimal(fact_dia.pago_efectivo or 0)
-                    + Decimal(fact_dia.pago_nequi or 0)
-                    + Decimal(fact_dia.pago_daviplata or 0)
-                    + Decimal(fact_dia.pago_otros or 0)
-                )
+                if getattr(fact_dia, 'origen_calculo', '') == 'engine_v3_efectivo':
+                    # Régimen "solo efectivo": los campos legacy pago_efectivo/
+                    # nequi/daviplata/otros quedan en 0 a propósito (ver
+                    # _liquidar_dia_v3_core) -- el efectivo que de verdad se le
+                    # entregó al empleado ese día vive en estos otros campos.
+                    pago_empleado_dia = max(
+                        Decimal(getattr(fact_dia, 'monto_pagar_entregado', 0) or 0)
+                        - Decimal(getattr(fact_dia, 'monto_transferir_recibido', 0) or 0),
+                        Decimal(0),
+                    )
+                else:
+                    pago_empleado_dia = (
+                        Decimal(fact_dia.pago_efectivo or 0)
+                        + Decimal(fact_dia.pago_nequi or 0)
+                        + Decimal(fact_dia.pago_daviplata or 0)
+                        + Decimal(fact_dia.pago_otros or 0)
+                    )
                 abono_puesto_dia = Decimal(fact_dia.abono_puesto_dia or 0)
                 estado_dia = fact_dia.estado_liquidacion
             elif estado_dia_obj:
-                pago_empleado_dia = (
-                    Decimal(estado_dia_obj.pago_efectivo or 0)
-                    + Decimal(estado_dia_obj.pago_nequi or 0)
-                    + Decimal(estado_dia_obj.pago_daviplata or 0)
-                    + Decimal(estado_dia_obj.pago_otros or 0)
-                )
+                if getattr(estado_dia_obj, 'motor_calculo', '') == 'v3_efectivo':
+                    pago_empleado_dia = max(
+                        Decimal(getattr(estado_dia_obj, 'monto_pagar_entregado', 0) or 0)
+                        - Decimal(getattr(estado_dia_obj, 'monto_transferir_recibido', 0) or 0),
+                        Decimal(0),
+                    )
+                else:
+                    pago_empleado_dia = (
+                        Decimal(estado_dia_obj.pago_efectivo or 0)
+                        + Decimal(estado_dia_obj.pago_nequi or 0)
+                        + Decimal(estado_dia_obj.pago_daviplata or 0)
+                        + Decimal(estado_dia_obj.pago_otros or 0)
+                    )
                 abono_puesto_dia = Decimal(estado_dia_obj.abono_puesto or 0)
                 estado_dia = estado_dia_obj.estado
             else:
@@ -2266,8 +2675,16 @@ def _calcular_datos_bi(request):
     medios = ['efectivo', 'nequi', 'daviplata', 'otros']
     ingresos_por_medio = {m: Decimal(0) for m in medios}
     salidas_por_medio = {m: Decimal(0) for m in medios}
+    # Régimen "solo efectivo": lo que un servicio cobrado electrónico ya no
+    # entra a la caja del negocio (lo recibe el empleado directo) se separa
+    # aquí -- informativo, nunca se suma a ingresos_por_medio ni a los
+    # totales de caja. Se decide por la fecha de CADA registro, nunca por un
+    # flag global, para no reinterpretar el histórico.
+    ingresos_informativos_electronicos_empleado = Decimal(0)
 
     for v in ventas_pagadas_qs:
+        # La venta de producto siempre entra a caja del negocio (no cambió
+        # con el régimen "solo efectivo" -- solo cambió el pago de servicios).
         medio_v = (v.medio_pago or 'otros').strip().lower()
         if medio_v not in ingresos_por_medio:
             medio_v = 'otros'
@@ -2283,7 +2700,18 @@ def _calcular_datos_bi(request):
         medio_srv = (srv.medio_pago or 'otros').strip().lower()
         if medio_srv not in ingresos_por_medio:
             medio_srv = 'otros'
-        ingresos_por_medio[medio_srv] += Decimal(srv.precio_cobrado or 0) + Decimal(srv.valor_adicionales or 0)
+        monto_srv = Decimal(srv.precio_cobrado or 0) + Decimal(srv.valor_adicionales or 0)
+        fecha_op_srv = _fecha_operativa_desde_dt(srv.fecha_hora)
+        # El monto completo (sin importar el medio) SIEMPRE cuenta como
+        # ingreso del salón por ese medio de pago -- aunque el dinero lo haya
+        # recibido el empleado directo y no la caja física, sigue siendo
+        # ingreso generado por el negocio con ESE medio. `ingresos_informativos_
+        # electronicos_empleado` se conserva aparte solo como dato informativo
+        # (cuánto de lo electrónico lo recibió el empleado y no la caja),
+        # nunca se resta de ingresos_por_medio.
+        ingresos_por_medio[medio_srv] += monto_srv
+        if medio_srv != 'efectivo' and fecha_op_srv and _usa_motor_cash_only(fecha_op_srv):
+            ingresos_informativos_electronicos_empleado += monto_srv
 
     try:
         if usar_fact:
@@ -2293,20 +2721,59 @@ def _calcular_datos_bi(request):
                 vigente=True,
             )
             for fact in facts_medios_qs:
-                salidas_por_medio['efectivo'] += Decimal(fact.pago_efectivo or 0)
-                salidas_por_medio['nequi'] += Decimal(fact.pago_nequi or 0)
-                salidas_por_medio['daviplata'] += Decimal(fact.pago_daviplata or 0)
-                salidas_por_medio['otros'] += Decimal(fact.pago_otros or 0)
+                if _usa_motor_cash_only(fact.fecha):
+                    # v3: lo unico que realmente sale de caja del negocio es
+                    # el efectivo entregado al empleado (nunca electronico,
+                    # el negocio ya no tiene esas cuentas). El efectivo que el
+                    # empleado transfiere de vuelta NO se suma aquí como
+                    # ingreso -- ya está contado en el ingreso del servicio
+                    # por su propio medio (nequi/daviplata/otros) más arriba;
+                    # sumarlo aquí también lo contaría dos veces. Ese
+                    # movimiento queda solo como informativo en
+                    # `transferencias_empleados_recibidas`.
+                    salidas_por_medio['efectivo'] += Decimal(getattr(fact, 'monto_pagar_entregado', 0) or 0)
+                else:
+                    salidas_por_medio['efectivo'] += Decimal(fact.pago_efectivo or 0)
+                    salidas_por_medio['nequi'] += Decimal(fact.pago_nequi or 0)
+                    salidas_por_medio['daviplata'] += Decimal(fact.pago_daviplata or 0)
+                    salidas_por_medio['otros'] += Decimal(fact.pago_otros or 0)
+                # El pago de espacio (abono_puesto) recibido ese día es un
+                # ingreso real de caja, sin importar el régimen -- faltaba
+                # contarlo aquí (solo se contaba en la tarjeta "Espacios").
+                abono_puesto_fact = Decimal(getattr(fact, 'abono_puesto_dia', 0) or 0)
+                if abono_puesto_fact > 0:
+                    medio_abono_fact = str(getattr(fact, 'medio_abono_puesto', 'efectivo') or 'efectivo').strip().lower()
+                    if medio_abono_fact not in ingresos_por_medio:
+                        medio_abono_fact = 'otros'
+                    ingresos_por_medio[medio_abono_fact] += abono_puesto_fact
         else:
             estados_pago_qs = EstadoPagoEstilistaDia.objects.filter(
                 fecha__gte=fecha_inicio_dt,
                 fecha__lte=fecha_fin_dt,
             )
             for ep in estados_pago_qs:
-                salidas_por_medio['efectivo'] += Decimal(ep.pago_efectivo or 0)
-                salidas_por_medio['nequi'] += Decimal(ep.pago_nequi or 0)
-                salidas_por_medio['daviplata'] += Decimal(ep.pago_daviplata or 0)
-                salidas_por_medio['otros'] += Decimal(ep.pago_otros or 0)
+                if _usa_motor_cash_only(ep.fecha):
+                    # No se suma aquí `monto_transferir_recibido` como
+                    # ingreso -- ya está contado en el ingreso del servicio
+                    # por su propio medio más arriba (ver comentario análogo
+                    # en la rama `usar_fact`).
+                    salidas_por_medio['efectivo'] += Decimal(getattr(ep, 'monto_pagar_entregado', 0) or 0)
+                else:
+                    salidas_por_medio['efectivo'] += Decimal(ep.pago_efectivo or 0)
+                    salidas_por_medio['nequi'] += Decimal(ep.pago_nequi or 0)
+                    salidas_por_medio['daviplata'] += Decimal(ep.pago_daviplata or 0)
+                    salidas_por_medio['otros'] += Decimal(ep.pago_otros or 0)
+                # Ingreso por espacio = cobro normal del día (si no se saltó
+                # ese día) + cualquier abono extra voluntario a deuda vieja --
+                # antes solo se contaba el abono extra (mismo gap que existía
+                # en el propio loop de espacios de reporte_cierre_caja).
+                descuento_dia_aplicado_ep = Decimal(0) if getattr(ep, 'skip_descuento_puesto', False) else Decimal(ep.descuento_puesto or 0)
+                abono_puesto_ep = descuento_dia_aplicado_ep + Decimal(getattr(ep, 'abono_puesto', 0) or 0)
+                if abono_puesto_ep > 0:
+                    medio_abono_ep = str(getattr(ep, 'medio_abono_puesto', 'efectivo') or 'efectivo').strip().lower()
+                    if medio_abono_ep not in ingresos_por_medio:
+                        medio_abono_ep = 'otros'
+                    ingresos_por_medio[medio_abono_ep] += abono_puesto_ep
     except (OperationalError, ProgrammingError):
         salidas_por_medio = {m: Decimal(0) for m in medios}
 
@@ -2673,6 +3140,10 @@ def _calcular_datos_bi(request):
                 'salidas': float(tot_salidas_medios),
                 'saldo': float(tot_ingresos_medios - tot_salidas_medios),
             },
+            # Régimen "solo efectivo": servicios pagados electrónico donde ese
+            # dinero nunca entró a caja del negocio (lo recibió el empleado
+            # directo). Informativo -- no forma parte de ingresos/salidas/saldo.
+            'ingresos_informativos_electronicos_empleado': float(ingresos_informativos_electronicos_empleado),
         },
         'detalle_ganancia_productos': detalle_ganancia_productos,
         'detalle_cobro_espacio': detalle_cobro_espacio,
@@ -2753,8 +3224,7 @@ def _sincronizar_deuda_desde_items(deuda):
 @permission_classes([IsAuthenticated])
 def crear_cargo_manual_empleado(request):
     """Crea un cargo manual de consumo para un empleado sin afectar inventario."""
-    if _es_recepcion(request.user):
-        raise PermissionDenied('Recepción no tiene permiso para crear cargos manuales.')
+    _requerir_permiso_ui(request.user, 'reportes', 'edit', 'cartera', 'No tienes permiso para crear cargos manuales.')
 
     try:
         estilista_id = int(request.data.get('estilista_id') or 0)
@@ -2831,8 +3301,7 @@ def crear_cargo_manual_empleado(request):
 @permission_classes([IsAuthenticated])
 def reporte_consumo_empleado(request):
     """Resumen de deudas por consumo de empleado en un rango de fechas."""
-    if _es_recepcion(request.user):
-        raise PermissionDenied('Recepción no tiene acceso a consumo de empleado y cartera.')
+    _requerir_permiso_ui(request.user, 'reportes', 'view', 'cartera', 'No tienes acceso a consumo de empleado y cartera.')
 
     fecha_inicio, fecha_fin = _resolver_rango_fechas(request)
     estilista_id = (request.query_params.get('estilista_id') or '').strip()
@@ -3031,8 +3500,7 @@ def reporte_consumo_empleado(request):
 @permission_classes([IsAuthenticated])
 def abonar_consumo_empleado(request):
     """Registra un abono y lo distribuye en las deudas pendientes más antiguas."""
-    if _es_recepcion(request.user):
-        raise PermissionDenied('Recepción no tiene permiso para registrar abonos de cartera.')
+    _requerir_permiso_ui(request.user, 'reportes', 'edit', 'cartera', 'No tienes permiso para registrar abonos de cartera.')
 
     estilista_id = request.data.get('estilista_id')
     deuda_id = request.data.get('deuda_id')
@@ -3043,6 +3511,18 @@ def abonar_consumo_empleado(request):
 
     if medio_pago not in {'nequi', 'daviplata', 'efectivo', 'otros'}:
         return Response({'error': 'Medio de pago inválido.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    fecha_efectiva = timezone.localdate()
+    if fecha_raw:
+        try:
+            fecha_efectiva = datetime.strptime(fecha_raw, '%Y-%m-%d').date()
+        except Exception:
+            fecha_efectiva = timezone.localdate()
+    if medio_pago != 'efectivo' and _usa_motor_cash_only(fecha_efectiva):
+        return Response(
+            {'error': 'Desde el régimen de solo efectivo, los abonos de cartera solo pueden ser en efectivo.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
     deuda_objetivo = None
     if deuda_id is not None and str(deuda_id).strip() != '':
@@ -3115,6 +3595,7 @@ def _aplicar_abonos_consumo_interno(
     fecha_abono_dt=None,
     deuda_objetivo=None,
     deuda_ids=None,
+    origen_liquidacion_fecha=None,
 ):
     """Aplica abonos de consumo a deudas pendientes en orden de antigüedad."""
     if deuda_objetivo is not None:
@@ -3157,6 +3638,8 @@ def _aplicar_abonos_consumo_interno(
         }
         if fecha_abono_dt is not None:
             create_data['fecha_hora'] = fecha_abono_dt
+        if origen_liquidacion_fecha is not None:
+            create_data['origen_liquidacion_fecha'] = origen_liquidacion_fecha
 
         AbonoDeudaEmpleado.objects.create(**create_data)
 
@@ -3193,8 +3676,7 @@ def _aplicar_abonos_consumo_interno(
 @permission_classes([IsAuthenticated])
 def editar_abono_consumo_empleado(request, abono_id):
     """Permite corregir un abono registrado por error y recalcula la deuda asociada."""
-    if _es_recepcion(request.user):
-        raise PermissionDenied('Recepción no tiene permiso para editar abonos de cartera.')
+    _requerir_permiso_ui(request.user, 'reportes', 'edit', 'cartera', 'No tienes permiso para editar abonos de cartera.')
 
     try:
         abono = AbonoDeudaEmpleado.objects.select_related('deuda').get(id=int(abono_id))
@@ -3329,6 +3811,7 @@ def estado_pago_estilista_dia(request):
                     'medio_abono_puesto': getattr(x, 'medio_abono_puesto', 'efectivo') or 'efectivo',
                     'aplica_comision_ventas': True,
                     'notas': x.notas,
+                    **_campos_liquidacion_v3_dia(x),
                 }
                 for x in qs.order_by('fecha', 'estilista_id')
             ]
@@ -3369,6 +3852,7 @@ def estado_pago_estilista_dia(request):
                     'medio_abono_puesto': getattr(x, 'medio_abono_puesto', 'efectivo') or 'efectivo',
                     'aplica_comision_ventas': True,
                     'notas': x.notas,
+                    **_campos_liquidacion_v3_dia(x),
                 }
                 for x in EstadoPagoEstilistaDia.objects.filter(fecha=fecha)
             ]
@@ -3631,8 +4115,459 @@ def estado_pago_estilista_dia(request):
 
 def _liquidar_dia_v2_core(request):
     """
-    NUEVO ENDPOINT SIMPLIFICADO - LIQUIDADOR CLARO Y CORRECTO
-    
+    Dispatcher: decide el motor de liquidacion segun la fecha del body (ver
+    `_usa_motor_cash_only`). No cambia la ruta de API ni el contrato basico
+    de la respuesta -- las claves nuevas del regimen "solo efectivo" se
+    agregan sin quitar las que ya lee el frontend actual.
+    """
+    fecha_dia = None
+    try:
+        fecha_str = (request.data.get('fecha') or '').strip()
+        fecha_dia = datetime.strptime(fecha_str, '%Y-%m-%d').date()
+    except Exception:
+        fecha_dia = None
+
+    if fecha_dia is not None and _usa_motor_cash_only(fecha_dia):
+        return _liquidar_dia_v3_core(request)
+    return _liquidar_dia_v2_core_legacy(request)
+
+
+def _calcular_preview_liquidacion_v3(estilista, fecha, data):
+    """
+    Cálculo puro (sin escribir nada en la base de datos) del régimen "solo
+    efectivo" para un estilista+fecha, a partir de un dict-like `data`
+    (request.data en el POST de liquidar, o los query params del GET de
+    vista previa). Lo usan tanto `_liquidar_dia_v3_core` (que después SÍ
+    persiste) como `liquidacion_recibo_imprimible` (que solo muestra el
+    resultado antes de confirmar) -- así ambos siempre calculan exactamente
+    lo mismo, sin que puedan divergir.
+
+    No aplica el abono de consumo (FIFO) ni guarda nada -- eso lo hace quien
+    llama, solo si de verdad va a confirmar la liquidación.
+    """
+    def _to_decimal(v):
+        try:
+            d = Decimal(str(v if v is not None else 0))
+            return max(d, Decimal(0))
+        except Exception:
+            return Decimal(0)
+
+    aplica_comision_ventas = _to_bool_flag(data.get('aplica_comision_ventas'), default=True)
+    skip_descuento_puesto = _to_bool_flag(data.get('skip_descuento_puesto'), default=False)
+    saltar_descuento_consumo = _to_bool_flag(data.get('saltar_descuento_consumo'), default=False)
+    puesto_modo = str(data.get('puesto_modo') or 'fijo').strip().lower()
+    if puesto_modo not in {'fijo', 'porcentaje'}:
+        puesto_modo = 'fijo'
+    puesto_porcentaje = _to_decimal(data.get('puesto_porcentaje'))
+    if puesto_porcentaje > Decimal(100):
+        puesto_porcentaje = Decimal(100)
+    forzar_reemplazo_dia = _to_bool_flag(data.get('forzar_reemplazo_dia'), default=False)
+    abono_puesto_extra = _to_decimal(data.get('abono_puesto'))
+    consumo_monto_solicitado = _to_decimal(data.get('consumo_monto'))
+    deuda_ids_consumo = data.get('deuda_ids') or []
+    if not isinstance(deuda_ids_consumo, list):
+        deuda_ids_consumo = []
+    notas = str(data.get('notas') or '').strip()[:255]
+
+    calc = calcular_liquidacion_dia_estilista(estilista, fecha, aplica_comision_ventas=aplica_comision_ventas)
+
+    ganancia_efectivo = calc['ganancia_efectivo_dia']
+    ganancia_electronica = calc['ganancia_electronica_dia']
+    comision_producto_dia = calc['comision_producto_dia']
+    reparto_pendiente = calc['reparto_establecimiento_electronico_pendiente']
+
+    descuento_puesto_calculado = calc['descuento_puesto']
+    if puesto_modo == 'porcentaje':
+        base_pct = ganancia_efectivo + ganancia_electronica
+        descuento_puesto_calculado = max((base_pct * puesto_porcentaje) / Decimal(100), Decimal(0))
+    descuento_puesto_aplicado_hoy = Decimal(0) if skip_descuento_puesto else descuento_puesto_calculado
+
+    saldo_obj_consumo, _created_saldo = SaldoDeudaPuesto.objects.get_or_create(estilista=estilista)
+    saldo_consumo_antes = Decimal(saldo_obj_consumo.saldo_consumo or 0)
+    if saltar_descuento_consumo:
+        monto_a_aplicar_consumo = Decimal(0)
+    else:
+        monto_a_aplicar_consumo = min(max(consumo_monto_solicitado, Decimal(0)), saldo_consumo_antes)
+
+    deuda_anterior_puesto = Decimal(0)
+    ultimo_estado = EstadoPagoEstilistaDia.objects.filter(estilista=estilista, fecha__lt=fecha).order_by('-fecha').first()
+    if ultimo_estado:
+        deuda_anterior_puesto = Decimal(ultimo_estado.saldo_puesto_pendiente or 0)
+
+    if skip_descuento_puesto:
+        deuda_total_puesto = deuda_anterior_puesto + descuento_puesto_calculado
+    else:
+        deuda_total_puesto = deuda_anterior_puesto
+
+    # Abono voluntario a la deuda de puesto acumulada de días anteriores (el
+    # empleado decide pagar de más hoy, además del cobro normal del día).
+    # Se topa a lo realmente adeudado y se descuenta del efectivo disponible
+    # igual que cualquier otra deducción -- mismo tratamiento que ya tiene el
+    # abono de consumo (`monto_a_aplicar_consumo`) unas líneas arriba.
+    abono_puesto_extra_aplicado = min(max(abono_puesto_extra, Decimal(0)), deuda_total_puesto)
+
+    disponible = ganancia_efectivo + comision_producto_dia
+    total_deducciones_dia = descuento_puesto_aplicado_hoy + monto_a_aplicar_consumo + reparto_pendiente + abono_puesto_extra_aplicado
+    saldo_neto = disponible - total_deducciones_dia
+
+    if saldo_neto < 0:
+        monto_transferir_empleado = -saldo_neto
+        monto_pagar_establecimiento = Decimal(0)
+    else:
+        monto_transferir_empleado = Decimal(0)
+        monto_pagar_establecimiento = saldo_neto
+
+    monto_transferir_recibido = min(
+        _to_decimal(data.get('monto_transferir_recibido', monto_transferir_empleado)),
+        monto_transferir_empleado,
+    )
+    monto_pagar_entregado = min(
+        _to_decimal(data.get('monto_pagar_entregado', monto_pagar_establecimiento)),
+        monto_pagar_establecimiento,
+    )
+
+    abono_puesto_previo_dia = Decimal(0)
+    if not forzar_reemplazo_dia:
+        estado_existente_dia = EstadoPagoEstilistaDia.objects.filter(estilista=estilista, fecha=fecha).first()
+        if estado_existente_dia:
+            abono_puesto_previo_dia = Decimal(estado_existente_dia.abono_puesto or 0)
+    abono_puesto_total = abono_puesto_extra_aplicado if forzar_reemplazo_dia else (abono_puesto_previo_dia + abono_puesto_extra_aplicado)
+
+    abono_aplicado_total_puesto = min(abono_puesto_total, deuda_total_puesto)
+    saldo_puesto_cierre = max(deuda_total_puesto - abono_aplicado_total_puesto, Decimal(0))
+
+    # Estimado de cierre de consumo para la vista previa (sin aplicar el FIFO
+    # de verdad todavía) -- el total que queda es matemáticamente el mismo,
+    # el FIFO solo decide CUÁLES facturas se pagan primero.
+    saldo_consumo_estimado_cierre = max(saldo_consumo_antes - monto_a_aplicar_consumo, Decimal(0))
+
+    return {
+        'calc': calc,
+        'ganancia_efectivo': ganancia_efectivo,
+        'ganancia_electronica': ganancia_electronica,
+        'comision_producto_dia': comision_producto_dia,
+        'reparto_pendiente': reparto_pendiente,
+        'descuento_puesto_calculado': descuento_puesto_calculado,
+        'descuento_puesto_aplicado_hoy': descuento_puesto_aplicado_hoy,
+        'aplica_comision_ventas': aplica_comision_ventas,
+        'skip_descuento_puesto': skip_descuento_puesto,
+        'saltar_descuento_consumo': saltar_descuento_consumo,
+        'puesto_modo': puesto_modo,
+        'puesto_porcentaje': puesto_porcentaje,
+        'forzar_reemplazo_dia': forzar_reemplazo_dia,
+        'abono_puesto_extra': abono_puesto_extra_aplicado,
+        'abono_puesto_extra_solicitado': abono_puesto_extra,
+        'consumo_monto_solicitado': consumo_monto_solicitado,
+        'deuda_ids_consumo': deuda_ids_consumo,
+        'notas': notas,
+        'saldo_obj_consumo': saldo_obj_consumo,
+        'saldo_consumo_antes': saldo_consumo_antes,
+        'monto_a_aplicar_consumo': monto_a_aplicar_consumo,
+        'saldo_consumo_estimado_cierre': saldo_consumo_estimado_cierre,
+        'disponible': disponible,
+        'total_deducciones_dia': total_deducciones_dia,
+        'monto_transferir_empleado': monto_transferir_empleado,
+        'monto_transferir_recibido': monto_transferir_recibido,
+        'monto_pagar_establecimiento': monto_pagar_establecimiento,
+        'monto_pagar_entregado': monto_pagar_entregado,
+        'deuda_anterior_puesto': deuda_anterior_puesto,
+        'deuda_total_puesto': deuda_total_puesto,
+        'abono_puesto_previo_dia': abono_puesto_previo_dia,
+        'abono_puesto_total': abono_puesto_total,
+        'abono_aplicado_total_puesto': abono_aplicado_total_puesto,
+        'saldo_puesto_cierre': saldo_puesto_cierre,
+    }
+
+
+def _liquidar_dia_v3_core(request):
+    """
+    Motor de liquidacion para el regimen "solo efectivo": el negocio ya no
+    recibe Nequi/Daviplata/transferencias en su cuenta -- solo efectivo. Del
+    efectivo ganado (mas la comision de producto, que tampoco es efectivo
+    fisico en mano del empleado pero ya entro a caja) se descuentan puesto,
+    consumo y el % de establecimiento pendiente por pagos electronicos. Si el
+    efectivo no alcanza, el faltante es lo que el empleado debe transferir;
+    si sobra, es lo que el negocio le debe entregar en efectivo.
+
+    Reutiliza TAL CUAL la logica de arrastre de deuda de puesto y el motor
+    FIFO de deuda de consumo (`_aplicar_abonos_consumo_interno`) -- solo
+    cambia que dispara cada deduccion y con que medio de pago (siempre
+    efectivo, porque el negocio ya no tiene cuentas electronicas propias).
+    """
+    try:
+        estilista_id = int(request.data.get('estilista_id') or 0)
+        estilista = Estilista.objects.get(id=estilista_id, activo=True)
+    except (ValueError, Estilista.DoesNotExist):
+        return Response({'error': 'Estilista no encontrado'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        fecha_str = request.data.get('fecha', '').strip()
+        fecha = datetime.strptime(fecha_str, '%Y-%m-%d').date()
+    except Exception:
+        return Response({'error': 'Formato fecha inválido'}, status=status.HTTP_400_BAD_REQUEST)
+
+    medio_abono_puesto = (request.data.get('medio_abono_puesto') or 'efectivo').strip().lower()
+    if medio_abono_puesto != 'efectivo':
+        return Response(
+            {'error': 'Desde el régimen de solo efectivo, los abonos de puesto solo pueden ser en efectivo.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        prev = _calcular_preview_liquidacion_v3(estilista, fecha, request.data)
+    except Exception as e:
+        return Response({'error': f'No se pudo calcular la liquidación: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
+
+    calc = prev['calc']
+    ganancia_efectivo = prev['ganancia_efectivo']
+    ganancia_electronica = prev['ganancia_electronica']
+    comision_producto_dia = prev['comision_producto_dia']
+    reparto_pendiente = prev['reparto_pendiente']
+    descuento_puesto_calculado = prev['descuento_puesto_calculado']
+    descuento_puesto_aplicado_hoy = prev['descuento_puesto_aplicado_hoy']
+    saltar_descuento_consumo = prev['saltar_descuento_consumo']
+    skip_descuento_puesto = prev['skip_descuento_puesto']
+    aplica_comision_ventas = prev['aplica_comision_ventas']
+    puesto_modo = prev['puesto_modo']
+    puesto_porcentaje = prev['puesto_porcentaje']
+    forzar_reemplazo_dia = prev['forzar_reemplazo_dia']
+    abono_puesto_extra = prev['abono_puesto_extra']
+    consumo_monto_solicitado = prev['consumo_monto_solicitado']
+    deuda_ids_consumo = prev['deuda_ids_consumo']
+    notas = prev['notas']
+    saldo_obj_consumo = prev['saldo_obj_consumo']
+    saldo_consumo_antes = prev['saldo_consumo_antes']
+    monto_a_aplicar_consumo = prev['monto_a_aplicar_consumo']
+    monto_transferir_empleado = prev['monto_transferir_empleado']
+    monto_transferir_recibido = prev['monto_transferir_recibido']
+    monto_pagar_establecimiento = prev['monto_pagar_establecimiento']
+    monto_pagar_entregado = prev['monto_pagar_entregado']
+    deuda_anterior_puesto = prev['deuda_anterior_puesto']
+    deuda_total_puesto = prev['deuda_total_puesto']
+    abono_puesto_previo_dia = prev['abono_puesto_previo_dia']
+    abono_puesto_total = prev['abono_puesto_total']
+    abono_aplicado_total_puesto = prev['abono_aplicado_total_puesto']
+    saldo_puesto_cierre = prev['saldo_puesto_cierre']
+    total_deducciones_dia = prev['total_deducciones_dia']
+    disponible = prev['disponible']
+
+    # ---- aplicar el abono real de consumo (motor FIFO existente, intacto) ----
+    aplicaciones_consumo = []
+    sobrante_consumo = Decimal(0)
+    if monto_a_aplicar_consumo > 0:
+        try:
+            with transaction.atomic():
+                aplicaciones_consumo, sobrante_consumo = _aplicar_abonos_consumo_interno(
+                    estilista=estilista,
+                    monto_decimal=monto_a_aplicar_consumo,
+                    medio_pago='efectivo',
+                    usuario=request.user,
+                    notas=notas or f'Liquidación (solo efectivo) {fecha}',
+                    deuda_ids=deuda_ids_consumo,
+                    origen_liquidacion_fecha=fecha,
+                )
+        except Exception as e:
+            return Response({'error': f'No se pudo aplicar el abono de consumo: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
+
+    saldo_obj_consumo.refresh_from_db()
+    saldo_consumo_cierre = Decimal(saldo_obj_consumo.saldo_consumo or 0)
+
+    pendiente_transferencia_empleado = max(monto_transferir_empleado - monto_transferir_recibido, Decimal(0))
+    pendiente_pago_empleado_efectivo = max(monto_pagar_establecimiento - monto_pagar_entregado, Decimal(0))
+
+    if pendiente_transferencia_empleado > 0 or pendiente_pago_empleado_efectivo > 0:
+        estado_resultante = 'pendiente'
+    elif saldo_puesto_cierre > 0 or saldo_consumo_cierre > 0:
+        estado_resultante = 'debe'
+    else:
+        estado_resultante = 'cancelado'
+
+    estado_diaria, _created_dia = EstadoPagoEstilistaDia.objects.get_or_create(estilista=estilista, fecha=fecha)
+    estado_anterior = estado_diaria.estado
+
+    estado_diaria.ganancias_totales = calc['ganancias_totales']
+    estado_diaria.descuento_puesto = descuento_puesto_calculado
+    estado_diaria.total_pagable = calc['total_pagable']
+    estado_diaria.neto_dia = calc['total_pagable']
+    # Los campos legacy pago_efectivo/nequi/daviplata/otros ya no representan
+    # "lo que pago el negocio" en este regimen -- quedan en 0 para no
+    # confundir reportes que aun no migraron (Fase 4 los reinterpreta).
+    estado_diaria.pago_efectivo = Decimal(0)
+    estado_diaria.pago_nequi = Decimal(0)
+    estado_diaria.pago_daviplata = Decimal(0)
+    estado_diaria.pago_otros = Decimal(0)
+    estado_diaria.abono_puesto = abono_puesto_total
+    estado_diaria.medio_abono_puesto = 'efectivo'
+    estado_diaria.saldo_puesto_pendiente = saldo_puesto_cierre
+    estado_diaria.pendiente_puesto = saldo_puesto_cierre
+    estado_diaria.skip_descuento_puesto = skip_descuento_puesto
+    estado_diaria.saltar_descuento_consumo = saltar_descuento_consumo
+    estado_diaria.ganancia_efectivo_dia = ganancia_efectivo
+    estado_diaria.ganancia_electronica_dia = ganancia_electronica
+    estado_diaria.ganancia_electronica_nequi = calc['ganancia_electronica_nequi']
+    estado_diaria.ganancia_electronica_daviplata = calc['ganancia_electronica_daviplata']
+    estado_diaria.ganancia_electronica_otros = calc['ganancia_electronica_otros']
+    estado_diaria.comision_producto_dia = comision_producto_dia
+    estado_diaria.reparto_establecimiento_electronico_pendiente = reparto_pendiente
+    estado_diaria.descuento_consumo_dia = monto_a_aplicar_consumo
+    estado_diaria.total_deducciones_dia = total_deducciones_dia
+    estado_diaria.monto_transferir_empleado = monto_transferir_empleado
+    estado_diaria.monto_transferir_recibido = monto_transferir_recibido
+    estado_diaria.monto_pagar_establecimiento = monto_pagar_establecimiento
+    estado_diaria.monto_pagar_entregado = monto_pagar_entregado
+    estado_diaria.motor_calculo = 'v3_efectivo'
+    estado_diaria.notas = notas
+    estado_diaria.usuario_liquida = request.user
+    estado_diaria.estado = estado_resultante
+    estado_diaria.save()
+
+    try:
+        hay_mas_reciente = EstadoPagoEstilistaDia.objects.filter(estilista=estilista, fecha__gt=fecha).exists()
+        if not hay_mas_reciente:
+            saldo_obj_puesto, _ = SaldoDeudaPuesto.objects.get_or_create(estilista=estilista)
+            saldo_obj_puesto.saldo = max(saldo_puesto_cierre, Decimal(0))
+            saldo_obj_puesto.save()
+    except Exception:
+        pass
+
+    hubo_movimiento = (
+        monto_transferir_recibido > 0 or monto_pagar_entregado > 0
+        or abono_puesto_extra > 0 or monto_a_aplicar_consumo > 0
+    )
+    if hubo_movimiento:
+        try:
+            EstadoPagoEstilistaHistorial.objects.create(
+                estilista=estilista,
+                fecha=fecha,
+                estado_anterior=estado_anterior,
+                estado_nuevo=estado_resultante,
+                notas=notas,
+                usuario=request.user,
+                monto_liquidado=monto_transferir_recibido + monto_pagar_entregado,
+                abono_puesto=abono_puesto_extra,
+                medio_abono_puesto='efectivo',
+                pendiente_puesto=saldo_puesto_cierre,
+                descuento_consumo_dia=monto_a_aplicar_consumo,
+                monto_transferir_empleado=monto_transferir_empleado,
+                monto_pagar_establecimiento=monto_pagar_establecimiento,
+                motor_calculo='v3_efectivo',
+            )
+        except Exception:
+            pass
+
+    _upsert_fact_liquidacion_dia(
+        estilista=estilista,
+        fecha=fecha,
+        calc=calc,
+        pago_efectivo=Decimal(0),
+        pago_nequi=Decimal(0),
+        pago_daviplata=Decimal(0),
+        pago_otros=Decimal(0),
+        abono_puesto=abono_puesto_total,
+        medio_abono_puesto='efectivo',
+        aplica_comision_ventas=aplica_comision_ventas,
+        deuda_anterior=deuda_anterior_puesto,
+        deuda_cierre=saldo_puesto_cierre,
+        pendiente_pago=pendiente_pago_empleado_efectivo,
+        estado_liquidacion=estado_resultante,
+        forzar_reemplazo_dia=forzar_reemplazo_dia,
+        usuario=request.user,
+        notas=notas,
+        origen='engine_v3_efectivo',
+        saltar_descuento_consumo=saltar_descuento_consumo,
+        descuento_consumo_dia=monto_a_aplicar_consumo,
+        total_deducciones_dia=total_deducciones_dia,
+        monto_transferir_empleado=monto_transferir_empleado,
+        monto_transferir_recibido=monto_transferir_recibido,
+        monto_pagar_establecimiento=monto_pagar_establecimiento,
+        monto_pagar_entregado=monto_pagar_entregado,
+    )
+
+    return Response({
+        'success': True,
+        'motor_calculo': 'v3_efectivo',
+        'estilista': {'id': estilista.id, 'nombre': estilista.nombre},
+        'fecha': fecha.strftime('%Y-%m-%d'),
+        'liquidacion': {
+            'ganancias_totales': float(calc['ganancias_totales']),
+            'descuento_puesto': float(descuento_puesto_calculado),
+            'total_pagable': float(calc['total_pagable']),
+            'pendiente_liquidacion': float(pendiente_pago_empleado_efectivo),
+            'aplica_comision_ventas': bool(aplica_comision_ventas),
+        },
+        'pagos': {
+            'efectivo': float(ganancia_efectivo),
+            'nequi': float(calc['ganancia_electronica_nequi']),
+            'daviplata': float(calc['ganancia_electronica_daviplata']),
+            'otros': float(calc['ganancia_electronica_otros']),
+            'total': float(ganancia_efectivo + ganancia_electronica),
+        },
+        'puesto': {
+            'descuento': float(descuento_puesto_calculado),
+            'abono': float(abono_puesto_total),
+            'abono_operacion': float(abono_puesto_extra),
+            'abono_previo_dia': float(abono_puesto_previo_dia),
+            'medio_abono': 'efectivo',
+            'modo_cobro': puesto_modo,
+            'porcentaje_cobro': float(puesto_porcentaje),
+            'deuda_anterior': float(deuda_anterior_puesto),
+            'deuda_total': float(deuda_total_puesto),
+            'abono_aplicado': float(abono_aplicado_total_puesto),
+            'saldo_pendiente': float(saldo_puesto_cierre),
+        },
+        'efectivo': {
+            'ganado_efectivo': float(ganancia_efectivo),
+            'ganado_electronico': float(ganancia_electronica),
+            'ganado_electronico_detalle': {
+                'nequi': float(calc['ganancia_electronica_nequi']),
+                'daviplata': float(calc['ganancia_electronica_daviplata']),
+                'otros': float(calc['ganancia_electronica_otros']),
+            },
+            'comision_producto': float(comision_producto_dia),
+            'disponible_para_deducciones': float(disponible),
+        },
+        'deducciones': {
+            'puesto': {
+                'aplicado_hoy': float(descuento_puesto_aplicado_hoy),
+                'diferido': bool(skip_descuento_puesto),
+                'monto_calculado': float(descuento_puesto_calculado),
+            },
+            'consumo': {
+                'aplicado_hoy': float(monto_a_aplicar_consumo),
+                'diferido': bool(saltar_descuento_consumo),
+                'saldo_antes': float(saldo_consumo_antes),
+                'saldo_despues': float(saldo_consumo_cierre),
+            },
+            'total': float(total_deducciones_dia),
+        },
+        'liquidacion_efectivo': {
+            'monto_transferir_empleado': float(monto_transferir_empleado),
+            'monto_transferir_recibido': float(monto_transferir_recibido),
+            'pendiente_transferencia_empleado': float(pendiente_transferencia_empleado),
+            'monto_pagar_establecimiento': float(monto_pagar_establecimiento),
+            'monto_pagar_entregado': float(monto_pagar_entregado),
+            'pendiente_pago_empleado_efectivo': float(pendiente_pago_empleado_efectivo),
+        },
+        'reparto_establecimiento_electronico_pendiente': float(reparto_pendiente),
+        'deuda_consumo': {
+            'anterior': float(saldo_consumo_antes),
+            'abono_aplicado': float(monto_a_aplicar_consumo),
+            'sobrante': float(sobrante_consumo),
+            'cierre': float(saldo_consumo_cierre),
+            'aplicaciones': aplicaciones_consumo,
+        },
+        'estado': estado_resultante,
+        'tabla_diaria_no_disponible': False,
+        'guardado_legacy_sql': False,
+    })
+
+
+def _liquidar_dia_v2_core_legacy(request):
+    """
+    LIQUIDADOR SIMPLIFICADO Y CLARO (motor legacy, vigente para fechas
+    anteriores a LIQUIDACION_CASH_ONLY_DESDE -- Nequi/Daviplata eran ingreso
+    del negocio).
+
     POST /api/liquidar-dia-v2/
     
     Body:
@@ -4066,8 +5001,7 @@ def liquidar_dia_v2(request):
 @permission_classes([IsAuthenticated])
 def liquidar_operacion_integral(request):
     """Ejecuta en una sola transacción: cobro de consumo (opcional) + liquidación diaria."""
-    if _es_recepcion(request.user):
-        raise PermissionDenied('Recepción no tiene permiso para liquidar operaciones integrales.')
+    _requerir_permiso_ui(request.user, 'reportes', 'edit', 'liquidacion', 'No tienes permiso para liquidar operaciones integrales.')
 
     try:
         estilista_id = int(request.data.get('estilista_id') or 0)
@@ -4092,41 +5026,57 @@ def liquidar_operacion_integral(request):
 
     fecha_raw = (request.data.get('fecha') or '').strip()
     fecha_abono_dt = None
+    fecha_dia = None
     if fecha_raw:
         try:
             fecha_abono = datetime.strptime(fecha_raw, '%Y-%m-%d').date()
+            fecha_dia = fecha_abono
             fecha_abono_dt = datetime.combine(fecha_abono, datetime.min.time()).replace(hour=12)
             if timezone.is_naive(fecha_abono_dt):
                 fecha_abono_dt = timezone.make_aware(fecha_abono_dt, timezone.get_current_timezone())
         except Exception:
             return Response({'error': 'Fecha inválida. Usa YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
 
+    # Desde el régimen "solo efectivo", el motor de liquidación v3 aplica el
+    # cobro de consumo internamente (usa consumo_monto/deuda_ids del mismo
+    # body) -- no se pre-aplica aquí para no descontarlo dos veces. Además,
+    # el negocio ya no tiene cuentas electrónicas para recibir ese cobro.
+    usa_motor_v3 = fecha_dia is not None and _usa_motor_cash_only(fecha_dia)
+    if usa_motor_v3 and medio_cobro_consumo != 'efectivo':
+        return Response(
+            {'error': 'Desde el régimen de solo efectivo, el cobro de consumo solo puede ser en efectivo.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
     consumo_aplicaciones = []
     consumo_sobrante = Decimal(0)
+    consumo_aplicado = Decimal(0)
 
     try:
-        # Primero: procesar consumo en su propia transacción si aplica
-        consumo_aplicaciones = []
-        consumo_sobrante = Decimal(0)
-        try:
-            with transaction.atomic():
-                if consumo_monto > 0:
-                    consumo_aplicaciones, consumo_sobrante = _aplicar_abonos_consumo_interno(
-                        estilista=estilista,
-                        monto_decimal=consumo_monto,
-                        medio_pago=medio_cobro_consumo,
-                        usuario=request.user,
-                        notas=f"Cobro consumo integrado liquidación {fecha_raw or timezone.localtime().strftime('%Y-%m-%d')}",
-                        fecha_abono_dt=fecha_abono_dt,
-                        deuda_objetivo=None,
-                        deuda_ids=deuda_ids,
-                    )
-        except Exception as e_consumo:
-            logger.warning(f"Advertencia en cobro consumo integrado: {str(e_consumo)}")
-            consumo_aplicaciones = []
-            consumo_sobrante = Decimal(0)
+        if not usa_motor_v3:
+            # Motor legacy: el core de liquidación no toca deuda de consumo,
+            # así que se aplica aparte antes de liquidar.
+            try:
+                with transaction.atomic():
+                    if consumo_monto > 0:
+                        consumo_aplicaciones, consumo_sobrante = _aplicar_abonos_consumo_interno(
+                            estilista=estilista,
+                            monto_decimal=consumo_monto,
+                            medio_pago=medio_cobro_consumo,
+                            usuario=request.user,
+                            notas=f"Cobro consumo integrado liquidación {fecha_raw or timezone.localtime().strftime('%Y-%m-%d')}",
+                            fecha_abono_dt=fecha_abono_dt,
+                            deuda_objetivo=None,
+                            deuda_ids=deuda_ids,
+                        )
+            except Exception as e_consumo:
+                logger.warning(f"Advertencia en cobro consumo integrado: {str(e_consumo)}")
+                consumo_aplicaciones = []
+                consumo_sobrante = Decimal(0)
+            consumo_aplicado = consumo_monto - consumo_sobrante
 
-        # Segundo: ejecutar liquidación en su propia transacción
+        # Ejecutar liquidación (v3 aplica el consumo internamente leyendo
+        # consumo_monto/deuda_ids del mismo request.data).
         response_liq = _liquidar_dia_v2_core(request)
         status_liq = int(getattr(response_liq, 'status_code', 500) or 500)
         if status_liq >= 400:
@@ -4138,9 +5088,16 @@ def liquidar_operacion_integral(request):
             return Response({'error': str(msg)}, status=status_liq)
 
         payload = getattr(response_liq, 'data', {}) or {}
+
+        if usa_motor_v3:
+            deuda_consumo_payload = payload.get('deuda_consumo') or {}
+            consumo_aplicaciones = deuda_consumo_payload.get('aplicaciones') or []
+            consumo_sobrante = Decimal(str(deuda_consumo_payload.get('sobrante') or 0))
+            consumo_aplicado = Decimal(str(deuda_consumo_payload.get('abono_aplicado') or 0))
+
         payload['consumo_integrado'] = {
             'monto_solicitado': float(consumo_monto),
-            'monto_aplicado': float(consumo_monto - consumo_sobrante),
+            'monto_aplicado': float(consumo_aplicado),
             'monto_sobrante': float(consumo_sobrante),
             'medio_pago': medio_cobro_consumo,
             'aplicaciones': consumo_aplicaciones,
@@ -4151,6 +5108,259 @@ def liquidar_operacion_integral(request):
     except Exception as e:
         logger.exception("Error en liquidar_operacion_integral")
         return Response({'error': f'No se pudo completar la operación integral: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def liquidacion_recibo_imprimible(request):
+    """
+    Payload de solo lectura para imprimir el recibo de liquidación de un
+    empleado en una fecha: detalle de servicios del día, subtotal efectivo,
+    subtotal electrónico, comisión de producto, deducciones aplicadas y el
+    resultado final (transferencia del empleado o pago del establecimiento).
+
+    GET /api/reportes/estilistas/liquidacion-recibo/?estilista_id=5&fecha=2026-07-30
+
+    Si el día ya fue liquidado, usa los valores guardados en
+    EstadoPagoEstilistaDia (auditable, no cambia si se recalcula el día).
+    Si aún no se liquida, calcula una vista previa "en vivo" (no persiste
+    nada) para que el empleado pueda revisar antes de confirmar.
+    """
+    _requerir_permiso_ui(request.user, 'reportes', 'view', 'liquidacion', 'No tienes permiso para ver el recibo de liquidación.')
+
+    try:
+        estilista_id = int(request.query_params.get('estilista_id') or 0)
+        estilista = Estilista.objects.get(id=estilista_id, activo=True)
+    except Exception:
+        return Response({'error': 'Estilista no encontrado.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        fecha_str = (request.query_params.get('fecha') or '').strip()
+        fecha = datetime.strptime(fecha_str, '%Y-%m-%d').date()
+    except Exception:
+        return Response({'error': 'Formato de fecha inválido. Usa YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    estado_dia = EstadoPagoEstilistaDia.objects.filter(estilista=estilista, fecha=fecha).first()
+    es_preview = estado_dia is None
+    motor_v3 = _usa_motor_cash_only(fecha)
+
+    # Los toggles que el usuario esté eligiendo en pantalla (aún sin
+    # confirmar) se leen de los query params, para que la vista previa
+    # refleje EXACTAMENTE lo que se liquidaría si confirma ahora mismo.
+    qp = request.query_params
+    aplica_comision_ventas_preview = _to_bool_flag(qp.get('aplica_comision_ventas'), default=True)
+    calc = calcular_liquidacion_dia_estilista(estilista, fecha, aplica_comision_ventas=aplica_comision_ventas_preview)
+
+    # ---- Detalle de servicios del día (para el recibo itemizado) ----
+    servicios_dia = ServicioRealizado.objects.select_related('servicio').filter(
+        estado='finalizado',
+        estilista=estilista,
+        fecha_hora__date=fecha,
+    ).order_by('fecha_hora')
+
+    items = []
+    for srv in servicios_dia:
+        monto_emp = _monto_estilista_resuelto(srv)
+        monto_est = _monto_establecimiento_resuelto(srv)
+        items.append({
+            'servicio_nombre': srv.servicio.nombre if srv.servicio_id else 'Servicio',
+            'numero_factura': srv.numero_factura,
+            'precio_cobrado': float(srv.precio_cobrado or 0),
+            'medio_pago': srv.medio_pago or 'efectivo',
+            'monto_empleado': float(monto_emp),
+            'monto_establecimiento': float(monto_est),
+        })
+
+    adicionales_dia = ServicioRealizadoAdicional.objects.filter(
+        estilista=estilista,
+        servicio_realizado__estado='finalizado',
+        servicio_realizado__fecha_hora__date=fecha,
+    ).select_related('servicio', 'servicio_realizado')
+    for ad in adicionales_dia:
+        valor_cobrado = Decimal(ad.valor_cobrado or 0)
+        pct_est = Decimal(ad.porcentaje_establecimiento or 0) if ad.aplica_porcentaje_establecimiento else Decimal(0)
+        pct_est = max(Decimal(0), min(Decimal(100), pct_est))
+        monto_emp = valor_cobrado - (valor_cobrado * pct_est / Decimal(100))
+        items.append({
+            'servicio_nombre': f"{ad.servicio.nombre if ad.servicio_id else 'Adicional'} (adicional)",
+            'numero_factura': ad.servicio_realizado.numero_factura if ad.servicio_realizado_id else None,
+            'precio_cobrado': float(valor_cobrado),
+            'medio_pago': ad.servicio_realizado.medio_pago if ad.servicio_realizado_id else 'efectivo',
+            'monto_empleado': float(monto_emp),
+            'monto_establecimiento': float(valor_cobrado - monto_emp),
+        })
+
+    if motor_v3:
+        if estado_dia is not None:
+            resultado = {
+                'ganancia_efectivo_dia': float(estado_dia.ganancia_efectivo_dia or 0),
+                'ganancia_electronica_dia': float(estado_dia.ganancia_electronica_dia or 0),
+                'ganancia_electronica_nequi': float(estado_dia.ganancia_electronica_nequi or 0),
+                'ganancia_electronica_daviplata': float(estado_dia.ganancia_electronica_daviplata or 0),
+                'ganancia_electronica_otros': float(estado_dia.ganancia_electronica_otros or 0),
+                'comision_producto_dia': float(estado_dia.comision_producto_dia or 0),
+                'reparto_establecimiento_electronico_pendiente': float(estado_dia.reparto_establecimiento_electronico_pendiente or 0),
+                'descuento_puesto': float(estado_dia.descuento_puesto or 0),
+                'saltar_descuento_puesto': bool(estado_dia.skip_descuento_puesto),
+                'descuento_consumo_dia': float(estado_dia.descuento_consumo_dia or 0),
+                'saltar_descuento_consumo': bool(estado_dia.saltar_descuento_consumo),
+                'total_deducciones_dia': float(estado_dia.total_deducciones_dia or 0),
+                'monto_transferir_empleado': float(estado_dia.monto_transferir_empleado or 0),
+                'monto_pagar_establecimiento': float(estado_dia.monto_pagar_establecimiento or 0),
+                'deuda_anterior_puesto': float(getattr(estado_dia, 'saldo_puesto_pendiente', 0) or 0),
+                'saldo_puesto_pendiente': float(estado_dia.saldo_puesto_pendiente or 0),
+                'saldo_consumo_pendiente': float(SaldoDeudaPuesto.objects.filter(estilista=estilista).values_list('saldo_consumo', flat=True).first() or 0),
+                'estado': estado_dia.estado,
+            }
+        else:
+            # Vista previa en vivo -- usa el MISMO cálculo puro que usaría
+            # _liquidar_dia_v3_core si se confirmara ahora mismo, con los
+            # toggles que el usuario esté eligiendo en pantalla (query params).
+            prev = _calcular_preview_liquidacion_v3(estilista, fecha, qp)
+            resultado = {
+                'ganancia_efectivo_dia': float(prev['ganancia_efectivo']),
+                'ganancia_electronica_dia': float(prev['ganancia_electronica']),
+                'ganancia_electronica_nequi': float(calc.get('ganancia_electronica_nequi') or 0),
+                'ganancia_electronica_daviplata': float(calc.get('ganancia_electronica_daviplata') or 0),
+                'ganancia_electronica_otros': float(calc.get('ganancia_electronica_otros') or 0),
+                'comision_producto_dia': float(prev['comision_producto_dia']),
+                'reparto_establecimiento_electronico_pendiente': float(prev['reparto_pendiente']),
+                'descuento_puesto': float(prev['descuento_puesto_calculado']),
+                'saltar_descuento_puesto': bool(prev['skip_descuento_puesto']),
+                'descuento_consumo_dia': float(prev['monto_a_aplicar_consumo']),
+                'saltar_descuento_consumo': bool(prev['saltar_descuento_consumo']),
+                'total_deducciones_dia': float(prev['total_deducciones_dia']),
+                'monto_transferir_empleado': float(prev['monto_transferir_empleado']),
+                'monto_pagar_establecimiento': float(prev['monto_pagar_establecimiento']),
+                'deuda_anterior_puesto': float(prev['deuda_anterior_puesto']),
+                'saldo_puesto_pendiente': float(prev['saldo_puesto_cierre']),
+                'saldo_consumo_pendiente': float(prev['saldo_consumo_antes']),
+                'saldo_consumo_pendiente_despues': float(prev['saldo_consumo_estimado_cierre']),
+                'puesto_modo': prev['puesto_modo'],
+                'puesto_porcentaje': float(prev['puesto_porcentaje']),
+                'estado': 'preview',
+            }
+    else:
+        resultado = None
+
+    return Response({
+        'estilista': {'id': estilista.id, 'nombre': estilista.nombre},
+        'fecha': fecha.strftime('%Y-%m-%d'),
+        'motor_calculo': 'v3_efectivo' if motor_v3 else 'v2_mixed',
+        'es_preview': es_preview,
+        'items': items,
+        'resultado': resultado,
+        'legacy': None if motor_v3 else {
+            'ganancias_totales': float(calc.get('ganancias_totales') or 0),
+            'descuento_puesto': float(calc.get('descuento_puesto') or 0),
+            'total_pagable': float(calc.get('total_pagable') or 0),
+            'pago_efectivo': float(estado_dia.pago_efectivo or 0) if estado_dia else 0.0,
+            'pago_nequi': float(estado_dia.pago_nequi or 0) if estado_dia else 0.0,
+            'pago_daviplata': float(estado_dia.pago_daviplata or 0) if estado_dia else 0.0,
+            'pago_otros': float(estado_dia.pago_otros or 0) if estado_dia else 0.0,
+            'estado': estado_dia.estado if estado_dia else 'preview',
+        },
+    })
+
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def eliminar_liquidacion_dia_v3(request, estilista_id, fecha):
+    """
+    Deshace una liquidación (régimen "solo efectivo") mal hecha para que se
+    pueda volver a liquidar ese día. Revierte TODO lo que la liquidación
+    escribió, no solo el registro visible:
+
+    - Los abonos de consumo aplicados automáticamente ese día (motor FIFO):
+      se borran y su monto se devuelve a las deudas de consumo originales
+      (y al saldo consolidado).
+    - El registro diario (EstadoPagoEstilistaDia) y su historial de
+      movimientos de esa fecha.
+    - El "fact" consolidado usado por los reportes (FactLiquidacionEstilistaDia).
+    - El saldo de puesto consolidado (SaldoDeudaPuesto.saldo) se recalcula
+      contra el día anterior más reciente que siga liquidado.
+
+    Por seguridad, no se permite eliminar un día si el empleado ya tiene una
+    liquidación más reciente registrada (evitaría "mover" retroactivamente lo
+    que esos días posteriores ya dieron por hecho) -- en ese caso hay que
+    eliminar primero las liquidaciones más recientes.
+
+    DELETE /api/reportes/estilistas/liquidacion-dia/<estilista_id>/<fecha>/eliminar/
+    """
+    _requerir_permiso_ui(request.user, 'reportes', 'edit', 'liquidacion', 'No tienes permiso para eliminar una liquidación.')
+
+    try:
+        estilista = Estilista.objects.get(id=int(estilista_id))
+    except (ValueError, Estilista.DoesNotExist):
+        return Response({'error': 'Estilista no encontrado.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        fecha_dt = datetime.strptime(str(fecha), '%Y-%m-%d').date()
+    except Exception:
+        return Response({'error': 'Formato de fecha inválido. Usa YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    estado_dia = EstadoPagoEstilistaDia.objects.filter(estilista=estilista, fecha=fecha_dt).first()
+    if not estado_dia:
+        return Response({'error': 'No hay ninguna liquidación registrada para ese día.'}, status=status.HTTP_404_NOT_FOUND)
+
+    if estado_dia.motor_calculo != 'v3_efectivo':
+        return Response(
+            {'error': 'Esta liquidación no usa el régimen "solo efectivo"; elimínala desde el histórico clásico.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if EstadoPagoEstilistaDia.objects.filter(estilista=estilista, fecha__gt=fecha_dt).exists():
+        return Response(
+            {'error': 'No se puede eliminar: este empleado ya tiene una liquidación más reciente. Elimina primero las liquidaciones posteriores.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        with transaction.atomic():
+            # ---- revertir abonos de consumo que esta liquidación aplicó ----
+            abonos_a_revertir = AbonoDeudaEmpleado.objects.select_related('deuda').filter(
+                deuda__estilista=estilista,
+                origen_liquidacion_fecha=fecha_dt,
+            )
+            total_revertido_consumo = Decimal(0)
+            deudas_tocadas = {}
+            for abono in abonos_a_revertir:
+                deuda = deudas_tocadas.get(abono.deuda_id) or abono.deuda
+                deuda.total_abonado = max(Decimal(deuda.total_abonado or 0) - Decimal(abono.monto or 0), Decimal(0))
+                _recalcular_estado_deuda(deuda)
+                deudas_tocadas[abono.deuda_id] = deuda
+                total_revertido_consumo += Decimal(abono.monto or 0)
+            for deuda in deudas_tocadas.values():
+                deuda.save(update_fields=['total_abonado', 'saldo_pendiente', 'estado'])
+            cantidad_abonos_revertidos = abonos_a_revertir.count()
+            abonos_a_revertir.delete()
+
+            if total_revertido_consumo > 0:
+                saldo_obj_consumo, _ = SaldoDeudaPuesto.objects.get_or_create(estilista=estilista)
+                saldo_obj_consumo.saldo_consumo = Decimal(saldo_obj_consumo.saldo_consumo or 0) + total_revertido_consumo
+                saldo_obj_consumo.save()
+
+            # ---- borrar el registro diario, su historial y el fact de reportes ----
+            EstadoPagoEstilistaHistorial.objects.filter(estilista=estilista, fecha=fecha_dt).delete()
+            FactLiquidacionEstilistaDia.objects.filter(estilista=estilista, fecha=fecha_dt).delete()
+            estado_dia.delete()
+
+            # ---- recalcular el saldo de puesto consolidado contra el día anterior ----
+            saldo_obj_puesto, _ = SaldoDeudaPuesto.objects.get_or_create(estilista=estilista)
+            estado_previo = EstadoPagoEstilistaDia.objects.filter(estilista=estilista, fecha__lt=fecha_dt).order_by('-fecha').first()
+            saldo_obj_puesto.saldo = max(Decimal(estado_previo.saldo_puesto_pendiente or 0), Decimal(0)) if estado_previo else Decimal(0)
+            saldo_obj_puesto.save()
+    except Exception as e:
+        return Response({'error': f'No se pudo eliminar la liquidación: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    return Response({
+        'success': True,
+        'estilista_id': estilista.id,
+        'fecha': fecha_dt.strftime('%Y-%m-%d'),
+        'abonos_consumo_revertidos': cantidad_abonos_revertidos,
+        'monto_consumo_revertido': float(total_revertido_consumo),
+        'mensaje': 'Liquidación eliminada. El día queda disponible para volver a liquidarse.',
+    })
 
 
 @api_view(['POST'])
@@ -4177,8 +5387,7 @@ def cargar_deuda_puesto_dia(request):
     5. Retornar estado actualizado
     """
 
-    if _es_recepcion(request.user):
-        raise PermissionDenied('Recepción no tiene permiso para cargar deuda de puesto.')
+    _requerir_permiso_ui(request.user, 'reportes', 'edit', 'ajuste', 'No tienes permiso para cargar deuda de puesto.')
 
     try:
         estilista_id = int(request.data.get('estilista_id') or 0)
@@ -4299,8 +5508,7 @@ def cancelar_deuda_puesto_dias(request):
         "fechas": ["2026-04-10", "2026-04-11"]
     }
     """
-    if _es_recepcion(request.user):
-        raise PermissionDenied('Recepción no tiene permiso para cancelar deuda de puesto.')
+    _requerir_permiso_ui(request.user, 'reportes', 'edit', 'ajuste', 'No tienes permiso para cancelar deuda de puesto.')
 
     try:
         estilista_id = int(request.data.get('estilista_id') or 0)
@@ -4405,8 +5613,7 @@ def abonar_deuda_puesto_dias(request):
     Body: {"estilista_id": 5, "fechas": ["2026-06-07", "2026-06-30"], "monto": 29000}
     Si "monto" se omite o es 0 o negativo, liquida completo cada dia seleccionado.
     """
-    if _es_recepcion(request.user):
-        raise PermissionDenied('Recepción no tiene permiso para abonar deuda de puesto.')
+    _requerir_permiso_ui(request.user, 'reportes', 'edit', 'ajuste', 'No tienes permiso para abonar deuda de puesto.')
 
     try:
         estilista_id = int(request.data.get('estilista_id') or 0)
@@ -4568,8 +5775,7 @@ def liquidar_pago_empleado_dias(request):
         "fechas": ["2026-06-19", "2026-06-20"]
     }
     """
-    if _es_recepcion(request.user):
-        raise PermissionDenied('Recepción no tiene permiso para liquidar pagos de empleado.')
+    _requerir_permiso_ui(request.user, 'reportes', 'edit', 'liquidacion', 'No tienes permiso para liquidar pagos de empleado.')
 
     try:
         estilista_id = int(request.data.get('estilista_id') or 0)
@@ -4668,6 +5874,147 @@ def liquidar_pago_empleado_dias(request):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
+def confirmar_transferencia_pendiente_dia(request):
+    """
+    Confirma que una transferencia/pago pendiente de un día ya liquidado
+    (régimen "solo efectivo", v3) efectivamente se recibió/entregó, para que
+    el día deje de quedar como "Pendiente" para siempre.
+
+    Cubre los dos sentidos posibles del día:
+    - El empleado debía transferir dinero al negocio (monto_transferir_empleado)
+      y ahora se confirma que lo hizo -- se acredita a monto_transferir_recibido.
+    - El negocio debía entregarle efectivo al empleado (monto_pagar_establecimiento)
+      y ahora se confirma que se le entregó -- se acredita a monto_pagar_entregado.
+
+    POST /api/reportes/estilistas/confirmar-transferencia-dia/
+
+    Body:
+    {
+        "estilista_id": 5,
+        "fecha": "2026-08-02",
+        "tipo": "transferencia_empleado" | "pago_establecimiento",
+        "monto": 55000  // opcional; si se omite, confirma el pendiente completo
+    }
+    """
+    _requerir_permiso_ui(request.user, 'reportes', 'edit', 'liquidacion', 'No tienes permiso para confirmar pagos pendientes de liquidación.')
+
+    try:
+        estilista_id = int(request.data.get('estilista_id') or 0)
+        estilista = Estilista.objects.get(id=estilista_id, activo=True)
+    except (ValueError, Estilista.DoesNotExist):
+        return Response({'error': 'Estilista no encontrado.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        fecha = datetime.strptime(str(request.data.get('fecha') or '').strip(), '%Y-%m-%d').date()
+    except Exception:
+        return Response({'error': 'Formato de fecha inválido. Usa YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    tipo = str(request.data.get('tipo') or '').strip().lower()
+    if tipo not in {'transferencia_empleado', 'pago_establecimiento'}:
+        return Response({'error': "tipo debe ser 'transferencia_empleado' o 'pago_establecimiento'."}, status=status.HTTP_400_BAD_REQUEST)
+
+    def _to_decimal(v):
+        try:
+            d = Decimal(str(v if v is not None else 0))
+            return max(d, Decimal(0))
+        except Exception:
+            return Decimal(0)
+
+    ep = EstadoPagoEstilistaDia.objects.filter(estilista=estilista, fecha=fecha).first()
+    if ep is None:
+        return Response({'error': 'No existe una liquidación registrada para ese día.'}, status=status.HTTP_404_NOT_FOUND)
+
+    if getattr(ep, 'motor_calculo', '') != 'v3_efectivo':
+        return Response({'error': 'Este día no usa el régimen de liquidación "solo efectivo".'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        with transaction.atomic():
+            estado_anterior = ep.estado
+
+            if tipo == 'transferencia_empleado':
+                pendiente_actual = max(Decimal(ep.monto_transferir_empleado or 0) - Decimal(ep.monto_transferir_recibido or 0), Decimal(0))
+                if pendiente_actual <= 0:
+                    return Response({'error': 'No hay transferencia pendiente del empleado para este día.'}, status=status.HTTP_400_BAD_REQUEST)
+                monto_confirmar = _to_decimal(request.data.get('monto', pendiente_actual))
+                if monto_confirmar <= 0:
+                    return Response({'error': 'El monto a confirmar debe ser mayor a cero.'}, status=status.HTTP_400_BAD_REQUEST)
+                monto_confirmar = min(monto_confirmar, pendiente_actual)
+                ep.monto_transferir_recibido = Decimal(ep.monto_transferir_recibido or 0) + monto_confirmar
+            else:
+                pendiente_actual = max(Decimal(ep.monto_pagar_establecimiento or 0) - Decimal(ep.monto_pagar_entregado or 0), Decimal(0))
+                if pendiente_actual <= 0:
+                    return Response({'error': 'No hay pago pendiente del establecimiento para este día.'}, status=status.HTTP_400_BAD_REQUEST)
+                monto_confirmar = _to_decimal(request.data.get('monto', pendiente_actual))
+                if monto_confirmar <= 0:
+                    return Response({'error': 'El monto a confirmar debe ser mayor a cero.'}, status=status.HTTP_400_BAD_REQUEST)
+                monto_confirmar = min(monto_confirmar, pendiente_actual)
+                ep.monto_pagar_entregado = Decimal(ep.monto_pagar_entregado or 0) + monto_confirmar
+
+            pendiente_transferencia = max(Decimal(ep.monto_transferir_empleado or 0) - Decimal(ep.monto_transferir_recibido or 0), Decimal(0))
+            pendiente_pago = max(Decimal(ep.monto_pagar_establecimiento or 0) - Decimal(ep.monto_pagar_entregado or 0), Decimal(0))
+            saldo_puesto_actual = Decimal(ep.saldo_puesto_pendiente or 0)
+            saldo_obj_consumo = SaldoDeudaPuesto.objects.filter(estilista=estilista).first()
+            saldo_consumo_actual = Decimal(getattr(saldo_obj_consumo, 'saldo_consumo', 0) or 0)
+
+            if pendiente_transferencia > 0 or pendiente_pago > 0:
+                estado_resultante = 'pendiente'
+            elif saldo_puesto_actual > 0 or saldo_consumo_actual > 0:
+                estado_resultante = 'debe'
+            else:
+                estado_resultante = 'cancelado'
+
+            ep.estado = estado_resultante
+            notas_actual = str(ep.notas or '')
+            tipo_legible = 'transferencia del empleado' if tipo == 'transferencia_empleado' else 'pago del establecimiento'
+            nota_extra = f'Confirmado {tipo_legible} (${monto_confirmar:,.2f}).'
+            ep.notas = f'{notas_actual} | {nota_extra}'.strip(' |')[:255]
+            ep.usuario_liquida = request.user
+            ep.save()
+
+            fact = FactLiquidacionEstilistaDia.objects.filter(estilista=estilista, fecha=fecha, vigente=True).first()
+            if fact is not None:
+                fact.monto_transferir_recibido = ep.monto_transferir_recibido
+                fact.monto_pagar_entregado = ep.monto_pagar_entregado
+                fact.estado_liquidacion = estado_resultante
+                fact.save()
+
+            try:
+                EstadoPagoEstilistaHistorial.objects.create(
+                    estilista=estilista,
+                    fecha=fecha,
+                    estado_anterior=estado_anterior,
+                    estado_nuevo=estado_resultante,
+                    notas=nota_extra,
+                    usuario=request.user,
+                    monto_liquidado=monto_confirmar,
+                    pendiente_puesto=saldo_puesto_actual,
+                    monto_transferir_empleado=Decimal(ep.monto_transferir_empleado or 0),
+                    monto_pagar_establecimiento=Decimal(ep.monto_pagar_establecimiento or 0),
+                    motor_calculo='v3_efectivo',
+                )
+            except Exception:
+                pass
+
+        return Response({
+            'success': True,
+            'estilista_id': estilista.id,
+            'fecha': fecha.strftime('%Y-%m-%d'),
+            'tipo': tipo,
+            'monto_confirmado': float(monto_confirmar),
+            'estado': ep.estado,
+            'monto_transferir_empleado': float(ep.monto_transferir_empleado or 0),
+            'monto_transferir_recibido': float(ep.monto_transferir_recibido or 0),
+            'pendiente_transferencia_empleado': float(pendiente_transferencia),
+            'monto_pagar_establecimiento': float(ep.monto_pagar_establecimiento or 0),
+            'monto_pagar_entregado': float(ep.monto_pagar_entregado or 0),
+            'pendiente_pago_empleado_efectivo': float(pendiente_pago),
+        }, status=status.HTTP_200_OK)
+    except Exception as e:
+        return Response({'error': f'No se pudo confirmar el pago pendiente: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
 def cancelar_facturas_deuda_empleado(request):
     """
     Cancela (estado='cancelado', saldo=0) facturas de deuda de consumo de empleado.
@@ -4679,8 +6026,7 @@ def cancelar_facturas_deuda_empleado(request):
         "deuda_ids": [12, 34, 56]
     }
     """
-    if _es_recepcion(request.user):
-        raise PermissionDenied('Recepción no tiene permiso para cancelar facturas de deuda.')
+    _requerir_permiso_ui(request.user, 'reportes', 'delete', 'cartera', 'No tienes permiso para cancelar facturas de deuda.')
 
     deuda_ids_raw = request.data.get('deuda_ids', [])
     if not deuda_ids_raw or not isinstance(deuda_ids_raw, list):
@@ -4785,8 +6131,40 @@ def estado_pago_estilista_historial(request):
         if estilista_id_raw:
             qs = qs.filter(estilista_id=int(estilista_id_raw))
 
-        registros = [
-            {
+        registros_x = list(qs[:limit])
+
+        # El historial es una bitácora de auditoría (nunca cambia una vez
+        # creada) -- para saber si HOY sigue habiendo algo pendiente por
+        # confirmar (transferencia del empleado o pago del negocio) hay que
+        # mirar el estado VIGENTE de EstadoPagoEstilistaDia, no el snapshot
+        # congelado del momento en que se liquidó.
+        pares = {(x.estilista_id, x.fecha) for x in registros_x}
+        estado_actual_map = {}
+        if pares:
+            estilista_ids = {p[0] for p in pares}
+            fechas = {p[1] for p in pares}
+            for ep in EstadoPagoEstilistaDia.objects.filter(estilista_id__in=estilista_ids, fecha__in=fechas):
+                estado_actual_map[(ep.estilista_id, ep.fecha)] = ep
+
+        registros = []
+        for x in registros_x:
+            ep_actual = estado_actual_map.get((x.estilista_id, x.fecha))
+            if ep_actual is not None and getattr(ep_actual, 'motor_calculo', '') == 'v3_efectivo':
+                pendiente_transferencia_actual = float(max(
+                    Decimal(ep_actual.monto_transferir_empleado or 0) - Decimal(ep_actual.monto_transferir_recibido or 0),
+                    Decimal(0),
+                ))
+                pendiente_pago_actual = float(max(
+                    Decimal(ep_actual.monto_pagar_establecimiento or 0) - Decimal(ep_actual.monto_pagar_entregado or 0),
+                    Decimal(0),
+                ))
+                estado_actual = ep_actual.estado
+            else:
+                pendiente_transferencia_actual = 0.0
+                pendiente_pago_actual = 0.0
+                estado_actual = x.estado_nuevo
+
+            registros.append({
                 'id': x.id,
                 'estilista_id': x.estilista_id,
                 'estilista_nombre': x.estilista.nombre,
@@ -4801,9 +6179,15 @@ def estado_pago_estilista_historial(request):
                 'medio_abono_puesto': getattr(x, 'medio_abono_puesto', 'efectivo') or 'efectivo',
                 'pendiente_puesto': float(x.pendiente_puesto or 0),
                 'fecha_cambio': timezone.localtime(x.fecha_cambio).strftime('%Y-%m-%d %H:%M:%S'),
-            }
-            for x in qs[:limit]
-        ]
+                'motor_calculo': getattr(x, 'motor_calculo', 'v2_mixed') or 'v2_mixed',
+                'monto_transferir_empleado': float(getattr(x, 'monto_transferir_empleado', 0) or 0),
+                'monto_pagar_establecimiento': float(getattr(x, 'monto_pagar_establecimiento', 0) or 0),
+                # Estado VIGENTE (no el snapshot histórico) -- para decidir si
+                # todavía se puede confirmar una transferencia/pago pendiente.
+                'estado_actual': estado_actual,
+                'pendiente_transferencia_empleado_actual': pendiente_transferencia_actual,
+                'pendiente_pago_empleado_actual': pendiente_pago_actual,
+            })
     except (OperationalError, ProgrammingError):
         # Compatibilidad con esquema anterior sin abono_puesto/pendiente_puesto.
         try:
@@ -4839,10 +6223,11 @@ def estado_pago_estilista_historial(request):
 @api_view(['DELETE'])
 @permission_classes([IsAuthenticated])
 def eliminar_estado_pago_historial(request, historial_id):
-    # Administrador o gerente pueden eliminar para poder corregir liquidaciones mal registradas.
-    if not _es_admin_o_gerente(request.user):
+    # Permiso de edición de liquidación: quien puede corregir/liquidar también puede
+    # eliminar un registro de historial mal guardado.
+    if not _tiene_permiso_ui(request.user, 'reportes', 'edit', 'liquidacion'):
         return Response(
-            {'error': 'Solo administrador o gerente pueden eliminar registros del historial.'},
+            {'error': 'No tienes permiso para eliminar registros del historial.'},
             status=status.HTTP_403_FORBIDDEN,
         )
 
@@ -4920,9 +6305,9 @@ def eliminar_estado_pago_historial(request, historial_id):
 @api_view(['PATCH'])
 @permission_classes([IsAuthenticated])
 def mover_fecha_estado_pago_dia(request, estado_id):
-    if not _es_admin_o_gerente(request.user):
+    if not _tiene_permiso_ui(request.user, 'reportes', 'edit', 'liquidacion'):
         return Response(
-            {'error': 'Solo administrador o gerente pueden ajustar la fecha del pago de espacio.'},
+            {'error': 'No tienes permiso para ajustar la fecha del pago de espacio.'},
             status=status.HTTP_403_FORBIDDEN,
         )
 
@@ -5453,12 +6838,19 @@ def bi_desglose_estilista(request):
     })
 
 
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def reporte_ajuste_diario_unificado(request):
-    """Tabla unificada por día y empleado para ajustes operativos en una sola vista."""
-    if _es_recepcion(request.user):
-        raise PermissionDenied('Recepción no tiene acceso al módulo unificado de ajustes.')
+def _calcular_ajuste_diario_items(request):
+    """
+    Lógica compartida de `reporte_ajuste_diario_unificado`, extraída para
+    poder llamarse como función Python normal (ej. desde
+    `reporte_cierre_caja`) sin pasar por la maquinaria de despacho de vistas
+    de DRF -- llamar directamente a una función decorada con `@api_view`
+    pasándole un `rest_framework.request.Request` ya envuelto revienta con
+    `AssertionError: The request argument must be an instance of
+    django.http.HttpRequest` (el decorador CSRF interno de DRF espera un
+    HttpRequest crudo, no uno ya envuelto). Devuelve el dict plano, sin
+    envolver en Response -- eso lo hace el view público más abajo.
+    """
+    _requerir_permiso_ui(request.user, 'reportes', 'view', 'ajuste', 'No tienes acceso al módulo unificado de ajustes.')
 
     fecha_inicio, fecha_fin = _resolver_rango_fechas(request)
     try:
@@ -5758,6 +7150,15 @@ def reporte_ajuste_diario_unificado(request):
             cobro_consumo = Decimal((fact.cobro_consumo_dia if fact else consumo_por_est_dia.get((est_id, dia), Decimal(0))) or 0)
 
             pendiente_empleado = max(generado - pagado_total, Decimal(0))
+            es_v3 = _usa_motor_cash_only(dia)
+            if es_v3 and ep is not None:
+                # Régimen "solo efectivo": el negocio solo paga en efectivo
+                # (monto_pagar_entregado) -- pago_efectivo/nequi/daviplata/otros
+                # quedan en 0 por diseño (ver EstadoPagoEstilistaDia), así que
+                # "pagado_total"/"pendiente_empleado" deben leerse de los
+                # campos nuevos en vez de la fórmula legacy.
+                pagado_total = Decimal(getattr(ep, 'monto_pagar_entregado', 0) or 0)
+                pendiente_empleado = Decimal(getattr(ep, 'pendiente_pago_empleado_efectivo', 0) or 0)
             # pendiente_por_fecha ya incluye tanto el descuento diferido normal
             # (skip_descuento_puesto=True) como la deuda cargada manualmente (detectada
             # como incremento del saldo acumulado en el loop de arriba), ambos envejecidos
@@ -5797,18 +7198,24 @@ def reporte_ajuste_diario_unificado(request):
                     'deuda_puesto_arrastre_actual': float(max(Decimal(fifo_est.get('arrastre_final', 0) or 0), Decimal(0))),
                     'saldo_puesto_total': float(saldo_puesto_actual_map.get(est_id, Decimal(0))),
                     'saldo_consumo_total': float(saldo_consumo_actual_map.get(est_id, Decimal(0))),
+                    **(_campos_liquidacion_v3_dia(ep) if ep is not None else {}),
                 }
             )
 
     items.sort(key=lambda x: (x.get('fecha') or '', x.get('estilista_nombre') or ''), reverse=True)
-    return Response(
-        {
-            'fecha_inicio': fecha_inicio,
-            'fecha_fin': fecha_fin,
-            'items': items,
-            'total_filas': len(items),
-        }
-    )
+    return {
+        'fecha_inicio': fecha_inicio,
+        'fecha_fin': fecha_fin,
+        'items': items,
+        'total_filas': len(items),
+    }
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def reporte_ajuste_diario_unificado(request):
+    """Tabla unificada por día y empleado para ajustes operativos en una sola vista."""
+    return Response(_calcular_ajuste_diario_items(request))
 
 
 @api_view(['GET'])
@@ -5816,7 +7223,7 @@ def reporte_ajuste_diario_unificado(request):
 def bi_resumen(request):
     """Vista API que retorna datos de BI como JSON"""
     data = _calcular_datos_bi(request)
-    if _es_recepcion(request.user):
+    if not _tiene_permiso_ui(request.user, 'reportes', 'view', 'agotarse'):
         data = _sanitizar_bi_para_recepcion(data)
     return Response(data)
 
@@ -6046,6 +7453,11 @@ def reporte_cierre_caja(request):
 
         ganancia = valor_venta - valor_compra - comision_empleado
 
+        # Cierre de caja = contabilidad de TODO lo que factura el salón, sin
+        # importar si el cliente pagó en efectivo (va a la caja) o
+        # electrónico (va directo a la cuenta del empleado) -- es ingreso
+        # del negocio de todas formas, solo cambia quién lo tiene en la mano
+        # en este momento. Por eso se cuenta siempre, sin filtrar por medio.
         ventas_productos_total += valor_venta
         costo_productos_total += valor_compra
         comision_productos_total += comision_empleado
@@ -6080,8 +7492,13 @@ def reporte_cierre_caja(request):
         ).order_by('-fecha', 'estilista__nombre')
 
         for ep in estado_pago_qs:
-            # El ingreso por espacio es el abono_puesto (lo que el empleado pagó al espacio)
-            valor_recibido = Decimal(ep.abono_puesto or 0)
+            # El ingreso por espacio tiene dos partes: el cobro normal del
+            # día (descuento_puesto, si no se saltó ese día) y cualquier
+            # abono extra voluntario a la deuda acumulada (abono_puesto).
+            # Antes solo se contaba el abono extra -- por eso "Espacios"
+            # aparecía en $0 aunque sí se hubiera cobrado puesto ese día.
+            descuento_dia_aplicado = Decimal(0) if getattr(ep, 'skip_descuento_puesto', False) else Decimal(ep.descuento_puesto or 0)
+            valor_recibido = descuento_dia_aplicado + Decimal(ep.abono_puesto or 0)
 
             if valor_recibido <= 0:
                 continue
@@ -6172,6 +7589,11 @@ def reporte_cierre_caja(request):
 
     detalle_servicios_establecimiento = []
     ingresos_servicios_establecimiento = Decimal(0)
+    # ganancias_empleados_servicios_total: TODO lo que ganaron los empleados
+    # en servicios (efectivo o electrónico, cobrado o no) -- es su ganancia
+    # real, sin importar el medio de pago ni si ya se las entregaron. Para
+    # la tarjeta "Ganancias de empleados".
+    ganancias_empleados_servicios_total = Decimal(0)
 
     for srv in servicios_qs.order_by('-fecha_hora'):
         sid = int(srv.id)
@@ -6207,50 +7629,53 @@ def reporte_cierre_caja(request):
             + remanente_adicional_no_producto
         )
 
+        # Ganancia del empleado en este servicio: se cuenta SIEMPRE (efectivo
+        # o electrónico), porque representa lo que ganó, no lo que ya cobró.
+        ad_empleado = valor_adicionales_desglosados - Decimal(ad_info['establecimiento'] or 0)
+        if ad_empleado < 0:
+            ad_empleado = Decimal(0)
+        ganancias_empleados_servicios_total += _monto_estilista_resuelto(srv) + ad_empleado
+
+        fecha_op_est = _fecha_operativa_desde_dt(srv.fecha_hora)
+        medio_est = (srv.medio_pago or 'efectivo').strip().lower()
+        es_electronico_v3 = bool(
+            medio_est != 'efectivo' and fecha_op_est and _usa_motor_cash_only(fecha_op_est)
+        )
+
         if ganancia_est <= 0:
             continue
 
         ingresos_servicios_establecimiento += ganancia_est
-        
+
         # Construir nombre del servicio
         tipo_servicio = srv.servicio.nombre if srv.servicio_id else '-'
         if ad_nombres:
             tipo_servicio = f"{tipo_servicio} + {', '.join(ad_nombres)}"
-        
+
         detalle_servicios_establecimiento.append(
             {
                 'fecha_hora': timezone.localtime(srv.fecha_hora).strftime('%Y-%m-%d %H:%M:%S') if srv.fecha_hora else None,
-                'fecha': _fecha_operativa_desde_dt(srv.fecha_hora).strftime('%Y-%m-%d') if srv.fecha_hora else None,
+                'fecha': fecha_op_est.strftime('%Y-%m-%d') if fecha_op_est else None,
                 'numero_factura': srv.numero_factura,
                 'tipo_servicio': tipo_servicio,
                 'medio_pago': srv.medio_pago,
                 'estilista_nombre': srv.estilista.nombre if srv.estilista_id else '',
                 'valor_servicio': float(valor_servicio),
                 'ganancia_establecimiento': float(ganancia_est),
+                # Régimen "solo efectivo": si este % de establecimiento ya
+                # está en caja (pago en efectivo) o sigue pendiente de
+                # recuperar porque el cliente pagó electrónico directo al
+                # empleado (se suma a lo que ese empleado debe transferir
+                # al liquidar -- ver Fase 3).
+                'recuperado_en_efectivo': not es_electronico_v3,
+                'pendiente_electronico': float(ganancia_est) if es_electronico_v3 else 0.0,
             }
         )
 
-    # Tarjetas de cierre de caja según reglas de negocio solicitadas:
-    # Ingresos Totales = servicios base + servicios adicionales + productos + consumo empleado.
-    servicios_base_total = Decimal(servicios_qs.aggregate(total=Sum('precio_cobrado'))['total'] or 0)
-    servicios_adicionales_total = Decimal(servicios_qs.aggregate(total=Sum('valor_adicionales'))['total'] or 0)
-    total_ingresos = (
-        servicios_base_total
-        + servicios_adicionales_total
-        + ventas_productos_directos_total
-        + consumo_empleado_abonado_total
-    )
-
-    # Mantener coherencia semántica: esta tarjeta debe ser la misma ganancia
-    # que se muestra en el detalle de servicios del establecimiento.
-    ingresos_servicios_tarjeta = ingresos_servicios_establecimiento
-    ingresos_productos_tarjeta = ventas_productos_total - comision_productos_total
-    if ingresos_productos_tarjeta < 0:
-        ingresos_productos_tarjeta = Decimal(0)
-    ingresos_espacios_tarjeta = ingresos_espacios
-
-    suma_componentes = ingresos_servicios_tarjeta + ingresos_productos_tarjeta + ingresos_espacios_tarjeta
-    liquidacion_empleados_resumen = Decimal(str(kpis.get('pago_total_estilistas', 0) or 0))
+    # Cálculo de salidas/entradas de caja por movimientos de liquidación
+    # (efectivo entregado al empleado, o transferido de vuelta por él) --
+    # se calcula ANTES de las tarjetas de resumen porque "Total ingresos"
+    # también necesita `total_transferencias_recibidas` (ver abajo).
     salidas_por_medio_ajuste = {
         'efectivo': Decimal(0),
         'nequi': Decimal(0),
@@ -6258,27 +7683,84 @@ def reporte_cierre_caja(request):
         'otros': Decimal(0),
     }
     ajuste_items = []
+    total_transferencias_recibidas = Decimal(0)
     try:
-        ajuste_resp = reporte_ajuste_diario_unificado(request)
-        ajuste_items = (getattr(ajuste_resp, 'data', {}) or {}).get('items', []) or []
-        if ajuste_items:
-            for item in ajuste_items:
+        ajuste_items = _calcular_ajuste_diario_items(request).get('items', []) or []
+        for item in ajuste_items:
+            if item.get('motor_calculo') == 'v3_efectivo':
+                # Régimen "solo efectivo": lo único que sale de caja es el
+                # efectivo entregado al empleado. Lo que el empleado
+                # transfiere de vuelta (cuando su efectivo no alcanzó) NO se
+                # resta aquí de las salidas (se contaría dos veces con el
+                # ingreso del servicio, ya contado por su propio medio) ni se
+                # suma a ningún ingreso -- queda solo como dato informativo en
+                # `transferencias_empleados_recibidas`, fuera de los totales.
+                salidas_por_medio_ajuste['efectivo'] += Decimal(str(item.get('monto_pagar_entregado', 0) or 0))
+                total_transferencias_recibidas += Decimal(str(item.get('monto_transferir_recibido', 0) or 0))
+            else:
                 salidas_por_medio_ajuste['efectivo'] += Decimal(str(item.get('pago_efectivo', 0) or 0))
                 salidas_por_medio_ajuste['nequi'] += Decimal(str(item.get('pago_nequi', 0) or 0))
                 salidas_por_medio_ajuste['daviplata'] += Decimal(str(item.get('pago_daviplata', 0) or 0))
                 salidas_por_medio_ajuste['otros'] += Decimal(str(item.get('pago_otros', 0) or 0))
-
-            if medio_pago and medio_pago != 'todos' and medio_pago in salidas_por_medio_ajuste:
-                liquidacion_empleados_resumen = salidas_por_medio_ajuste.get(medio_pago, Decimal(0))
-            else:
-                liquidacion_empleados_resumen = sum(salidas_por_medio_ajuste.values(), Decimal(0))
     except Exception:
         pass
-    if liquidacion_empleados_resumen < 0:
-        liquidacion_empleados_resumen = Decimal(0)
-    ganancia_total = total_ingresos - liquidacion_empleados_resumen
+
+    # Tarjetas de cierre de caja -- CONTABILIDAD del negocio: se cuenta TODO
+    # lo que el salón factura, sin importar si el cliente pagó en efectivo
+    # (va a la caja) o electrónico (va directo a la cuenta del empleado). Es
+    # ingreso del negocio de todas formas -- el medio de pago solo cambia
+    # quién tiene el dinero en la mano en este momento, no si es o no
+    # ingreso. (El desglose por medio de pago, más abajo, sigue mostrando
+    # ESE detalle por separado).
+    servicios_base_total = Decimal(0)
+    servicios_adicionales_total = Decimal(0)
+    for srv in servicios_qs:
+        servicios_base_total += Decimal(srv.precio_cobrado or 0)
+        servicios_adicionales_total += Decimal(srv.valor_adicionales or 0)
+    servicios_bruto_total = servicios_base_total + servicios_adicionales_total
+
+    # "Total ingresos": TODO lo que genera el salón -- servicios (precio
+    # completo) + productos (venta completa) + espacios, sin importar el
+    # medio de pago ni quién tiene el dinero ahora mismo.
+    total_ingresos = servicios_bruto_total + ventas_productos_total + ingresos_espacios
+
+    # "Desglose de ingresos": estas 3 tarjetas NO son un reparto de
+    # "Total ingresos" (son magnitudes distintas, cada una responde una
+    # pregunta distinta) --
+    # - Servicios: SOLO lo que se queda el establecimiento por servicios
+    #   (su % o los ítems 100% del negocio, como shampoo) -- coincide con la
+    #   pestaña de detalle "Servicios" de más abajo.
+    # - Productos: el valor bruto de TODO lo vendido (venta directa +
+    #   producto dentro de un servicio + abonos de consumo empleado).
+    # - Espacios: lo cobrado por uso de espacio (cobro normal del día +
+    #   abonos extra a deuda vieja).
+    ingresos_servicios_tarjeta = ingresos_servicios_establecimiento
+    ingresos_productos_tarjeta = ventas_productos_total
+    ingresos_espacios_tarjeta = ingresos_espacios
+
+    # "Ganancias de empleados": lo que ganaron en TOTAL por servicios más su
+    # comisión de productos -- su ganancia real, sin importar si el cobro fue
+    # en efectivo o electrónico, ni si ya se les entregó ese dinero. No es un
+    # movimiento de caja, es informativo de cuánto les corresponde.
+    ganancias_empleados_resumen = ganancias_empleados_servicios_total + comision_productos_total
+    if ganancias_empleados_resumen < 0:
+        ganancias_empleados_resumen = Decimal(0)
+
+    # "Ganancia neta": lo que se queda el establecimiento -- su parte de
+    # servicios (todos, sin importar medio de pago), más la utilidad neta de
+    # productos (venta - costo - comisión), más los pagos de espacio. Es la
+    # ganancia real del negocio, gane el negocio ya haya recuperado ese
+    # dinero en la caja o siga en la cuenta personal del empleado hasta que
+    # liquide.
+    ganancia_producto_neta = ventas_productos_total - costo_productos_total - comision_productos_total
+    if ganancia_producto_neta < 0:
+        ganancia_producto_neta = Decimal(0)
+    ganancia_total = ingresos_servicios_establecimiento + ganancia_producto_neta + ingresos_espacios
+
+    suma_componentes = ingresos_servicios_tarjeta + ganancia_producto_neta + ingresos_espacios_tarjeta
 
     detalle_medios_bi = data_bi.get('cierre_medios', {}).get('detalle', []) or []
+    ingresos_informativos_electronicos = Decimal(str(data_bi.get('cierre_medios', {}).get('ingresos_informativos_electronicos_empleado', 0) or 0))
     medios_orden = ['efectivo', 'nequi', 'daviplata', 'otros']
     ingresos_por_medio = {m: Decimal(0) for m in medios_orden}
     salidas_por_medio_bi = {m: Decimal(0) for m in medios_orden}
@@ -6323,13 +7805,20 @@ def reporte_cierre_caja(request):
             'medio_pago': medio_pago or 'todos',
             'resumen': {
                 'total_ingresos': float(total_ingresos),
-                'liquidacion_empleados': float(liquidacion_empleados_resumen),
+                'liquidacion_empleados': float(ganancias_empleados_resumen),
                 'ganancia_total': float(ganancia_total),
                 'ingresos_servicios_establecimiento': float(ingresos_servicios_tarjeta),
                 'ingresos_productos_utilidad': float(ingresos_productos_tarjeta),
                 'ingresos_espacios': float(ingresos_espacios_tarjeta),
                 'suma_componentes_ganancia': float(suma_componentes),
                 'diferencia_cuadre': float(ganancia_total - suma_componentes),
+                # Informativo, NO sumado a total_ingresos/ganancia_total (ver
+                # comentario junto a total_transferencias_recibidas más
+                # arriba): dinero que empleados transfirieron de vuelta al
+                # negocio porque su efectivo del día no alcanzó para cubrir
+                # sus deducciones (puesto/consumo/% establecimiento
+                # electrónico mezclados, sin desglose por concepto).
+                'transferencias_empleados_recibidas': float(total_transferencias_recibidas),
             },
             'medios': {
                 'detalle': detalle_medios_serializado,
@@ -6338,6 +7827,7 @@ def reporte_cierre_caja(request):
                     'salidas': float(total_salidas_medios),
                     'saldo': float(total_ingresos_medios - total_salidas_medios),
                 },
+                'ingresos_informativos_electronicos_empleado': float(ingresos_informativos_electronicos),
             },
             'productos': {
                 'ingresos_venta': float(ventas_productos_total),
@@ -6363,8 +7853,7 @@ def reporte_cierre_caja(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def bi_export_csv(request):
-    if _es_recepcion(request.user):
-        raise PermissionDenied('Recepción no tiene permiso para exportar BI completo.')
+    _requerir_permiso_ui(request.user, 'reportes', 'export_excel', 'cierre', 'No tienes permiso para exportar BI completo.')
 
     try:
         data = _calcular_datos_bi(request)
@@ -6460,8 +7949,7 @@ def bi_export_csv(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def bi_export_pdf(request):
-    if _es_recepcion(request.user):
-        raise PermissionDenied('Recepción no tiene permiso para exportar BI completo.')
+    _requerir_permiso_ui(request.user, 'reportes', 'export_pdf', 'cierre', 'No tienes permiso para exportar BI completo.')
 
     try:
         data = _calcular_datos_bi(request)
@@ -6667,13 +8155,62 @@ def bi_resumen_diario(request):
 # VIEWSETS PARA EL MÓDULO DE CRÉDITOS
 # ============================================================================
 
+class PersonaCreditoViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para personas externas (no empleados) que pueden tener un
+    crédito. Usa los mismos permisos del menú 'creditos' que CreditoViewSet
+    -- no es un módulo aparte, es parte del flujo de dar de alta un titular
+    de crédito que no es empleado.
+    """
+
+    queryset = PersonaCredito.objects.all()
+    serializer_class = PersonaCreditoSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['activo']
+    search_fields = ['nombre', 'telefono', 'documento']
+    ordering_fields = ['nombre', 'fecha_registro']
+    ordering = ['nombre']
+
+    def get_queryset(self):
+        if not _tiene_permiso_ui(self.request.user, 'creditos', 'view'):
+            raise PermissionDenied('No tienes permiso para ver el módulo de Créditos.')
+        return super().get_queryset()
+
+    def create(self, request, *args, **kwargs):
+        if not _tiene_permiso_ui(request.user, 'creditos', 'create'):
+            raise PermissionDenied('No tienes permiso para crear personas con crédito.')
+        return super().create(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        if not _tiene_permiso_ui(request.user, 'creditos', 'edit'):
+            raise PermissionDenied('No tienes permiso para editar personas con crédito.')
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        if not _tiene_permiso_ui(request.user, 'creditos', 'edit'):
+            raise PermissionDenied('No tienes permiso para editar personas con crédito.')
+        return super().partial_update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        if not _tiene_permiso_ui(request.user, 'creditos', 'delete'):
+            raise PermissionDenied('No tienes permiso para eliminar personas con crédito.')
+        instance = self.get_object()
+        if instance.creditos.exists():
+            return Response(
+                {'error': 'No se puede eliminar: esta persona ya tiene créditos registrados. Desactívala en su lugar.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return super().destroy(request, *args, **kwargs)
+
+
 class CreditoViewSet(viewsets.ModelViewSet):
-    """ViewSet para gestionar créditos a empleados"""
+    """ViewSet para gestionar créditos a empleados o a personas externas"""
 
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['estilista', 'estado']
-    search_fields = ['estilista__nombre', 'observaciones']
+    filterset_fields = ['estilista', 'persona_credito', 'estado']
+    search_fields = ['estilista__nombre', 'persona_credito__nombre', 'observaciones']
     ordering_fields = ['fecha_inicio', 'fecha_vencimiento', 'saldo_actual']
     ordering = ['-fecha_creacion']
 
@@ -6682,7 +8219,9 @@ class CreditoViewSet(viewsets.ModelViewSet):
         if not _tiene_permiso_ui(self.request.user, 'creditos', 'view'):
             raise PermissionDenied('No tienes permiso para ver el módulo de Créditos.')
 
-        queryset = Credito.objects.select_related('estilista', 'usuario_creador', 'usuario_editor').prefetch_related('abonos').all()
+        queryset = Credito.objects.select_related(
+            'estilista', 'persona_credito', 'usuario_creador', 'usuario_editor'
+        ).prefetch_related('abonos').all()
 
         fecha_inicio = self.request.query_params.get('fecha_inicio_desde')
         if fecha_inicio:
@@ -6730,9 +8269,11 @@ class CreditoViewSet(viewsets.ModelViewSet):
             )
 
         estilista = instance.estilista
+        persona_credito = instance.persona_credito
         CreditoHistorial.objects.create(
             credito=None,
             estilista=estilista,
+            persona_credito=persona_credito,
             accion='credito_eliminado',
             detalle=f"Crédito #{instance.id} eliminado (valor total ${instance.valor_total}), sin abonos registrados.",
             usuario=request.user,
@@ -6747,6 +8288,7 @@ class CreditoViewSet(viewsets.ModelViewSet):
         CreditoHistorial.objects.create(
             credito=credito,
             estilista=credito.estilista,
+            persona_credito=credito.persona_credito,
             accion='credito_creado',
             detalle=(
                 f"Crédito creado: prestado ${credito.valor_prestado}, "
@@ -6764,6 +8306,7 @@ class CreditoViewSet(viewsets.ModelViewSet):
         CreditoHistorial.objects.create(
             credito=credito,
             estilista=credito.estilista,
+            persona_credito=credito.persona_credito,
             accion=accion,
             detalle=f"Crédito actualizado. Estado: {credito.estado}, saldo actual: ${credito.saldo_actual}.",
             usuario=self.request.user,
@@ -6782,7 +8325,10 @@ class CreditoViewSet(viewsets.ModelViewSet):
         saldo_pendiente = creditos.aggregate(Sum('saldo_actual'))['saldo_actual__sum'] or 0
         creditos_activos = creditos.exclude(estado='cancelado').count()
         creditos_cancelados = creditos.filter(estado='cancelado').count()
-        empleados_con_creditos = creditos.values('estilista').distinct().count()
+        empleados_con_creditos = (
+            creditos.exclude(estilista__isnull=True).values('estilista').distinct().count()
+            + creditos.exclude(persona_credito__isnull=True).values('persona_credito').distinct().count()
+        )
 
         data = {
             'total_prestado': total_prestado,
@@ -6796,45 +8342,58 @@ class CreditoViewSet(viewsets.ModelViewSet):
         serializer = ResumenCreditosSerializer(data)
         return Response(serializer.data)
 
-    @action(detail=False, methods=['get'])
-    def por_empleado(self, request):
+    @action(detail=False, methods=['get'], url_path='por-titular')
+    def por_titular(self, request):
         """
-        Resumen de créditos por empleado. Se listan TODOS los empleados activos
-        (los mismos que en el resto de la app, ej. Empleados/Liquidación), no
-        solo los que ya tienen algún crédito -- si no, nunca se podría elegir a
-        alguien para otorgarle su primer crédito.
+        Resumen de créditos por titular: empleados activos + personas externas
+        con crédito, en una sola lista combinada (cada item trae 'tipo':
+        'empleado'|'persona'). Se listan TODOS los empleados/personas activos,
+        no solo los que ya tienen algún crédito -- si no, nunca se podría
+        elegir a alguien para otorgarle su primer crédito.
         """
         if not _tiene_permiso_ui(request.user, 'creditos', 'view'):
             raise PermissionDenied('No tienes permiso para ver el módulo de Créditos.')
 
         estilistas = Estilista.objects.filter(activo=True).order_by('nombre').prefetch_related('creditos')
-        serializer = EstilistaResumenCreditosSerializer(estilistas, many=True)
-        return Response(serializer.data)
+        personas = PersonaCredito.objects.filter(activo=True).order_by('nombre').prefetch_related('creditos')
+
+        data_empleados = EstilistaResumenCreditosSerializer(estilistas, many=True).data
+        data_personas = PersonaCreditoResumenSerializer(personas, many=True).data
+
+        resultado = [{'tipo': 'empleado', **item} for item in data_empleados]
+        resultado += [{'tipo': 'persona', **item} for item in data_personas]
+        return Response(resultado)
 
     @action(detail=False, methods=['get'])
     def historial(self, request):
-        """Bitácora de auditoría de créditos, opcionalmente filtrada por estilista_id"""
+        """Bitácora de auditoría de créditos, opcionalmente filtrada por estilista_id o persona_credito_id"""
         if not _tiene_permiso_ui(request.user, 'creditos', 'view', 'reportes'):
             raise PermissionDenied('No tienes permiso para ver el historial de auditoría de Créditos.')
 
-        qs = CreditoHistorial.objects.select_related('estilista', 'usuario', 'credito').all()
+        qs = CreditoHistorial.objects.select_related('estilista', 'persona_credito', 'usuario', 'credito').all()
         estilista_id = request.query_params.get('estilista_id')
         if estilista_id:
             qs = qs.filter(estilista_id=estilista_id)
+        persona_credito_id = request.query_params.get('persona_credito_id')
+        if persona_credito_id:
+            qs = qs.filter(persona_credito_id=persona_credito_id)
 
         serializer = CreditoHistorialSerializer(qs[:300], many=True)
         return Response(serializer.data)
 
     @action(detail=False, methods=['get'], url_path='exportar-excel')
     def exportar_excel(self, request):
-        """Exporta créditos a CSV (compatible con Excel), opcionalmente filtrado por estilista_id"""
+        """Exporta créditos a CSV (compatible con Excel), opcionalmente filtrado por estilista_id o persona_credito_id"""
         if not _tiene_permiso_ui(request.user, 'creditos', 'export_excel', 'reportes'):
             raise PermissionDenied('No tienes permiso para exportar Créditos a Excel.')
 
         estilista_id = request.query_params.get('estilista_id')
-        creditos = Credito.objects.select_related('estilista')
+        persona_credito_id = request.query_params.get('persona_credito_id')
+        creditos = Credito.objects.select_related('estilista', 'persona_credito')
         if estilista_id:
             creditos = creditos.filter(estilista_id=estilista_id)
+        if persona_credito_id:
+            creditos = creditos.filter(persona_credito_id=persona_credito_id)
 
         hoy = timezone.localdate()
         response = HttpResponse(content_type='text/csv; charset=utf-8')
@@ -6844,13 +8403,13 @@ class CreditoViewSet(viewsets.ModelViewSet):
         writer.writerow(['Generado', timezone.localtime().strftime('%Y-%m-%d %H:%M:%S')])
         writer.writerow([])
         writer.writerow([
-            'Empleado', 'Fecha inicio', 'Valor prestado', 'Interés %', 'Valor interés',
+            'Titular', 'Fecha inicio', 'Valor prestado', 'Interés %', 'Valor interés',
             'Valor total', 'Total abonado', 'Saldo pendiente', 'Fecha vencimiento', 'Estado',
         ])
-        for c in creditos.order_by('estilista__nombre', '-fecha_creacion'):
+        for c in creditos.order_by('-fecha_creacion'):
             estado = 'vencido' if c.estado == 'activo' and c.saldo_actual > 0 and c.fecha_vencimiento < hoy else c.estado
             writer.writerow([
-                c.estilista.nombre,
+                c.titular_nombre,
                 c.fecha_inicio.strftime('%Y-%m-%d'),
                 f"${float(c.valor_prestado):,.2f}",
                 f"{c.porcentaje_interes}%",
@@ -6883,10 +8442,13 @@ class CreditoViewSet(viewsets.ModelViewSet):
             )
 
         estilista_id = request.query_params.get('estilista_id')
-        creditos = Credito.objects.select_related('estilista')
+        persona_credito_id = request.query_params.get('persona_credito_id')
+        creditos = Credito.objects.select_related('estilista', 'persona_credito')
         if estilista_id:
             creditos = creditos.filter(estilista_id=estilista_id)
-        creditos = list(creditos.order_by('estilista__nombre', '-fecha_creacion'))
+        if persona_credito_id:
+            creditos = creditos.filter(persona_credito_id=persona_credito_id)
+        creditos = list(creditos.order_by('-fecha_creacion'))
 
         try:
             buffer = io.BytesIO()
@@ -6902,11 +8464,11 @@ class CreditoViewSet(viewsets.ModelViewSet):
                 Paragraph(f'Generado: {timezone.localtime().strftime("%Y-%m-%d %H:%M:%S")}', styles['Normal']),
                 Spacer(1, 0.25 * inch),
             ]
-            data = [['Empleado', 'Prestado', 'Interés', 'Total', 'Abonado', 'Saldo', 'Vence', 'Estado']]
+            data = [['Titular', 'Prestado', 'Interés', 'Total', 'Abonado', 'Saldo', 'Vence', 'Estado']]
             for c in creditos:
                 estado = 'Vencido' if c.estado == 'activo' and c.saldo_actual > 0 and c.fecha_vencimiento < hoy else c.estado.capitalize()
                 data.append([
-                    c.estilista.nombre,
+                    c.titular_nombre,
                     f"${float(c.valor_prestado):,.0f}",
                     f"{c.porcentaje_interes}%",
                     f"${float(c.valor_total):,.0f}",
@@ -6991,6 +8553,7 @@ class AbonoCreditoViewSet(viewsets.ModelViewSet):
         CreditoHistorial.objects.create(
             credito=credito,
             estilista=credito.estilista,
+            persona_credito=credito.persona_credito,
             accion='abono_eliminado',
             detalle=detalle,
             usuario=request.user,
@@ -7003,6 +8566,7 @@ class AbonoCreditoViewSet(viewsets.ModelViewSet):
         CreditoHistorial.objects.create(
             credito=abono.credito,
             estilista=abono.credito.estilista,
+            persona_credito=abono.credito.persona_credito,
             accion='abono_creado',
             detalle=f"Abono de ${abono.valor_abono} registrado. Saldo restante: ${abono.saldo_restante}.",
             usuario=self.request.user,
@@ -7014,6 +8578,7 @@ class AbonoCreditoViewSet(viewsets.ModelViewSet):
         CreditoHistorial.objects.create(
             credito=abono.credito,
             estilista=abono.credito.estilista,
+            persona_credito=abono.credito.persona_credito,
             accion='abono_editado',
             detalle=f"Abono editado a ${abono.valor_abono}. Saldo restante: ${abono.saldo_restante}.",
             usuario=self.request.user,
@@ -7042,3 +8607,56 @@ class AbonoCreditoViewSet(viewsets.ModelViewSet):
                 {'error': 'Crédito no encontrado'},
                 status=status.HTTP_404_NOT_FOUND
             )
+
+
+# ============================================================================
+# VIEWSETS: CUENTA ENTRE EMPLEADOS (servicios cobrados en conjunto)
+# ============================================================================
+
+class DeudaEntreEmpleadosViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Deudas entre empleados generadas automáticamente al finalizar un servicio
+    con `cobrado_por` distinto del empleado que lo realizó. Solo lectura --
+    se crean automáticamente (ver _crear_deuda_entre_empleados_si_aplica) y
+    se saldan registrando un abono (AbonoDeudaEntreEmpleadosViewSet).
+    """
+
+    queryset = DeudaEntreEmpleados.objects.select_related(
+        'deudor', 'acreedor', 'servicio_realizado__servicio'
+    ).prefetch_related('abonos').all()
+    serializer_class = DeudaEntreEmpleadosSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ['deudor', 'acreedor', 'estado']
+    ordering_fields = ['fecha_creacion']
+    ordering = ['-fecha_creacion']
+
+    def get_queryset(self):
+        if not _tiene_permiso_ui(self.request.user, 'reportes', 'view', 'entre_empleados'):
+            raise PermissionDenied('No tienes permiso para ver la cuenta entre empleados.')
+        return super().get_queryset()
+
+
+class AbonoDeudaEntreEmpleadosViewSet(viewsets.ModelViewSet):
+    """Registrar cuándo un empleado le transfirió a otro su parte de un cobro conjunto."""
+
+    queryset = AbonoDeudaEntreEmpleados.objects.select_related('deuda', 'usuario').all()
+    serializer_class = AbonoDeudaEntreEmpleadosSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ['deuda']
+    ordering_fields = ['fecha']
+    ordering = ['-fecha']
+
+    def get_queryset(self):
+        if not _tiene_permiso_ui(self.request.user, 'reportes', 'view', 'entre_empleados'):
+            raise PermissionDenied('No tienes permiso para ver la cuenta entre empleados.')
+        return super().get_queryset()
+
+    def create(self, request, *args, **kwargs):
+        if not _tiene_permiso_ui(request.user, 'reportes', 'edit', 'entre_empleados'):
+            raise PermissionDenied('No tienes permiso para registrar abonos entre empleados.')
+        return super().create(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        serializer.save(usuario=self.request.user)

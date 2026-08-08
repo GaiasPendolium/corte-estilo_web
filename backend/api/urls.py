@@ -13,8 +13,10 @@ from .views import (
     crear_cargo_manual_empleado,
     liquidar_dia_v2, liquidar_operacion_integral, cargar_deuda_puesto_dia, eliminar_estado_pago_historial, mover_fecha_estado_pago_dia, qz_certificate, qz_sign,
     reporte_ajuste_diario_unificado, cancelar_deuda_puesto_dias, cancelar_facturas_deuda_empleado,
-    liquidar_pago_empleado_dias, abonar_deuda_puesto_dias,
-    CreditoViewSet, AbonoCreditoViewSet,
+    liquidar_pago_empleado_dias, abonar_deuda_puesto_dias, liquidacion_recibo_imprimible, eliminar_liquidacion_dia_v3,
+    confirmar_transferencia_pendiente_dia,
+    CreditoViewSet, AbonoCreditoViewSet, PersonaCreditoViewSet,
+    DeudaEntreEmpleadosViewSet, AbonoDeudaEntreEmpleadosViewSet,
 )
 
 # Crear router para los viewsets
@@ -29,6 +31,9 @@ router.register(r'ventas', VentaProductoViewSet, basename='venta')
 router.register(r'movimientos-inventario', MovimientoInventarioViewSet, basename='movimiento-inventario')
 router.register(r'creditos', CreditoViewSet, basename='credito')
 router.register(r'abonos-credito', AbonoCreditoViewSet, basename='abono-credito')
+router.register(r'personas-credito', PersonaCreditoViewSet, basename='persona-credito')
+router.register(r'deudas-entre-empleados', DeudaEntreEmpleadosViewSet, basename='deuda-entre-empleados')
+router.register(r'abonos-deuda-entre-empleados', AbonoDeudaEntreEmpleadosViewSet, basename='abono-deuda-entre-empleados')
 
 urlpatterns = [
     # Autenticación JWT
@@ -55,9 +60,12 @@ urlpatterns = [
     path('reportes/estilistas/estado-pago-dia/<int:estado_id>/mover-fecha/', mover_fecha_estado_pago_dia, name='reporte-estilista-estado-pago-dia-mover-fecha'),
     path('reportes/estilistas/liquidar-dia-v2/', liquidar_dia_v2, name='reportes-estilista-liquidar-dia-v2'),
     path('reportes/estilistas/liquidar-operacion-integral/', liquidar_operacion_integral, name='reportes-estilista-liquidar-operacion-integral'),
+    path('reportes/estilistas/liquidacion-recibo/', liquidacion_recibo_imprimible, name='reportes-estilista-liquidacion-recibo'),
+    path('reportes/estilistas/liquidacion-dia/<int:estilista_id>/<str:fecha>/eliminar/', eliminar_liquidacion_dia_v3, name='reportes-estilista-liquidacion-dia-eliminar'),
     path('reportes/estilistas/cargar-deuda-puesto/', cargar_deuda_puesto_dia, name='reportes-estilista-cargar-deuda-puesto'),
     path('reportes/estilistas/cancelar-deuda-puesto-dias/', cancelar_deuda_puesto_dias, name='reportes-estilista-cancelar-deuda-puesto-dias'),
     path('reportes/estilistas/liquidar-pago-empleado-dias/', liquidar_pago_empleado_dias, name='reportes-estilista-liquidar-pago-empleado-dias'),
+    path('reportes/estilistas/confirmar-transferencia-dia/', confirmar_transferencia_pendiente_dia, name='reportes-estilista-confirmar-transferencia-dia'),
     path('reportes/estilistas/abonar-deuda-puesto-dias/', abonar_deuda_puesto_dias, name='reportes-estilista-abonar-deuda-puesto-dias'),
     path('reportes/consumo-empleado/cancelar-facturas/', cancelar_facturas_deuda_empleado, name='reporte-consumo-empleado-cancelar-facturas'),
     path('reportes/consumo-empleado/deudas/', reporte_consumo_empleado, name='reporte-consumo-empleado-deudas'),

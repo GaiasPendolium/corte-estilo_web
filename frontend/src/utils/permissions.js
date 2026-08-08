@@ -52,11 +52,12 @@ export const MENU_PERMISSION_DEFINITIONS = [
     path: '/reportes',
     actions: ['view'],
     submenus: [
-      { key: 'cierre', label: 'Cierre de caja', actions: ['view'] },
+      { key: 'cierre', label: 'Cierre de caja', actions: ['view', 'export_excel', 'export_pdf', 'print'] },
       { key: 'liquidacion', label: 'Liquidación empleado', actions: ['view', 'edit'] },
       { key: 'cartera', label: 'Cartera empleado', actions: ['view', 'edit', 'delete'] },
       { key: 'ajuste', label: 'Ajuste diario', actions: ['view', 'edit'] },
       { key: 'agotarse', label: 'Productos por agotarse', actions: ['view'] },
+      { key: 'entre_empleados', label: 'Cuenta entre empleados', actions: ['view', 'edit'] },
     ],
   },
   {
@@ -135,11 +136,12 @@ export const getDefaultPermissionsForRole = (rol) => {
     reportes: {
       view: true,
       submenus: {
-        cierre: { view: true },
+        cierre: { view: true, export_excel: false, export_pdf: false, print: false },
         liquidacion: { view: true, edit: false },
         cartera: { view: false, edit: false, delete: false },
         ajuste: { view: true, edit: false },
         agotarse: { view: false },
+        entre_empleados: { view: true, edit: false },
       },
     },
     creditos: {

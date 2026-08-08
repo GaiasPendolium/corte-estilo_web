@@ -6,7 +6,8 @@ from django.db import IntegrityError, connection, transaction
 from .models import (
     Usuario, Estilista, Servicio, Cliente, Producto,
     ServicioRealizado, ServicioRealizadoAdicional, VentaProducto, MovimientoInventario,
-    Credito, AbonoCredito, CreditoHistorial
+    Credito, AbonoCredito, CreditoHistorial, PersonaCredito,
+    DeudaEntreEmpleados, AbonoDeudaEntreEmpleados,
 )
 
 
@@ -64,6 +65,7 @@ class EstilistaSerializer(serializers.ModelSerializer):
             'id', 'nombre', 'telefono', 'email',
             'comision_porcentaje', 'tipo_cobro_espacio', 'valor_cobro_espacio', 'comision_ventas_productos',
             'activo', 'fecha_ingreso',
+            'qr_nequi', 'qr_daviplata', 'qr_otros', 'datos_transferencia',
             'servicios_count'
         ]
     
@@ -183,6 +185,7 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
     """Serializador para el modelo ServicioRealizado"""
     
     estilista_nombre = serializers.CharField(source='estilista.nombre', read_only=True)
+    cobrado_por_nombre = serializers.CharField(source='cobrado_por.nombre', read_only=True)
     servicio_nombre = serializers.CharField(source='servicio.nombre', read_only=True)
     servicio_duracion = serializers.IntegerField(source='servicio.duracion_minutos', read_only=True)
     cliente_nombre = serializers.CharField(source='cliente.nombre', read_only=True)
@@ -218,7 +221,7 @@ class ServicioRealizadoSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'estilista', 'estilista_nombre', 'servicio',
             'servicio_nombre', 'servicio_duracion', 'cliente', 'cliente_nombre',
-            'usuario', 'usuario_nombre',
+            'usuario', 'usuario_nombre', 'cobrado_por', 'cobrado_por_nombre',
             'estado', 'fecha_inicio', 'fecha_fin', 'fecha_hora',
             'precio_cobrado', 'medio_pago', 'tipo_reparto_establecimiento',
             'valor_reparto_establecimiento', 'monto_establecimiento',
@@ -1411,6 +1414,19 @@ def _recalcular_cadena_abonos(credito):
     credito.save(update_fields=['saldo_actual', 'estado'])
 
 
+class PersonaCreditoSerializer(serializers.ModelSerializer):
+    """Serializador para personas externas (no empleados) con crédito"""
+
+    class Meta:
+        model = PersonaCredito
+        fields = ['id', 'nombre', 'telefono', 'documento', 'activo', 'fecha_registro']
+
+    def validate_nombre(self, value):
+        if not value or not value.strip():
+            raise serializers.ValidationError('El nombre es obligatorio.')
+        return value.strip()
+
+
 class AbonoCreditoSerializer(serializers.ModelSerializer):
     """Serializador para registro y edición de abonos a créditos"""
 
@@ -1479,7 +1495,8 @@ class AbonoCreditoSerializer(serializers.ModelSerializer):
 class CreditoListSerializer(serializers.ModelSerializer):
     """Serializador para listar créditos (versión compacta)"""
 
-    estilista_nombre = serializers.CharField(source='estilista.nombre', read_only=True)
+    titular_nombre = serializers.CharField(read_only=True)
+    titular_tipo = serializers.CharField(read_only=True)
     usuario_creador_nombre = serializers.CharField(source='usuario_creador.nombre_completo', read_only=True)
     usuario_editor_nombre = serializers.CharField(source='usuario_editor.nombre_completo', read_only=True)
     porcentaje_pagado = serializers.SerializerMethodField()
@@ -1489,8 +1506,8 @@ class CreditoListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Credito
         fields = [
-            'id', 'estilista', 'estilista_nombre', 'valor_prestado',
-            'porcentaje_interes', 'valor_interes', 'valor_total',
+            'id', 'estilista', 'persona_credito', 'titular_nombre', 'titular_tipo',
+            'valor_prestado', 'porcentaje_interes', 'valor_interes', 'valor_total',
             'saldo_actual', 'fecha_inicio', 'fecha_vencimiento', 'plazo_dias',
             'estado', 'estado_calculado', 'usuario_creador_nombre',
             'usuario_editor_nombre', 'fecha_creacion', 'fecha_actualizacion',
@@ -1523,7 +1540,8 @@ class CreditoListSerializer(serializers.ModelSerializer):
 class CreditoDetailSerializer(serializers.ModelSerializer):
     """Serializador detallado para créditos"""
 
-    estilista_nombre = serializers.CharField(source='estilista.nombre', read_only=True)
+    titular_nombre = serializers.CharField(read_only=True)
+    titular_tipo = serializers.CharField(read_only=True)
     usuario_creador_nombre = serializers.CharField(source='usuario_creador.nombre_completo', read_only=True)
     usuario_editor_nombre = serializers.CharField(source='usuario_editor.nombre_completo', read_only=True)
     abonos = AbonoCreditoSerializer(many=True, read_only=True)
@@ -1536,8 +1554,8 @@ class CreditoDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = Credito
         fields = [
-            'id', 'estilista', 'estilista_nombre', 'valor_prestado',
-            'porcentaje_interes', 'valor_interes', 'valor_total',
+            'id', 'estilista', 'persona_credito', 'titular_nombre', 'titular_tipo',
+            'valor_prestado', 'porcentaje_interes', 'valor_interes', 'valor_total',
             'saldo_actual', 'total_abonado', 'fecha_inicio', 'fecha_vencimiento',
             'plazo_dias', 'dias_restantes', 'dias_transcurridos', 'estado',
             'estado_calculado', 'observaciones',
@@ -1585,13 +1603,25 @@ class CreditoDetailSerializer(serializers.ModelSerializer):
 class CreditoCreateSerializer(serializers.ModelSerializer):
     """Serializador para crear créditos"""
 
+    estilista = serializers.PrimaryKeyRelatedField(queryset=Estilista.objects.all(), required=False, allow_null=True)
+    persona_credito = serializers.PrimaryKeyRelatedField(queryset=PersonaCredito.objects.all(), required=False, allow_null=True)
+
     class Meta:
         model = Credito
         fields = [
-            'id', 'estilista', 'valor_prestado', 'porcentaje_interes',
+            'id', 'estilista', 'persona_credito', 'valor_prestado', 'porcentaje_interes',
             'plazo_dias', 'fecha_inicio', 'observaciones'
         ]
         read_only_fields = ['id']
+
+    def validate(self, data):
+        estilista = data.get('estilista')
+        persona_credito = data.get('persona_credito')
+        if bool(estilista) == bool(persona_credito):
+            raise serializers.ValidationError(
+                'Debes indicar exactamente un titular: un empleado o una persona externa, no ambos ni ninguno.'
+            )
+        return data
 
     def validate_valor_prestado(self, value):
         """Validar que el valor prestado sea mayor a cero"""
@@ -1625,7 +1655,8 @@ class CreditoCreateSerializer(serializers.ModelSerializer):
         fecha_vencimiento = fecha_inicio + timedelta(days=plazo_dias)
 
         credito = Credito.objects.create(
-            estilista=validated_data['estilista'],
+            estilista=validated_data.get('estilista'),
+            persona_credito=validated_data.get('persona_credito'),
             valor_prestado=valor_prestado,
             porcentaje_interes=porcentaje_interes,
             valor_interes=valor_interes,
@@ -1704,19 +1735,19 @@ class CreditoHistorialSerializer(serializers.ModelSerializer):
     """Serializador de la bitácora de auditoría de créditos"""
 
     usuario_nombre = serializers.CharField(source='usuario.nombre_completo', read_only=True)
-    estilista_nombre = serializers.CharField(source='estilista.nombre', read_only=True)
+    titular_nombre = serializers.CharField(read_only=True)
     accion_display = serializers.CharField(source='get_accion_display', read_only=True)
 
     class Meta:
         model = CreditoHistorial
         fields = [
-            'id', 'credito', 'estilista', 'estilista_nombre', 'accion',
+            'id', 'credito', 'estilista', 'persona_credito', 'titular_nombre', 'accion',
             'accion_display', 'detalle', 'usuario', 'usuario_nombre', 'fecha',
         ]
 
 
-class EstilistaResumenCreditosSerializer(serializers.ModelSerializer):
-    """Serializador para obtener resumen de créditos por empleado"""
+class _ResumenCreditosMixin(serializers.ModelSerializer):
+    """Campos de resumen de créditos compartidos entre Empleado y Persona externa."""
 
     total_prestado = serializers.SerializerMethodField()
     total_otorgado = serializers.SerializerMethodField()
@@ -1726,11 +1757,7 @@ class EstilistaResumenCreditosSerializer(serializers.ModelSerializer):
     creditos_cancelados = serializers.SerializerMethodField()
 
     class Meta:
-        model = Estilista
-        fields = [
-            'id', 'nombre', 'total_prestado', 'total_otorgado', 'total_abonado',
-            'saldo_pendiente', 'creditos_activos', 'creditos_cancelados'
-        ]
+        abstract = True
 
     def get_total_prestado(self, obj):
         """Sumar valores prestados (capital, sin interés) de todos los créditos"""
@@ -1757,6 +1784,28 @@ class EstilistaResumenCreditosSerializer(serializers.ModelSerializer):
         return sum(1 for c in obj.creditos.all() if c.estado == 'cancelado')
 
 
+class EstilistaResumenCreditosSerializer(_ResumenCreditosMixin):
+    """Serializador para obtener resumen de créditos por empleado"""
+
+    class Meta:
+        model = Estilista
+        fields = [
+            'id', 'nombre', 'total_prestado', 'total_otorgado', 'total_abonado',
+            'saldo_pendiente', 'creditos_activos', 'creditos_cancelados'
+        ]
+
+
+class PersonaCreditoResumenSerializer(_ResumenCreditosMixin):
+    """Serializador para obtener resumen de créditos por persona externa"""
+
+    class Meta:
+        model = PersonaCredito
+        fields = [
+            'id', 'nombre', 'total_prestado', 'total_otorgado', 'total_abonado',
+            'saldo_pendiente', 'creditos_activos', 'creditos_cancelados'
+        ]
+
+
 class ResumenCreditosSerializer(serializers.Serializer):
     """Serializador para resumen general de créditos"""
 
@@ -1766,3 +1815,56 @@ class ResumenCreditosSerializer(serializers.Serializer):
     creditos_activos = serializers.IntegerField()
     creditos_cancelados = serializers.IntegerField()
     empleados_con_creditos = serializers.IntegerField()
+
+
+# ============================================================================
+# SERIALIZERS PARA DEUDA ENTRE EMPLEADOS (servicios cobrados en conjunto)
+# ============================================================================
+
+class AbonoDeudaEntreEmpleadosSerializer(serializers.ModelSerializer):
+    usuario_nombre = serializers.CharField(source='usuario.nombre_completo', read_only=True)
+
+    class Meta:
+        model = AbonoDeudaEntreEmpleados
+        fields = ['id', 'deuda', 'monto', 'fecha', 'usuario', 'usuario_nombre', 'notas']
+        read_only_fields = ['fecha']
+
+    def validate_monto(self, value):
+        if value <= 0:
+            raise serializers.ValidationError('El monto abonado debe ser mayor a cero.')
+        return value
+
+    def validate(self, data):
+        deuda = data.get('deuda') or getattr(self.instance, 'deuda', None)
+        monto = data.get('monto', getattr(self.instance, 'monto', None))
+        if deuda and monto and Decimal(monto) > Decimal(deuda.saldo_pendiente or 0):
+            raise serializers.ValidationError({
+                'monto': f'No puede abonar más del saldo pendiente (${deuda.saldo_pendiente:.2f}).'
+            })
+        return data
+
+    def create(self, validated_data):
+        abono = AbonoDeudaEntreEmpleados.objects.create(**validated_data)
+        deuda = abono.deuda
+        deuda.monto_abonado = Decimal(deuda.monto_abonado or 0) + Decimal(abono.monto)
+        deuda.saldo_pendiente = max(Decimal(deuda.monto or 0) - deuda.monto_abonado, Decimal(0))
+        deuda.estado = 'pagado' if deuda.saldo_pendiente <= 0 else 'pendiente'
+        deuda.save(update_fields=['monto_abonado', 'saldo_pendiente', 'estado'])
+        return abono
+
+
+class DeudaEntreEmpleadosSerializer(serializers.ModelSerializer):
+    deudor_nombre = serializers.CharField(source='deudor.nombre', read_only=True)
+    acreedor_nombre = serializers.CharField(source='acreedor.nombre', read_only=True)
+    servicio_nombre = serializers.CharField(source='servicio_realizado.servicio.nombre', read_only=True)
+    numero_factura = serializers.CharField(source='servicio_realizado.numero_factura', read_only=True)
+    abonos = AbonoDeudaEntreEmpleadosSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = DeudaEntreEmpleados
+        fields = [
+            'id', 'deudor', 'deudor_nombre', 'acreedor', 'acreedor_nombre',
+            'servicio_realizado', 'servicio_nombre', 'numero_factura',
+            'monto', 'monto_abonado', 'saldo_pendiente', 'estado',
+            'fecha_creacion', 'abonos',
+        ]

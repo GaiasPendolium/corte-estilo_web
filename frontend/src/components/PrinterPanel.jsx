@@ -21,7 +21,7 @@ const PRUEBA_PAYLOAD = {
       total: 1000,
     },
   ],
-  footerLines: ['Si lees esto, QZ Tray esta integrado correctamente.'],
+  footerLines: ['Si lees esto, la impresora esta configurada correctamente.'],
 };
 
 const PrinterPanel = () => {
@@ -39,7 +39,7 @@ const PrinterPanel = () => {
         setSelectedPrinter(list[0]);
       }
     } catch (error) {
-      toast.error(error.message || 'No se pudo consultar QZ Tray');
+      toast.error('No se pudo conectar con la impresora.');
     } finally {
       setLoading(false);
     }
@@ -66,7 +66,7 @@ const PrinterPanel = () => {
       await qzTrayService.printTicket(raw);
       toast.success('Ticket de prueba enviado');
     } catch (error) {
-      toast.error(error.message || 'No se pudo imprimir ticket de prueba');
+      toast.error('No se pudo imprimir el ticket de prueba.');
     }
   };
 
@@ -75,7 +75,7 @@ const PrinterPanel = () => {
       await qzTrayService.openDrawer();
       toast.success('Comando de apertura enviado');
     } catch (error) {
-      toast.error(error.message || 'No se pudo abrir el cajon');
+      toast.error('No se pudo abrir la caja registradora.');
     }
   };
 
@@ -83,7 +83,7 @@ const PrinterPanel = () => {
     <div className="card p-4 space-y-3">
       <div className="flex items-center justify-between">
         <h2 className="card-header mb-0 inline-flex items-center gap-2">
-          <FiPrinter /> Impresion POS (QZ Tray)
+          <FiPrinter /> Impresora y caja registradora
         </h2>
         <button className="btn-secondary inline-flex items-center gap-2" onClick={cargarImpresoras} disabled={loading}>
           <FiRefreshCw className={loading ? 'animate-spin' : ''} /> Actualizar
@@ -132,7 +132,7 @@ const PrinterPanel = () => {
           placeholder="Pulso OFF (1-255)"
         />
 
-        <button className="btn-secondary" type="button" onClick={guardarCajon}>Guardar cajon RJ11</button>
+        <button className="btn-secondary" type="button" onClick={guardarCajon}>Guardar caja registradora</button>
       </div>
 
       <div className="flex gap-2">

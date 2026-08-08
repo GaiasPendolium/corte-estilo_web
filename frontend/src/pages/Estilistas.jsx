@@ -14,6 +14,15 @@ const INITIAL_FORM = {
   valor_cobro_espacio: '0',
   fecha_ingreso: '',
   activo: true,
+  datos_transferencia: '',
+};
+
+const INITIAL_ARCHIVOS_QR = { qr_nequi: null, qr_daviplata: null, qr_otros: null };
+
+const TIPO_COBRO_ESPACIO_LABEL = {
+  sin_cobro: 'Sin cobro',
+  porcentaje_neto: '% sobre neto',
+  costo_fijo_neto: 'Costo fijo sobre neto',
 };
 
 const extractRows = (payload) => {
@@ -41,11 +50,13 @@ const Estilistas = () => {
   const puedeEditar = hasMenuPermission(user, 'estilistas', 'edit');
   const puedeEliminar = hasMenuPermission(user, 'estilistas', 'delete');
   const [form, setForm] = useState(INITIAL_FORM);
+  const [archivosQr, setArchivosQr] = useState(INITIAL_ARCHIVOS_QR);
   const [estilistas, setEstilistas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
+  const [editingQrUrls, setEditingQrUrls] = useState({});
 
   const cargarEstilistas = async () => {
     try {
@@ -96,6 +107,7 @@ const Estilistas = () => {
         valor_cobro_espacio: Number(form.valor_cobro_espacio || 0),
         comision_ventas_productos: 0,
         fecha_ingreso: form.fecha_ingreso || null,
+        datos_transferencia: form.datos_transferencia.trim() || null,
       };
 
       let estilistaGuardado = null;
@@ -108,6 +120,16 @@ const Estilistas = () => {
         toast.success('Empleado creado correctamente');
       }
 
+      const hayArchivosNuevos = archivosQr.qr_nequi || archivosQr.qr_daviplata || archivosQr.qr_otros;
+      if (hayArchivosNuevos && estilistaGuardado?.id) {
+        try {
+          const actualizado = await estilistasService.subirDatosPago(estilistaGuardado.id, archivosQr);
+          if (actualizado) estilistaGuardado = actualizado;
+        } catch (qrError) {
+          toast.warning('El empleado se guardó, pero no se pudieron subir los QR. Intenta editarlo de nuevo.');
+        }
+      }
+
       setEstilistas((prev) => {
         if (!estilistaGuardado?.id) {
           return prev;
@@ -118,6 +140,7 @@ const Estilistas = () => {
       });
 
       setForm(INITIAL_FORM);
+      setArchivosQr(INITIAL_ARCHIVOS_QR);
       setEditingId(null);
       setShowForm(false);
 
@@ -147,6 +170,13 @@ const Estilistas = () => {
       valor_cobro_espacio: String(item.valor_cobro_espacio ?? 0),
       fecha_ingreso: item.fecha_ingreso || '',
       activo: item.activo ?? true,
+      datos_transferencia: item.datos_transferencia || '',
+    });
+    setArchivosQr(INITIAL_ARCHIVOS_QR);
+    setEditingQrUrls({
+      qr_nequi: item.qr_nequi || null,
+      qr_daviplata: item.qr_daviplata || null,
+      qr_otros: item.qr_otros || null,
     });
     setShowForm(true);
   };
@@ -194,6 +224,8 @@ const Estilistas = () => {
               onClick={() => {
                 setEditingId(null);
                 setForm(INITIAL_FORM);
+                setArchivosQr(INITIAL_ARCHIVOS_QR);
+                setEditingQrUrls({});
                 setShowForm(true);
               }}
             >
@@ -278,6 +310,61 @@ const Estilistas = () => {
           />
         </div>
 
+        <div className="md:col-span-2 border-t border-gray-200 pt-4 mt-2">
+          <p className="text-sm font-semibold text-gray-700 mb-1">Datos de pago electrónico</p>
+          <p className="text-xs text-gray-500 mb-3">El cliente le paga directo al empleado. Sube el QR real de su Nequi/Daviplata (la imagen que le da su banco/billetera, no se genera aquí).</p>
+        </div>
+
+        <div>
+          <label className="block text-sm text-gray-600 mb-1">QR Nequi</label>
+          {editingQrUrls.qr_nequi && !archivosQr.qr_nequi && (
+            <img src={editingQrUrls.qr_nequi} alt="QR Nequi actual" className="mb-2 h-20 w-20 rounded object-cover ring-1 ring-gray-200" />
+          )}
+          <input
+            className="input-field"
+            type="file"
+            accept="image/*"
+            onChange={(e) => setArchivosQr((prev) => ({ ...prev, qr_nequi: e.target.files?.[0] || null }))}
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm text-gray-600 mb-1">QR Daviplata</label>
+          {editingQrUrls.qr_daviplata && !archivosQr.qr_daviplata && (
+            <img src={editingQrUrls.qr_daviplata} alt="QR Daviplata actual" className="mb-2 h-20 w-20 rounded object-cover ring-1 ring-gray-200" />
+          )}
+          <input
+            className="input-field"
+            type="file"
+            accept="image/*"
+            onChange={(e) => setArchivosQr((prev) => ({ ...prev, qr_daviplata: e.target.files?.[0] || null }))}
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm text-gray-600 mb-1">QR otro medio</label>
+          {editingQrUrls.qr_otros && !archivosQr.qr_otros && (
+            <img src={editingQrUrls.qr_otros} alt="QR otro medio actual" className="mb-2 h-20 w-20 rounded object-cover ring-1 ring-gray-200" />
+          )}
+          <input
+            className="input-field"
+            type="file"
+            accept="image/*"
+            onChange={(e) => setArchivosQr((prev) => ({ ...prev, qr_otros: e.target.files?.[0] || null }))}
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm text-gray-600 mb-1">Datos de transferencia (banco, cuenta, titular)</label>
+          <textarea
+            className="input-field"
+            rows={2}
+            value={form.datos_transferencia}
+            onChange={(e) => onInputChange('datos_transferencia', e.target.value)}
+            placeholder="Ej: Bancolombia ahorros 123-456789, a nombre de..."
+          />
+        </div>
+
         <div className="md:col-span-2 flex items-end gap-2">
           <button type="submit" className="btn-primary w-full inline-flex items-center justify-center gap-2" disabled={saving}>
             <FiPlus />
@@ -290,6 +377,8 @@ const Estilistas = () => {
               setShowForm(false);
               setEditingId(null);
               setForm(INITIAL_FORM);
+              setArchivosQr(INITIAL_ARCHIVOS_QR);
+              setEditingQrUrls({});
             }}
           >
             Cancelar
@@ -334,7 +423,16 @@ const Estilistas = () => {
                     <td className="table-cell">{item.telefono || '-'}</td>
                     <td className="table-cell">{item.email || '-'}</td>
                     <td className="table-cell">{item.comision_porcentaje ?? 0}%</td>
-                    <td className="table-cell">{item.tipo_cobro_espacio || 'sin_cobro'} ({Number(item.valor_cobro_espacio || 0).toFixed(2)})</td>
+                    <td className="table-cell">
+                      {TIPO_COBRO_ESPACIO_LABEL[item.tipo_cobro_espacio] || 'Sin cobro'}
+                      {item.tipo_cobro_espacio && item.tipo_cobro_espacio !== 'sin_cobro' && (
+                        <span className="text-gray-500">
+                          {' '}({item.tipo_cobro_espacio === 'porcentaje_neto'
+                            ? `${Number(item.valor_cobro_espacio || 0)}%`
+                            : `$${Number(item.valor_cobro_espacio || 0).toLocaleString('es-CO')}`})
+                        </span>
+                      )}
+                    </td>
                     <td className="table-cell">{Number(item.comision_ventas_productos || 0).toFixed(2)}%</td>
                     <td className="table-cell">
                       <div className="flex justify-end gap-2">

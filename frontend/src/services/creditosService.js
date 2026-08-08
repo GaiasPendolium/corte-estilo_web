@@ -2,6 +2,7 @@ import api from "./api";
 
 const BASE_URL = "/creditos/";
 const ABONOS_URL = "/abonos-credito/";
+const PERSONAS_URL = "/personas-credito/";
 
 const creditosService = {
     // ==========================
@@ -42,13 +43,24 @@ const creditosService = {
         return response.data;
     },
 
-    async getPorEmpleado(estilistaId) {
-        const response = await api.get(`${BASE_URL}por_empleado/`, {
-            params: {
-                estilista_id: estilistaId,
-            },
-        });
+    async getPorTitular() {
+        // Lista combinada: empleados activos + personas externas activas,
+        // cada item con 'tipo': 'empleado' | 'persona'.
+        const response = await api.get(`${BASE_URL}por-titular/`);
+        return response.data;
+    },
 
+    // ==========================
+    // PERSONAS EXTERNAS (titulares de crédito que no son empleados)
+    // ==========================
+
+    async crearPersona(data) {
+        const response = await api.post(PERSONAS_URL, data);
+        return response.data;
+    },
+
+    async actualizarPersona(id, data) {
+        const response = await api.put(`${PERSONAS_URL}${id}/`, data);
         return response.data;
     },
 
@@ -66,12 +78,13 @@ const creditosService = {
         return response.data;
     },
 
-    async getAbonosPorEstilista(estilistaId) {
+    async getAbonosPorTitular(tipo, id) {
         // Todos los abonos de TODOS los créditos (activos y cancelados) de un
-        // empleado, para el historial de pagos permanente.
+        // titular (empleado o persona externa), para el historial de pagos permanente.
+        const filtroTitular = tipo === 'persona' ? { credito__persona_credito: id } : { credito__estilista: id };
         const response = await api.get(ABONOS_URL, {
             params: {
-                credito__estilista: estilistaId,
+                ...filtroTitular,
                 ordering: '-fecha',
             },
         });
@@ -98,16 +111,21 @@ const creditosService = {
     // HISTORIAL Y REPORTES
     // ==========================
 
-    async getHistorial(estilistaId) {
+    _paramsTitular(tipo, id) {
+        if (!id) return {};
+        return tipo === 'persona' ? { persona_credito_id: id } : { estilista_id: id };
+    },
+
+    async getHistorial(tipo, id) {
         const response = await api.get(`${BASE_URL}historial/`, {
-            params: estilistaId ? { estilista_id: estilistaId } : {},
+            params: this._paramsTitular(tipo, id),
         });
         return response.data;
     },
 
-    async exportarExcel(estilistaId) {
+    async exportarExcel(tipo, id) {
         const response = await api.get(`${BASE_URL}exportar-excel/`, {
-            params: estilistaId ? { estilista_id: estilistaId } : {},
+            params: this._paramsTitular(tipo, id),
             responseType: 'blob',
         });
         if (response.data.type === 'application/json') {
@@ -118,9 +136,9 @@ const creditosService = {
         return response.data;
     },
 
-    async exportarPdf(estilistaId) {
+    async exportarPdf(tipo, id) {
         const response = await api.get(`${BASE_URL}exportar-pdf/`, {
-            params: estilistaId ? { estilista_id: estilistaId } : {},
+            params: this._paramsTitular(tipo, id),
             responseType: 'blob',
         });
         if (response.data.type === 'application/json') {

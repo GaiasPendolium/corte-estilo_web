@@ -1,3 +1,5 @@
+import inspect
+
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.utils import timezone
@@ -5,6 +7,20 @@ from django.utils import timezone
 
 def default_ui_permissions():
     return {}
+
+
+# El kwarg de CheckConstraint para la condición se llamó "check" en versiones
+# viejas de Django y pasó a llamarse "condition" en versiones más nuevas (se
+# vieron ambas variantes instaladas en distintos entornos de este proyecto).
+# Se detecta en tiempo de import para que la migración/arranque no dependa de
+# qué build exacto de Django tenga cada máquina.
+_CHECK_CONSTRAINT_KWARG = (
+    'condition' if 'condition' in inspect.signature(models.CheckConstraint.__init__).parameters else 'check'
+)
+
+
+def _check_constraint(condition, **kwargs):
+    return models.CheckConstraint(**{_CHECK_CONSTRAINT_KWARG: condition}, **kwargs)
 
 
 class UsuarioManager(BaseUserManager):
@@ -108,7 +124,18 @@ class Estilista(models.Model):
     )
     activo = models.BooleanField(default=True, verbose_name='Activo')
     fecha_ingreso = models.DateField(blank=True, null=True, verbose_name='Fecha de Ingreso')
-    
+
+    # Datos de pago electrónico del empleado (régimen "solo efectivo"): el
+    # cliente le paga directo a él, no al negocio. El QR es la imagen real
+    # que ya emite el banco/billetera del empleado (no se genera, se sube).
+    qr_nequi = models.ImageField(upload_to='qr_empleados/nequi/', blank=True, null=True, verbose_name='QR Nequi')
+    qr_daviplata = models.ImageField(upload_to='qr_empleados/daviplata/', blank=True, null=True, verbose_name='QR Daviplata')
+    qr_otros = models.ImageField(upload_to='qr_empleados/otros/', blank=True, null=True, verbose_name='QR otro medio')
+    datos_transferencia = models.TextField(
+        blank=True, null=True, verbose_name='Datos de transferencia',
+        help_text='Banco, número de cuenta, titular -- para cuando el cliente prefiere transferir en vez de escanear.',
+    )
+
     class Meta:
         db_table = 'estilistas'
         verbose_name = 'Empleado'
@@ -309,8 +336,17 @@ class ServicioRealizado(models.Model):
         related_name='servicios_facturados',
         verbose_name='Usuario Facturador'
     )
+    cobrado_por = models.ForeignKey(
+        Estilista,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='servicios_cobrados_de_companeros',
+        verbose_name='Cobrado por (si fue otro empleado)',
+        help_text='Empleado que efectivamente recibió el pago electrónico de este servicio, si fue distinto al que lo realizó (servicios cobrados en conjunto).',
+    )
     notas = models.TextField(blank=True, null=True, verbose_name='Notas')
-    
+
     class Meta:
         db_table = 'servicios_realizados'
         verbose_name = 'Servicio Realizado'
@@ -538,6 +574,12 @@ class AbonoDeudaEmpleado(models.Model):
         verbose_name='Usuario'
     )
     notas = models.CharField(max_length=255, blank=True, null=True, verbose_name='Notas')
+    origen_liquidacion_fecha = models.DateField(
+        null=True,
+        blank=True,
+        verbose_name='Fecha de la liquidación que generó este abono',
+        help_text='Fecha operativa de la liquidación (solo efectivo) que aplicó este abono automáticamente, para poder revertirlo si se elimina esa liquidación.',
+    )
 
     class Meta:
         db_table = 'abonos_deuda_empleado'
@@ -643,6 +685,74 @@ class EstadoPagoEstilistaDia(models.Model):
         verbose_name='Omitir descuento de puesto',
         help_text='Si es True, ese día NO se descuenta puesto del pago. El descuento se suma a la deuda.'
     )
+    saltar_descuento_consumo = models.BooleanField(
+        default=False,
+        verbose_name='Omitir descuento de consumo',
+        help_text='Análogo a skip_descuento_puesto pero para la deuda de consumo de productos del empleado.'
+    )
+
+    # RÉGIMEN "SOLO EFECTIVO" (desde la fecha de corte LIQUIDACION_CASH_ONLY_DESDE):
+    # el negocio ya no recibe Nequi/Daviplata en su cuenta -- ese dinero lo recibe
+    # directo el empleado. Estos campos son informativos/de cálculo para ese
+    # régimen; para fechas anteriores al corte quedan en su valor por defecto.
+    ganancia_efectivo_dia = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0,
+        verbose_name='Ganancia del día pagada en efectivo (dinero real en caja)'
+    )
+    ganancia_electronica_dia = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0,
+        verbose_name='Ganancia del día pagada por medio electrónico (informativo, ya en manos del empleado)'
+    )
+    ganancia_electronica_nequi = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Ganancia electrónica Nequi')
+    ganancia_electronica_daviplata = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Ganancia electrónica Daviplata')
+    ganancia_electronica_otros = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Ganancia electrónica otros')
+    comision_producto_dia = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0,
+        verbose_name='Comisión por venta/consumo de producto del día',
+        help_text='No es efectivo físico en mano del empleado (ya entró a caja al vender el producto); solo sirve para cubrir deducciones.'
+    )
+    reparto_establecimiento_electronico_pendiente = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0,
+        verbose_name='% de establecimiento de servicios pagados electrónico, pendiente de recuperar',
+        help_text='Se suma a las deducciones del día (el negocio siempre recupera su parte).'
+    )
+    descuento_consumo_dia = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0,
+        verbose_name='Deuda de consumo aplicada/cobrada ese día'
+    )
+    total_deducciones_dia = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0,
+        verbose_name='Total deducciones del día (puesto + consumo + reparto electrónico pendiente)'
+    )
+    monto_transferir_empleado = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0,
+        verbose_name='Monto que el empleado debe transferir (si el efectivo no alcanzó para cubrir deducciones)'
+    )
+    monto_transferir_recibido = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0,
+        verbose_name='Monto ya confirmado recibido de la transferencia del empleado'
+    )
+    monto_pagar_establecimiento = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0,
+        verbose_name='Monto que el negocio debe entregar en efectivo al empleado (sobrante tras deducciones)'
+    )
+    monto_pagar_entregado = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0,
+        verbose_name='Monto ya confirmado entregado al empleado'
+    )
+    motor_calculo = models.CharField(
+        max_length=20, default='v2_mixed',
+        verbose_name='Motor de cálculo usado',
+        help_text="'v2_mixed' (legacy, Nequi/Daviplata entraban a caja) o 'v3_efectivo' (solo efectivo)."
+    )
+
+    @property
+    def pendiente_transferencia_empleado(self):
+        return max(self.monto_transferir_empleado - self.monto_transferir_recibido, 0)
+
+    @property
+    def pendiente_pago_empleado_efectivo(self):
+        return max(self.monto_pagar_establecimiento - self.monto_pagar_entregado, 0)
 
     # AUDITORÍA
     notas = models.CharField(max_length=255, blank=True, null=True, verbose_name='Notas')
@@ -710,6 +820,12 @@ class EstadoPagoEstilistaHistorial(models.Model):
     pendiente_puesto = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Pendiente puesto')
     fecha_cambio = models.DateTimeField(default=timezone.now, verbose_name='Fecha Cambio')
 
+    # Régimen "solo efectivo" -- ver EstadoPagoEstilistaDia para el detalle de estos campos.
+    descuento_consumo_dia = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Descuento consumo del día')
+    monto_transferir_empleado = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Monto a transferir por el empleado')
+    monto_pagar_establecimiento = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Monto a pagar por el establecimiento')
+    motor_calculo = models.CharField(max_length=20, default='v2_mixed', verbose_name='Motor de cálculo usado')
+
     class Meta:
         db_table = 'estado_pago_estilista_historial'
         verbose_name = 'Historial Estado Pago Estilista'
@@ -770,8 +886,22 @@ class FactLiquidacionEstilistaDia(models.Model):
     pendiente_pago_empleado = models.DecimalField(max_digits=14, decimal_places=2, default=0)
 
     cobro_consumo_dia = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    saltar_descuento_consumo = models.BooleanField(default=False)
     estado_liquidacion = models.CharField(max_length=20, choices=ESTADOS, default='pendiente')
     forzar_reemplazo_dia = models.BooleanField(default=False)
+
+    # Régimen "solo efectivo" -- ver EstadoPagoEstilistaDia para el detalle.
+    ganancia_efectivo = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    ganancia_electronica = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    ganancia_electronica_nequi = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    ganancia_electronica_daviplata = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    ganancia_electronica_otros = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    reparto_establecimiento_electronico_pendiente = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    total_deducciones_dia = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    monto_transferir_empleado = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    monto_transferir_recibido = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    monto_pagar_establecimiento = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    monto_pagar_entregado = models.DecimalField(max_digits=14, decimal_places=2, default=0)
 
     usuario_liquida = models.ForeignKey(
         Usuario,
@@ -846,26 +976,61 @@ class SaldoDeudaPuesto(models.Model):
         return f"{self.estilista.nombre}: puesto=${self.saldo} consumo=${self.saldo_consumo}"
 
 
+class PersonaCredito(models.Model):
+    """
+    Persona externa que puede tener un crédito sin ser empleado del
+    establecimiento (no participa en servicios, liquidación ni ningún otro
+    módulo operativo). Deliberadamente simple.
+    """
+
+    nombre = models.CharField(max_length=150, verbose_name='Nombre')
+    telefono = models.CharField(max_length=20, blank=True, null=True, verbose_name='Teléfono')
+    documento = models.CharField(max_length=30, blank=True, null=True, verbose_name='Documento')
+    activo = models.BooleanField(default=True, verbose_name='Activo')
+    fecha_registro = models.DateTimeField(auto_now_add=True, verbose_name='Fecha de registro')
+
+    class Meta:
+        db_table = 'personas_credito'
+        verbose_name = 'Persona con crédito'
+        verbose_name_plural = 'Personas con crédito'
+        ordering = ['nombre']
+
+    def __str__(self):
+        return self.nombre
+
+
 class Credito(models.Model):
     """
-    Modelo para gestionar créditos otorgados a empleados.
-    Completamente independiente del sistema de deudas y facturas.
+    Modelo para gestionar créditos otorgados a empleados o a personas
+    externas (PersonaCredito). Completamente independiente del sistema de
+    deudas y facturas.
     """
-    
+
     ESTADOS = [
         ('activo', 'Activo'),
         ('cancelado', 'Cancelado'),
         ('vencido', 'Vencido'),
         ('proximo_vencer', 'Próximo a vencer'),
     ]
-    
+
     estilista = models.ForeignKey(
         Estilista,
         on_delete=models.CASCADE,
         related_name='creditos',
-        verbose_name='Empleado'
+        verbose_name='Empleado',
+        null=True,
+        blank=True,
     )
-    
+
+    persona_credito = models.ForeignKey(
+        PersonaCredito,
+        on_delete=models.CASCADE,
+        related_name='creditos',
+        verbose_name='Persona externa',
+        null=True,
+        blank=True,
+    )
+
     valor_prestado = models.DecimalField(
         max_digits=12,
         decimal_places=2,
@@ -956,12 +1121,34 @@ class Credito(models.Model):
         ordering = ['-fecha_creacion']
         indexes = [
             models.Index(fields=['estilista', '-fecha_creacion']),
+            models.Index(fields=['persona_credito', '-fecha_creacion']),
             models.Index(fields=['estado', '-fecha_creacion']),
             models.Index(fields=['fecha_vencimiento']),
         ]
-    
+        constraints = [
+            _check_constraint(
+                (
+                    (models.Q(estilista__isnull=False) & models.Q(persona_credito__isnull=True))
+                    | (models.Q(estilista__isnull=True) & models.Q(persona_credito__isnull=False))
+                ),
+                name='credito_titular_unico',
+            ),
+        ]
+
+    @property
+    def titular_tipo(self):
+        return 'empleado' if self.estilista_id else 'persona'
+
+    @property
+    def titular_nombre(self):
+        if self.estilista_id:
+            return self.estilista.nombre
+        if self.persona_credito_id:
+            return self.persona_credito.nombre
+        return None
+
     def __str__(self):
-        return f"Crédito {self.id} - {self.estilista.nombre}: ${self.valor_total} ({self.estado})"
+        return f"Crédito {self.id} - {self.titular_nombre}: ${self.valor_total} ({self.estado})"
 
 
 class AbonoCredito(models.Model):
@@ -1059,7 +1246,18 @@ class CreditoHistorial(models.Model):
         Estilista,
         on_delete=models.CASCADE,
         related_name='historial_creditos',
-        verbose_name='Empleado'
+        verbose_name='Empleado',
+        null=True,
+        blank=True,
+    )
+
+    persona_credito = models.ForeignKey(
+        PersonaCredito,
+        on_delete=models.CASCADE,
+        related_name='historial_creditos',
+        verbose_name='Persona externa',
+        null=True,
+        blank=True,
     )
 
     accion = models.CharField(max_length=30, choices=ACCIONES, verbose_name='Acción')
@@ -1084,8 +1282,103 @@ class CreditoHistorial(models.Model):
         ordering = ['-fecha']
         indexes = [
             models.Index(fields=['estilista', '-fecha']),
+            models.Index(fields=['persona_credito', '-fecha']),
             models.Index(fields=['credito', '-fecha']),
         ]
 
+    @property
+    def titular_nombre(self):
+        if self.estilista_id:
+            return self.estilista.nombre
+        if self.persona_credito_id:
+            return self.persona_credito.nombre
+        return None
+
     def __str__(self):
-        return f"{self.get_accion_display()} - {self.estilista.nombre} ({self.fecha:%Y-%m-%d %H:%M})"
+        return f"{self.get_accion_display()} - {self.titular_nombre} ({self.fecha:%Y-%m-%d %H:%M})"
+
+
+class DeudaEntreEmpleados(models.Model):
+    """
+    Deuda entre empleados: cuando un cliente recibe servicios de varios
+    empleados en una sola visita pero paga una sola vez (electrónico) con el
+    QR de uno solo de ellos, ese empleado le queda debiendo a sus
+    compañeros la parte que a cada uno le corresponde. Completamente
+    independiente del motor de liquidación con el negocio (ver
+    calcular_liquidacion_dia_estilista) -- se salda directamente entre
+    empleados, en efectivo, fuera de caja.
+    """
+
+    ESTADOS = [
+        ('pendiente', 'Pendiente'),
+        ('pagado', 'Pagado'),
+    ]
+
+    deudor = models.ForeignKey(
+        Estilista,
+        on_delete=models.CASCADE,
+        related_name='deudas_entre_empleados_debe',
+        verbose_name='Empleado que cobró (debe)',
+    )
+    acreedor = models.ForeignKey(
+        Estilista,
+        on_delete=models.CASCADE,
+        related_name='deudas_entre_empleados_le_deben',
+        verbose_name='Empleado al que se le debe',
+    )
+    servicio_realizado = models.ForeignKey(
+        ServicioRealizado,
+        on_delete=models.CASCADE,
+        related_name='deudas_entre_empleados',
+        verbose_name='Servicio de origen',
+    )
+    monto = models.DecimalField(max_digits=10, decimal_places=2, verbose_name='Monto')
+    monto_abonado = models.DecimalField(max_digits=10, decimal_places=2, default=0, verbose_name='Monto abonado')
+    saldo_pendiente = models.DecimalField(max_digits=10, decimal_places=2, verbose_name='Saldo pendiente')
+    estado = models.CharField(max_length=20, choices=ESTADOS, default='pendiente', verbose_name='Estado')
+    fecha_creacion = models.DateTimeField(auto_now_add=True, verbose_name='Fecha de creación')
+
+    class Meta:
+        db_table = 'deudas_entre_empleados'
+        verbose_name = 'Deuda entre empleados'
+        verbose_name_plural = 'Deudas entre empleados'
+        ordering = ['-fecha_creacion']
+        indexes = [
+            models.Index(fields=['deudor', 'estado']),
+            models.Index(fields=['acreedor', 'estado']),
+        ]
+
+    def __str__(self):
+        return f"{self.deudor.nombre} le debe {self.saldo_pendiente} a {self.acreedor.nombre}"
+
+
+class AbonoDeudaEntreEmpleados(models.Model):
+    """Registro de cuándo un empleado le transfirió/entregó a otro su parte."""
+
+    deuda = models.ForeignKey(
+        DeudaEntreEmpleados,
+        on_delete=models.CASCADE,
+        related_name='abonos',
+        verbose_name='Deuda',
+    )
+    monto = models.DecimalField(max_digits=10, decimal_places=2, verbose_name='Monto abonado')
+    fecha = models.DateTimeField(default=timezone.now, verbose_name='Fecha del abono')
+    usuario = models.ForeignKey(
+        Usuario,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='abonos_deuda_entre_empleados',
+        verbose_name='Usuario que registró el abono',
+    )
+    notas = models.CharField(max_length=255, blank=True, null=True, verbose_name='Notas')
+
+    class Meta:
+        db_table = 'abonos_deuda_entre_empleados'
+        verbose_name = 'Abono deuda entre empleados'
+        verbose_name_plural = 'Abonos deuda entre empleados'
+        ordering = ['-fecha']
+
+    def __str__(self):
+        return f"Abono {self.monto} - {self.deuda}"
+

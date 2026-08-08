@@ -163,6 +163,98 @@ export const buildProductSaleTicketPayload = (sale) => {
   };
 };
 
+export const buildLiquidacionTicketPayload = (recibo) => {
+  const items = Array.isArray(recibo?.items) ? recibo.items : [];
+  const motorV3 = recibo?.motor_calculo === 'v3_efectivo';
+  const resultado = recibo?.resultado || {};
+  const legacy = recibo?.legacy || {};
+
+  const ticketItems = items.map((item) => ({
+    nombre: item?.servicio_nombre || 'Servicio',
+    cantidad: 1,
+    precio_unitario: Number(item?.precio_cobrado || 0),
+    total: Number(item?.precio_cobrado || 0),
+    infoLines: [
+      `Pago: ${medioPagoLabel(item?.medio_pago)}`,
+      `Empleado: ${money(item?.monto_empleado)} | Establecimiento: ${money(item?.monto_establecimiento)}`,
+    ],
+  }));
+
+  const summaryRows = [];
+  let footerLines = [];
+  let total = 0;
+
+  if (motorV3) {
+    total = Number(resultado.ganancia_efectivo_dia || 0) + Number(resultado.ganancia_electronica_dia || 0);
+    summaryRows.push({ label: 'Subtotal efectivo', value: money(resultado.ganancia_efectivo_dia) });
+    summaryRows.push({ label: 'Subtotal electrónico (ya en su cuenta)', value: money(resultado.ganancia_electronica_dia) });
+    if (Number(resultado.ganancia_electronica_nequi) > 0) {
+      summaryRows.push({ label: '  - Nequi', value: money(resultado.ganancia_electronica_nequi) });
+    }
+    if (Number(resultado.ganancia_electronica_daviplata) > 0) {
+      summaryRows.push({ label: '  - Daviplata', value: money(resultado.ganancia_electronica_daviplata) });
+    }
+    if (Number(resultado.ganancia_electronica_otros) > 0) {
+      summaryRows.push({ label: '  - Otros', value: money(resultado.ganancia_electronica_otros) });
+    }
+    if (Number(resultado.comision_producto_dia) > 0) {
+      summaryRows.push({ label: 'Comisión productos', value: money(resultado.comision_producto_dia) });
+    }
+    summaryRows.push({
+      label: `Descuento puesto${resultado.saltar_descuento_puesto ? ' (diferido)' : ''}`,
+      value: money(resultado.descuento_puesto),
+    });
+    if (Number(resultado.descuento_consumo_dia) > 0 || resultado.saltar_descuento_consumo) {
+      summaryRows.push({
+        label: `Descuento consumo${resultado.saltar_descuento_consumo ? ' (diferido)' : ''}`,
+        value: money(resultado.descuento_consumo_dia),
+      });
+    }
+    if (Number(resultado.reparto_establecimiento_electronico_pendiente) > 0) {
+      summaryRows.push({
+        label: '% establecimiento pend. (electrónico)',
+        value: money(resultado.reparto_establecimiento_electronico_pendiente),
+      });
+    }
+
+    const transferir = Number(resultado.monto_transferir_empleado || 0);
+    const pagarEstablecimiento = Number(resultado.monto_pagar_establecimiento || 0);
+    if (transferir > 0) {
+      footerLines = [`EMPLEADO DEBE TRANSFERIR: ${money(transferir)}`];
+    } else if (pagarEstablecimiento > 0) {
+      footerLines = [`NEGOCIO DEBE PAGAR: ${money(pagarEstablecimiento)}`];
+    } else {
+      footerLines = ['LIQUIDADO - SALDO EN CERO'];
+    }
+    if (recibo?.es_preview) {
+      footerLines.push('(VISTA PREVIA - aún no confirmado)');
+    }
+  } else {
+    total = Number(legacy.total_pagable || 0);
+    summaryRows.push({ label: 'Ganancias totales', value: money(legacy.ganancias_totales) });
+    summaryRows.push({ label: 'Descuento puesto', value: money(legacy.descuento_puesto) });
+    summaryRows.push({ label: 'Pago efectivo', value: money(legacy.pago_efectivo) });
+    summaryRows.push({ label: 'Pago Nequi', value: money(legacy.pago_nequi) });
+    summaryRows.push({ label: 'Pago Daviplata', value: money(legacy.pago_daviplata) });
+    summaryRows.push({ label: 'Pago otros', value: money(legacy.pago_otros) });
+    footerLines = [recibo?.es_preview ? '(VISTA PREVIA - aún no confirmado)' : `Estado: ${legacy.estado || '-'}`];
+  }
+
+  return {
+    ticketTitle: 'LIQUIDACIÓN EMPLEADO',
+    numero_factura: `LIQ-${recibo?.fecha || ''}-${recibo?.estilista?.id || ''}`,
+    fecha_hora: recibo?.fecha,
+    cliente_nombre: null,
+    empleado_nombre: recibo?.estilista?.nombre,
+    usuario_nombre: null,
+    medio_pago: null,
+    total,
+    items: ticketItems,
+    summaryRows,
+    footerLines,
+  };
+};
+
 export const buildServiceSaleTicketPayload = (service) => {
   const principalValor = Number(service?.neto_servicio ?? service?.precio_cobrado ?? 0);
   const principalEmpleado = Number(service?.monto_estilista || 0);

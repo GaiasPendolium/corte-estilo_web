@@ -62,8 +62,9 @@ const Creditos = () => {
   const puedeImprimir = hasSubmenuPermission(user, 'creditos', 'reportes', 'print');
 
   const [loading, setLoading] = useState(true);
-  const [empleados, setEmpleados] = useState([]);
-  const [estilistaActivoId, setEstilistaActivoId] = useState(null);
+  const [titulares, setTitulares] = useState([]);
+  const [titularActivoTipo, setTitularActivoTipo] = useState(null);
+  const [titularActivoId, setTitularActivoId] = useState(null);
   const [creditosEmpleado, setCreditosEmpleado] = useState([]);
   const [abonosEmpleado, setAbonosEmpleado] = useState([]);
   const [creditoActivoId, setCreditoActivoId] = useState(null);
@@ -75,6 +76,10 @@ const Creditos = () => {
     valor_prestado: '', porcentaje_interes: '', plazo_dias: '30', fecha_inicio: todayStr(), observaciones: '',
   });
   const [savingCredito, setSavingCredito] = useState(false);
+
+  const [showNuevaPersona, setShowNuevaPersona] = useState(false);
+  const [formPersona, setFormPersona] = useState({ nombre: '', telefono: '', documento: '' });
+  const [savingPersona, setSavingPersona] = useState(false);
 
   const [showEditarCredito, setShowEditarCredito] = useState(false);
   const [formEditarCredito, setFormEditarCredito] = useState({
@@ -89,46 +94,47 @@ const Creditos = () => {
   const [formEditarAbono, setFormEditarAbono] = useState({ valor_abono: '', fecha: '', observaciones: '' });
   const [savingEditAbono, setSavingEditAbono] = useState(false);
 
-  const cargarEmpleados = useCallback(async () => {
+  const cargarTitulares = useCallback(async () => {
     try {
       setLoading(true);
-      const data = await creditosService.getPorEmpleado();
-      setEmpleados(extraerData(data));
+      const data = await creditosService.getPorTitular();
+      setTitulares(extraerData(data));
     } catch (error) {
       toast.error('No se pudieron cargar los créditos.');
-      setEmpleados([]);
+      setTitulares([]);
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    if (puedeVer) cargarEmpleados();
-  }, [puedeVer, cargarEmpleados]);
+    if (puedeVer) cargarTitulares();
+  }, [puedeVer, cargarTitulares]);
 
-  const cargarDatosEmpleado = useCallback(async (estId) => {
-    if (!estId) {
+  const cargarDatosTitular = useCallback(async (tipo, id) => {
+    if (!id) {
       setCreditosEmpleado([]);
       setAbonosEmpleado([]);
       return;
     }
     try {
+      const filtroCreditos = tipo === 'persona' ? { persona_credito: id } : { estilista: id };
       const [creditosResp, abonosResp] = await Promise.all([
-        creditosService.getCreditos({ estilista: estId }),
-        creditosService.getAbonosPorEstilista(estId),
+        creditosService.getCreditos(filtroCreditos),
+        creditosService.getAbonosPorTitular(tipo, id),
       ]);
       setCreditosEmpleado(extraerData(creditosResp));
       setAbonosEmpleado(extraerData(abonosResp));
     } catch (error) {
-      toast.error('No se pudo cargar el historial del empleado.');
+      toast.error('No se pudo cargar el historial del titular.');
     }
   }, []);
 
   useEffect(() => {
-    cargarDatosEmpleado(estilistaActivoId);
+    cargarDatosTitular(titularActivoTipo, titularActivoId);
     setCreditoActivoId(null);
     setCreditoDetalle(null);
-  }, [estilistaActivoId, cargarDatosEmpleado]);
+  }, [titularActivoTipo, titularActivoId, cargarDatosTitular]);
 
   const cargarDetalleCredito = useCallback(async (creditoId) => {
     if (!creditoId) {
@@ -148,12 +154,19 @@ const Creditos = () => {
   }, [creditoActivoId, cargarDetalleCredito]);
 
   const recargarTodo = async () => {
-    await cargarEmpleados();
-    await cargarDatosEmpleado(estilistaActivoId);
+    await cargarTitulares();
+    await cargarDatosTitular(titularActivoTipo, titularActivoId);
     if (creditoActivoId) await cargarDetalleCredito(creditoActivoId);
   };
 
-  const empleadoActivo = empleados.find((e) => Number(e.id) === Number(estilistaActivoId)) || null;
+  const seleccionarTitular = (tipo, id) => {
+    setTitularActivoTipo(tipo);
+    setTitularActivoId(id);
+  };
+
+  const empleadoActivo = titulares.find(
+    (t) => t.tipo === titularActivoTipo && Number(t.id) === Number(titularActivoId)
+  ) || null;
 
   // ---- Crédito: crear ----
   const abrirNuevoCredito = () => {
@@ -163,7 +176,7 @@ const Creditos = () => {
 
   const guardarNuevoCredito = async (e) => {
     e.preventDefault();
-    if (!estilistaActivoId) return;
+    if (!titularActivoId) return;
     const valorPrestado = Number(formCredito.valor_prestado || 0);
     if (valorPrestado <= 0) {
       toast.warning('Ingresa un valor prestado mayor a cero.');
@@ -171,8 +184,11 @@ const Creditos = () => {
     }
     setSavingCredito(true);
     try {
+      const titularField = titularActivoTipo === 'persona'
+        ? { persona_credito: titularActivoId }
+        : { estilista: titularActivoId };
       await creditosService.crearCredito({
-        estilista: estilistaActivoId,
+        ...titularField,
         valor_prestado: valorPrestado,
         porcentaje_interes: Number(formCredito.porcentaje_interes || 0),
         plazo_dias: Number(formCredito.plazo_dias || 30),
@@ -186,6 +202,36 @@ const Creditos = () => {
       toast.error(mensajeError(error, 'No se pudo crear el crédito.'));
     } finally {
       setSavingCredito(false);
+    }
+  };
+
+  // ---- Persona externa: crear (titular de crédito que no es empleado) ----
+  const abrirNuevaPersona = () => {
+    setFormPersona({ nombre: '', telefono: '', documento: '' });
+    setShowNuevaPersona(true);
+  };
+
+  const guardarNuevaPersona = async (e) => {
+    e.preventDefault();
+    if (!formPersona.nombre.trim()) {
+      toast.warning('Ingresa el nombre de la persona.');
+      return;
+    }
+    setSavingPersona(true);
+    try {
+      const persona = await creditosService.crearPersona({
+        nombre: formPersona.nombre.trim(),
+        telefono: formPersona.telefono || null,
+        documento: formPersona.documento || null,
+      });
+      toast.success('Persona registrada correctamente.');
+      setShowNuevaPersona(false);
+      await cargarTitulares();
+      seleccionarTitular('persona', persona.id);
+    } catch (error) {
+      toast.error(mensajeError(error, 'No se pudo registrar la persona.'));
+    } finally {
+      setSavingPersona(false);
     }
   };
 
@@ -343,7 +389,7 @@ const Creditos = () => {
   const exportarExcel = async () => {
     setExportando(true);
     try {
-      const blob = await creditosService.exportarExcel(estilistaActivoId);
+      const blob = await creditosService.exportarExcel(titularActivoTipo, titularActivoId);
       descargarBlob(blob, `${nombreArchivoBase()}.csv`);
       toast.success('Excel exportado correctamente.');
     } catch (error) {
@@ -356,7 +402,7 @@ const Creditos = () => {
   const exportarPdf = async () => {
     setExportando(true);
     try {
-      const blob = await creditosService.exportarPdf(estilistaActivoId);
+      const blob = await creditosService.exportarPdf(titularActivoTipo, titularActivoId);
       descargarBlob(blob, `${nombreArchivoBase()}.pdf`);
       toast.success('PDF exportado correctamente.');
     } catch (error) {
@@ -378,34 +424,44 @@ const Creditos = () => {
         <div className="absolute -right-14 -top-14 h-44 w-44 rounded-full bg-white/5 blur-3xl" />
         <div className="absolute -left-12 bottom-0 h-40 w-40 rounded-full bg-violet-300/10 blur-3xl" />
         <div className="relative z-10">
-          <h1 className="text-3xl md:text-4xl font-black tracking-tight">Créditos de Empleados</h1>
-          <p className="text-slate-300 mt-2 max-w-3xl">Gestiona créditos otorgados a empleados, registra abonos y consulta el historial completo de pagos.</p>
+          <h1 className="text-3xl md:text-4xl font-black tracking-tight">Créditos</h1>
+          <p className="text-slate-300 mt-2 max-w-3xl">Gestiona créditos otorgados a empleados o a personas externas, registra abonos y consulta el historial completo de pagos.</p>
         </div>
       </section>
 
       <div className="grid grid-cols-1 xl:grid-cols-[320px_1fr] gap-6">
         <aside className="card border border-slate-200 bg-slate-50 print:hidden">
           <div className="flex items-center justify-between gap-2 mb-3">
-            <h3 className="card-header mb-0">Empleados</h3>
-            <button className="btn-secondary !py-1.5" onClick={cargarEmpleados} disabled={loading}>
+            <h3 className="card-header mb-0">Titulares</h3>
+            <button className="btn-secondary !py-1.5" onClick={cargarTitulares} disabled={loading}>
               {loading ? '...' : 'Actualizar'}
             </button>
           </div>
+          {puedeCrear && (
+            <button className="btn-secondary w-full !py-1.5 mb-3 inline-flex items-center justify-center gap-2" onClick={abrirNuevaPersona}>
+              <FiPlus /> Nueva persona externa
+            </button>
+          )}
           <div className="space-y-2 max-h-[68vh] overflow-y-auto pr-1">
-            {empleados.length === 0 && (
-              <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-500">No hay empleados con créditos registrados.</div>
+            {titulares.length === 0 && (
+              <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-500">No hay empleados ni personas con créditos registrados.</div>
             )}
-            {empleados.map((item) => {
-              const estId = Number(item.id);
-              const activo = estId === Number(estilistaActivoId);
+            {titulares.map((item) => {
+              const tId = Number(item.id);
+              const activo = item.tipo === titularActivoTipo && tId === Number(titularActivoId);
               return (
                 <button
-                  key={estId}
+                  key={`${item.tipo}:${tId}`}
                   type="button"
-                  onClick={() => setEstilistaActivoId(estId)}
+                  onClick={() => seleccionarTitular(item.tipo, tId)}
                   className={`w-full rounded-2xl border p-3 text-left transition ${activo ? 'border-emerald-400 bg-emerald-50 shadow-md' : 'border-slate-200 bg-white hover:border-slate-300'}`}
                 >
-                  <p className="font-semibold text-slate-900">{item.nombre}</p>
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="font-semibold text-slate-900">{item.nombre}</p>
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${item.tipo === 'persona' ? 'bg-violet-100 text-violet-700' : 'bg-sky-100 text-sky-700'}`}>
+                      {item.tipo === 'persona' ? 'Externa' : 'Empleado'}
+                    </span>
+                  </div>
                   <p className="text-xs text-slate-500 mt-1">Saldo pendiente: <b>{formatMoney(item.saldo_pendiente)}</b></p>
                   <p className="text-xs text-violet-700 mt-1">Activos: {item.creditos_activos} · Cancelados: {item.creditos_cancelados}</p>
                 </button>
@@ -770,6 +826,27 @@ const Creditos = () => {
           <div className="md:col-span-2 flex justify-end gap-2">
             <button type="button" className="btn-secondary" onClick={() => setShowEditarCredito(false)}>Cancelar</button>
             <button type="submit" className="btn-primary" disabled={savingEditarCredito}>{savingEditarCredito ? 'Guardando...' : 'Guardar cambios'}</button>
+          </div>
+        </form>
+      </ModalForm>
+
+      <ModalForm isOpen={showNuevaPersona} title="Nueva persona externa" subtitle="No aparecerá como empleado" onClose={() => setShowNuevaPersona(false)} size="md">
+        <form className="grid grid-cols-1 gap-3" onSubmit={guardarNuevaPersona}>
+          <div>
+            <label className="block text-xs text-slate-600 mb-1">Nombre</label>
+            <input type="text" className="input-field" value={formPersona.nombre} onChange={(e) => setFormPersona((p) => ({ ...p, nombre: e.target.value }))} required />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-600 mb-1">Teléfono</label>
+            <input type="text" className="input-field" value={formPersona.telefono} onChange={(e) => setFormPersona((p) => ({ ...p, telefono: e.target.value }))} />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-600 mb-1">Documento</label>
+            <input type="text" className="input-field" value={formPersona.documento} onChange={(e) => setFormPersona((p) => ({ ...p, documento: e.target.value }))} />
+          </div>
+          <div className="flex justify-end gap-2">
+            <button type="button" className="btn-secondary" onClick={() => setShowNuevaPersona(false)}>Cancelar</button>
+            <button type="submit" className="btn-primary" disabled={savingPersona}>{savingPersona ? 'Guardando...' : 'Registrar persona'}</button>
           </div>
         </form>
       </ModalForm>

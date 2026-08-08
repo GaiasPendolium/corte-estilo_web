@@ -146,7 +146,24 @@ export const estilistasService = {
     const response = await api.delete(`/estilistas/${id}/`);
     return response.data;
   },
-  
+
+  // Sube los QR de pago del empleado (imágenes reales del banco/billetera,
+  // no se generan) y/o los datos de transferencia de texto. Solo envía los
+  // campos con archivo nuevo -- FormData porque son imágenes, no JSON.
+  subirDatosPago: async (id, { qr_nequi, qr_daviplata, qr_otros, datos_transferencia } = {}) => {
+    const formData = new FormData();
+    if (qr_nequi) formData.append('qr_nequi', qr_nequi);
+    if (qr_daviplata) formData.append('qr_daviplata', qr_daviplata);
+    if (qr_otros) formData.append('qr_otros', qr_otros);
+    if (datos_transferencia !== undefined) formData.append('datos_transferencia', datos_transferencia || '');
+    if ([...formData.keys()].length === 0) return null;
+
+    const response = await api.patch(`/estilistas/${id}/`, formData, {
+      headers: { 'Content-Type': undefined },
+    });
+    return response.data;
+  },
+
   getEstadisticas: async (id, params) => {
     const response = await api.get(`/estilistas/${id}/estadisticas/`, { params });
     return response.data;
@@ -482,9 +499,12 @@ export const reportesService = {
     puesto_porcentaje = 0,
     forzar_reemplazo_dia = false,
     skip_descuento_puesto = false,
+    saltar_descuento_consumo = false,
     consumo_monto = 0,
     deuda_ids = [],
     medio_cobro_consumo = 'efectivo',
+    monto_transferir_recibido,
+    monto_pagar_entregado,
     notas,
   }) => {
     const payload = {
@@ -501,13 +521,44 @@ export const reportesService = {
       puesto_porcentaje,
       forzar_reemplazo_dia,
       skip_descuento_puesto,
+      saltar_descuento_consumo,
       consumo_monto,
       deuda_ids,
       medio_cobro_consumo,
       notas,
+      ...(monto_transferir_recibido !== undefined ? { monto_transferir_recibido } : {}),
+      ...(monto_pagar_entregado !== undefined ? { monto_pagar_entregado } : {}),
     };
 
     const response = await api.post('/reportes/estilistas/liquidar-operacion-integral/', payload);
+    return response.data;
+  },
+
+  getLiquidacionRecibo: async ({
+    estilista_id,
+    fecha,
+    aplica_comision_ventas,
+    skip_descuento_puesto,
+    saltar_descuento_consumo,
+    puesto_modo,
+    puesto_porcentaje,
+    consumo_monto,
+    abono_puesto,
+  }) => {
+    const params = { estilista_id, fecha };
+    if (aplica_comision_ventas !== undefined) params.aplica_comision_ventas = aplica_comision_ventas;
+    if (skip_descuento_puesto !== undefined) params.skip_descuento_puesto = skip_descuento_puesto;
+    if (saltar_descuento_consumo !== undefined) params.saltar_descuento_consumo = saltar_descuento_consumo;
+    if (puesto_modo !== undefined) params.puesto_modo = puesto_modo;
+    if (puesto_porcentaje !== undefined) params.puesto_porcentaje = puesto_porcentaje;
+    if (consumo_monto !== undefined) params.consumo_monto = consumo_monto;
+    if (abono_puesto !== undefined) params.abono_puesto = abono_puesto;
+    const response = await api.get('/reportes/estilistas/liquidacion-recibo/', { params });
+    return response.data;
+  },
+
+  eliminarLiquidacionDia: async ({ estilista_id, fecha }) => {
+    const response = await api.delete(`/reportes/estilistas/liquidacion-dia/${estilista_id}/${fecha}/eliminar/`);
     return response.data;
   },
 
@@ -592,6 +643,16 @@ export const reportesService = {
     return response.data;
   },
 
+  confirmarTransferenciaPendienteDia: async ({ estilista_id, fecha, tipo, monto }) => {
+    const response = await api.post('/reportes/estilistas/confirmar-transferencia-dia/', {
+      estilista_id,
+      fecha,
+      tipo,
+      ...(monto !== undefined && monto !== null ? { monto } : {}),
+    });
+    return response.data;
+  },
+
   abonarDeudaPuestoDias: async ({ estilista_id, fechas, monto = 0 }) => {
     const response = await api.post('/reportes/estilistas/abonar-deuda-puesto-dias/', {
       estilista_id,
@@ -605,6 +666,41 @@ export const reportesService = {
     const response = await api.post('/reportes/consumo-empleado/cancelar-facturas/', {
       deuda_ids,
     });
+    return response.data;
+  },
+};
+
+// Cuenta entre empleados: servicios cobrados en conjunto (un empleado cobra
+// electrónico y le queda debiendo a los compañeros que también participaron).
+export const deudasEntreEmpleadosService = {
+  getAll: async (params) => {
+    const response = await api.get('/deudas-entre-empleados/', { params });
+    return response.data;
+  },
+
+  // Trae TODAS las páginas (el endpoint pagina de a 50) para que el
+  // histórico de cuenta entre empleados nunca oculte registros antiguos
+  // por defecto -- importante porque este módulo es el que se consulta
+  // ante dudas o reclamos.
+  getAllPaginas: async (params, maxPaginas = 40) => {
+    let url = '/deudas-entre-empleados/';
+    let currentParams = params;
+    const items = [];
+    for (let i = 0; i < maxPaginas; i += 1) {
+      const response = await api.get(url, currentParams ? { params: currentParams } : undefined);
+      const data = response.data;
+      const pageItems = Array.isArray(data) ? data : (data?.results || []);
+      items.push(...pageItems);
+      const next = Array.isArray(data) ? null : data?.next;
+      if (!next) break;
+      url = next;
+      currentParams = undefined;
+    }
+    return items;
+  },
+
+  abonar: async ({ deuda, monto, notas }) => {
+    const response = await api.post('/abonos-deuda-entre-empleados/', { deuda, monto, notas });
     return response.data;
   },
 };

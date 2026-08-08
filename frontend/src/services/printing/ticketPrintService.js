@@ -2,6 +2,7 @@ import {
   buildEscPosTicket,
   buildProductSaleTicketPayload,
   buildServiceSaleTicketPayload,
+  buildLiquidacionTicketPayload,
 } from './escposTicket';
 import { qzTrayService } from './qzTrayService';
 import { localDrawerService } from './localDrawerService';
@@ -45,6 +46,8 @@ export const ticketPrintService = {
 
   buildFromServiceSale: (service) => buildEscPosTicket(withBusinessData(buildServiceSaleTicketPayload(service))),
 
+  buildFromLiquidacion: (recibo) => buildEscPosTicket(withBusinessData(buildLiquidacionTicketPayload(recibo))),
+
   printProductSaleAndOpenDrawer: async (sale) => {
     const ticket = ticketPrintService.buildFromProductSale(sale);
     await printTicket(ticket);
@@ -57,6 +60,11 @@ export const ticketPrintService = {
     await printTicket(ticket);
     await openDrawerSafely();
     return { ok: true };
+  },
+
+  printLiquidacion: async (recibo) => {
+    const ticket = ticketPrintService.buildFromLiquidacion(recibo);
+    return printTicket(ticket);
   },
 
   reprintProductSale: async (sale) => {

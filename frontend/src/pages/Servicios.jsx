@@ -121,20 +121,6 @@ const formatProductCompactLabel = (producto) => {
   return [producto?.marca, producto?.nombre || producto?.descripcion].filter(Boolean).join(' - ') || producto?.nombre || 'Producto';
 };
 
-const serviceMatchesSearch = (servicio, query) => {
-  const q = normalizeSearchText(query);
-  if (!q) return true;
-
-  const index = normalizeSearchText([
-    servicio.nombre,
-    servicio.descripcion,
-  ].filter(Boolean).join(' '));
-
-  if (index.includes(q)) return true;
-  const terms = q.split(' ').filter(Boolean);
-  return terms.every((term) => index.includes(term));
-};
-
 const isShampooServiceName = (nombre) => {
   const n = String(nombre || '').toLowerCase();
   return n.includes('shampoo');
@@ -193,11 +179,15 @@ const Servicios = () => {
   const [showNuevoClienteModal, setShowNuevoClienteModal] = useState(false);
   const [showFinalizarModal, setShowFinalizarModal] = useState(false);
   const [showConfirmacionFinalizar, setShowConfirmacionFinalizar] = useState(false);
+  // Rastrea si la pantalla del cliente está mostrando algo distinto al logo
+  // de espera (vista previa del cobro, o el recibo/QR final), para poder
+  // ofrecer un botón explícito de "Finalizar atención" que la regrese al
+  // logo cuando el cliente ya terminó de pagar e irse.
+  const [pantallaClienteActiva, setPantallaClienteActiva] = useState(null);
 
   const [estilistas, setEstilistas] = useState([]);
   const [servicios, setServicios] = useState([]);
   const [productos, setProductos] = useState([]);
-  const [clientes, setClientes] = useState([]);
   const [estadoEstilistas, setEstadoEstilistas] = useState([]);
   const [serviciosEnProceso, setServiciosEnProceso] = useState([]);
   const [ultimosServicios, setUltimosServicios] = useState([]);
@@ -213,6 +203,7 @@ const Servicios = () => {
     servicio: '',
     precio_cobrado: '',
     medio_pago: 'efectivo',
+    cobrado_por: '',
     valor_recibido: '',
     tipo_reparto_establecimiento: '',
     valor_reparto_establecimiento: '30',
@@ -289,10 +280,9 @@ const Servicios = () => {
   const cargarTodo = async () => {
     try {
       setLoading(true);
-      const [listaEstilistas, listaServicios, listaClientes, listaRealizados, listaFinalizadosResp, estadoRes, listaProductos] = await Promise.all([
+      const [listaEstilistas, listaServicios, listaRealizados, listaFinalizadosResp, estadoRes, listaProductos] = await Promise.all([
         fetchAllRows(estilistasService.getAll, { activo: true }),
         fetchAllRows(serviciosService.getAll, { activo: true }),
-        fetchAllRows(clientesService.getAll),
         fetchAllRows(serviciosRealizadosService.getAll, { estado: 'en_proceso' }),
         serviciosRealizadosService.getAll({ estado: 'finalizado', page: 1 }),
         serviciosRealizadosService.getEstadoEstilistas(),
@@ -301,7 +291,6 @@ const Servicios = () => {
 
       setEstilistas(listaEstilistas);
       setServicios(listaServicios);
-      setClientes(listaClientes);
       setProductos(listaProductos);
       setEstadoEstilistas(Array.isArray(estadoRes) ? estadoRes : []);
       setServiciosEnProceso(listaRealizados.filter((s) => s.estado === 'en_proceso'));
@@ -532,6 +521,7 @@ const Servicios = () => {
       servicio: '',
       precio_cobrado: '',
       medio_pago: 'efectivo',
+      cobrado_por: '',
       valor_recibido: '',
       tipo_reparto_establecimiento: '',
       valor_reparto_establecimiento: '30',
@@ -585,6 +575,7 @@ const Servicios = () => {
       servicio: srv.servicio ? String(srv.servicio) : '',
       precio_cobrado: srv.precio_cobrado || '',
       medio_pago: srv.medio_pago || 'efectivo',
+      cobrado_por: srv.cobrado_por ? String(srv.cobrado_por) : '',
       valor_recibido: '',
       tipo_reparto_establecimiento: srv.tipo_reparto_establecimiento || '',
       valor_reparto_establecimiento: String(srv.valor_reparto_establecimiento ?? '30'),
@@ -804,6 +795,21 @@ const Servicios = () => {
       }
     }
 
+    const estilistaPreview = servicioEnProcesoSeleccionado?.estilista_nombre
+      || estilistas.find((e) => String(e.id) === String(finalizacion.estilista))?.nombre
+      || 'Equipo';
+    const servicioNombrePreview = servicioPrincipalSeleccionado?.servicio_nombre
+      || servicioPrincipalSeleccionado?.nombre
+      || 'Servicio';
+    customerDisplayService.publishServicePreview({
+      servicioNombre: servicioNombrePreview,
+      estilistaNombre: estilistaPreview,
+      clienteNombre: servicioEnProcesoSeleccionado?.cliente_nombre || null,
+      total: totalFinalizacion,
+      medioPago: finalizacion.medio_pago,
+    });
+    setPantallaClienteActiva({ tipo: 'preview', cliente: servicioEnProcesoSeleccionado?.cliente_nombre || 'Cliente', total: totalFinalizacion });
+
     setShowConfirmacionFinalizar(true);
   };
 
@@ -857,6 +863,9 @@ const Servicios = () => {
       const payloadFinalizacion = {
         precio_cobrado: toPesoInt(finalizacion.precio_cobrado),
         medio_pago: finalizacion.medio_pago,
+        cobrado_por: finalizacion.medio_pago !== 'efectivo' && finalizacion.cobrado_por
+          ? Number(finalizacion.cobrado_por)
+          : null,
         tipo_reparto_establecimiento: tipoRepartoPrincipal || null,
         valor_reparto_establecimiento: valorRepartoPrincipal,
         tiene_adicionales: finalizacion.tiene_adicionales,
@@ -884,7 +893,23 @@ const Servicios = () => {
       const estilistaFinalizado = estilistas.find((e) => e.id === Number(res?.estilista));
       const usaCobroFijoEspacio = (estilistaFinalizado?.tipo_cobro_espacio || '') === 'costo_fijo_neto';
 
-      customerDisplayService.publishServiceSale(res);
+      // Si el pago es electrónico, el QR a mostrar en la pantalla cliente es
+      // el del empleado que efectivamente cobra (cobrado_por si se marcó
+      // "servicio cobrado en conjunto", si no el mismo que atendió).
+      const estilistaCobrador = res?.cobrado_por
+        ? estilistas.find((e) => e.id === Number(res.cobrado_por))
+        : estilistaFinalizado;
+      const qrPorMedio = {
+        nequi: estilistaCobrador?.qr_nequi,
+        daviplata: estilistaCobrador?.qr_daviplata,
+        otros: estilistaCobrador?.qr_otros,
+      };
+      customerDisplayService.publishServiceSale(res, {
+        qrImageUrl: qrPorMedio[finalizacion.medio_pago] || null,
+        datosTransferencia: estilistaCobrador?.datos_transferencia || null,
+        nombreCobrador: res?.cobrado_por ? estilistaCobrador?.nombre : null,
+      });
+      setPantallaClienteActiva({ tipo: 'recibo', cliente: res?.cliente_nombre || 'Cliente', total: res?.precio_cobrado || 0 });
 
       toast.success(
         usaCobroFijoEspacio
@@ -912,6 +937,7 @@ const Servicios = () => {
         servicio: '',
         precio_cobrado: '',
         medio_pago: 'efectivo',
+        cobrado_por: '',
         valor_recibido: '',
         tipo_reparto_establecimiento: '',
         valor_reparto_establecimiento: '30',
@@ -1140,6 +1166,7 @@ const Servicios = () => {
       const ventaPrincipal = transaccion?.venta_principal || null;
       if (ventaPrincipal) {
         customerDisplayService.publishProductSale(ventaPrincipal);
+        setPantallaClienteActiva({ tipo: 'recibo', cliente: ventaPrincipal?.cliente_nombre || 'Cliente', total: ventaPrincipal?.valor_total || 0 });
       }
 
       const deudaInfo = transaccion?.deuda;
@@ -1199,6 +1226,14 @@ const Servicios = () => {
     }
   };
 
+  // El cajero confirma que el cliente ya vio/pagó lo que se le mostró y la
+  // pantalla cliente puede volver al logo de espera. No se hace automático
+  // porque el cliente puede tardar en escanear el QR.
+  const finalizarAtencionPantallaCliente = () => {
+    customerDisplayService.clear();
+    setPantallaClienteActiva(null);
+  };
+
   return (
     <div className="space-y-6 fade-in">
       <div className="flex items-center justify-between">
@@ -1218,6 +1253,21 @@ const Servicios = () => {
           </button>
         </div>
       </div>
+
+      {pantallaClienteActiva && (
+        <div className="card p-3 bg-sky-50 border border-sky-200 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-sky-900 text-sm">
+            <span className={`inline-block h-2.5 w-2.5 rounded-full ${pantallaClienteActiva.tipo === 'preview' ? 'bg-amber-500 animate-pulse' : 'bg-emerald-500'}`} />
+            <span>
+              Pantalla cliente mostrando {pantallaClienteActiva.tipo === 'preview' ? 'cobro en revisión' : 'recibo'} de{' '}
+              <strong>{pantallaClienteActiva.cliente}</strong> — {formatCOP(pantallaClienteActiva.total)}
+            </span>
+          </div>
+          <button className="btn-secondary !py-1.5" onClick={finalizarAtencionPantallaCliente}>
+            Finalizar (volver al logo)
+          </button>
+        </div>
+      )}
 
       <div className="card p-2">
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
@@ -1571,6 +1621,25 @@ const Servicios = () => {
               <option key={m.value} value={m.value}>{m.label}</option>
             ))}
           </select>
+
+          {finalizacion.medio_pago !== 'efectivo' && (
+            <div className="md:col-span-2">
+              <label className="block text-xs text-slate-600 mb-1">¿Lo cobró otro empleado? (servicio cobrado en conjunto)</label>
+              <select
+                className="input-field"
+                value={finalizacion.cobrado_por}
+                onChange={(e) => setFinalizacion((p) => ({ ...p, cobrado_por: e.target.value }))}
+              >
+                <option value="">No, lo cobró {estilistas.find((e) => String(e.id) === String(finalizacion.estilista))?.nombre || 'el mismo empleado'}</option>
+                {estilistas
+                  .filter((e) => String(e.id) !== String(finalizacion.estilista))
+                  .map((e) => (
+                    <option key={e.id} value={e.id}>Lo cobró {e.nombre} (con su QR)</option>
+                  ))}
+              </select>
+              <p className="mt-1 text-xs text-slate-500">Si el cliente pagó una sola vez con el QR de un compañero por varios servicios de esta visita, elígelo aquí. Se registra automáticamente lo que ese compañero le debe a este empleado.</p>
+            </div>
+          )}
 
           {finalizacion.medio_pago === 'efectivo' && (
             <div className="flex gap-2">
@@ -1975,7 +2044,16 @@ const Servicios = () => {
                 <p className="font-bold text-gray-900">{servicioVisualizar.cliente_nombre || '-'}</p>
               </div>
               <div>
-                <pre className="whitespace-pre-wrap text-sm bg-gray-50 border p-3 rounded">{servicioVisualizar.factura_texto || JSON.stringify(servicioVisualizar, null, 2)}</pre>
+                {servicioVisualizar.factura_texto ? (
+                  <pre className="whitespace-pre-wrap text-sm bg-gray-50 border p-3 rounded">{servicioVisualizar.factura_texto}</pre>
+                ) : (
+                  <div className="text-sm bg-gray-50 border p-3 rounded space-y-1">
+                    <p><span className="text-gray-500">Servicio:</span> <span className="font-semibold">{servicioVisualizar.servicio_nombre || '-'}</span></p>
+                    <p><span className="text-gray-500">Atendido por:</span> <span className="font-semibold">{servicioVisualizar.estilista_nombre || '-'}</span></p>
+                    <p><span className="text-gray-500">Medio de pago:</span> <span className="font-semibold">{servicioVisualizar.medio_pago || '-'}</span></p>
+                    <p><span className="text-gray-500">Valor cobrado:</span> <span className="font-semibold">${Number(servicioVisualizar.precio_cobrado || 0).toLocaleString('es-CO')}</span></p>
+                  </div>
+                )}
               </div>
             </div>
             <div className="bg-gray-100 px-6 py-3 flex gap-2 justify-end">
