@@ -29,6 +29,11 @@ urlpatterns = [
     path('api/', include('api.urls')),
 ]
 
+# Media (QR de pago de empleados, etc.) se sirve siempre, tambien en
+# produccion -- no hay S3/CDN externo, MEDIA_ROOT apunta al volumen
+# persistente de Railway. Static solo se sirve aqui en DEBUG (en
+# produccion no hay collectstatic configurado; el admin de Django no se
+# usa como interfaz principal).
+urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
     urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
