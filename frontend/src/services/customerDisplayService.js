@@ -69,10 +69,15 @@ export const customerDisplayService = {
   },
 
   // Fase 1 del cobro: se muestra apenas el cajero abre la confirmación de
-  // cobro, ANTES de guardar nada en el backend y ANTES de saber si hay QR
-  // (eso llega despues, con publishServiceSale). Deja ver al cliente que su
-  // servicio ya se está registrando, mientras el cajero confirma el monto.
-  publishServicePreview: ({ servicioNombre, estilistaNombre, clienteNombre, total, medioPago }) => {
+  // cobro, ANTES de guardar nada en el backend. El monto y el QR mostrados
+  // aquí son un adelanto ("por confirmar") -- si el pago es electrónico ya
+  // se conoce qué empleado cobra (campo cobrado_por del formulario), así
+  // que su QR se puede mostrar de una vez para que el cliente tenga tiempo
+  // de abrir su app, aunque el monto definitivo solo se fija cuando el
+  // cajero confirma y se guarda el servicio (ver publishServiceSale).
+  // `datosPagoElectronico` (opcional): { qrImageUrl, datosTransferencia, nombreCobrador }
+  publishServicePreview: ({ servicioNombre, estilistaNombre, clienteNombre, total, medioPago }, datosPagoElectronico = null) => {
+    const esElectronico = (medioPago || 'efectivo') !== 'efectivo';
     const payload = {
       id: null,
       type: 'servicio_preview',
@@ -90,6 +95,9 @@ export const customerDisplayService = {
           lineTotal: money(total),
         },
       ],
+      qrImageUrl: esElectronico ? (datosPagoElectronico?.qrImageUrl || null) : null,
+      datosTransferencia: esElectronico ? (datosPagoElectronico?.datosTransferencia || null) : null,
+      nombreCobrador: esElectronico ? (datosPagoElectronico?.nombreCobrador || null) : null,
       createdAt: nowIso(),
     };
 

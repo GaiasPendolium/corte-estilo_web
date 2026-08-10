@@ -795,18 +795,37 @@ const Servicios = () => {
       }
     }
 
+    const estilistaAsignado = estilistas.find((e) => String(e.id) === String(finalizacion.estilista));
     const estilistaPreview = servicioEnProcesoSeleccionado?.estilista_nombre
-      || estilistas.find((e) => String(e.id) === String(finalizacion.estilista))?.nombre
+      || estilistaAsignado?.nombre
       || 'Equipo';
     const servicioNombrePreview = servicioPrincipalSeleccionado?.servicio_nombre
       || servicioPrincipalSeleccionado?.nombre
       || 'Servicio';
+
+    // Si el pago es electrónico, ya se sabe qué empleado cobra (cobrado_por
+    // si se marcó "servicio cobrado en conjunto", si no el mismo que
+    // atiende) -- se puede mostrar su QR desde ya, aunque el monto todavía
+    // sea el "por confirmar" de la vista previa.
+    const estilistaCobradorPreview = finalizacion.medio_pago !== 'efectivo' && finalizacion.cobrado_por
+      ? estilistas.find((e) => String(e.id) === String(finalizacion.cobrado_por))
+      : estilistaAsignado;
+    const qrPorMedioPreview = {
+      nequi: estilistaCobradorPreview?.qr_nequi,
+      daviplata: estilistaCobradorPreview?.qr_daviplata,
+      otros: estilistaCobradorPreview?.qr_otros,
+    };
+
     customerDisplayService.publishServicePreview({
       servicioNombre: servicioNombrePreview,
       estilistaNombre: estilistaPreview,
       clienteNombre: servicioEnProcesoSeleccionado?.cliente_nombre || null,
       total: totalFinalizacion,
       medioPago: finalizacion.medio_pago,
+    }, {
+      qrImageUrl: qrPorMedioPreview[finalizacion.medio_pago] || null,
+      datosTransferencia: estilistaCobradorPreview?.datos_transferencia || null,
+      nombreCobrador: finalizacion.cobrado_por ? estilistaCobradorPreview?.nombre : null,
     });
     setPantallaClienteActiva({ tipo: 'preview', cliente: servicioEnProcesoSeleccionado?.cliente_nombre || 'Cliente', total: totalFinalizacion });
 

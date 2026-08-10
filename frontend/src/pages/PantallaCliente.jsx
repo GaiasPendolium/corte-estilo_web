@@ -184,9 +184,12 @@ const PantallaCliente = () => {
               // (detalle de servicios) además del total, en vez de ocultarlo.
               <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)] gap-3">
                 <div className="min-h-0 flex flex-col gap-3">
-                  <div className="shrink-0 rounded-2xl bg-gradient-to-br from-emerald-500/20 to-cyan-500/10 border border-emerald-300/30 p-4">
-                    <p className="text-xs uppercase tracking-widest text-emerald-200 font-bold">Total a pagar</p>
-                    <p className="mt-1 text-4xl md:text-5xl font-black text-emerald-300 tabular-nums">{money(data.total)}</p>
+                  <div className={`shrink-0 rounded-2xl border p-4 ${esPreview ? 'bg-amber-500/15 border-amber-300/40' : 'bg-gradient-to-br from-emerald-500/20 to-cyan-500/10 border-emerald-300/30'}`}>
+                    <p className={`flex items-center gap-1.5 text-xs uppercase tracking-widest font-bold ${esPreview ? 'text-amber-200' : 'text-emerald-200'}`}>
+                      {esPreview && <FiClock className="animate-pulse" />}
+                      {esPreview ? 'Total a pagar (por confirmar)' : 'Total a pagar'}
+                    </p>
+                    <p className={`mt-1 text-4xl md:text-5xl font-black tabular-nums ${esPreview ? 'text-amber-300' : 'text-emerald-300'}`}>{money(data.total)}</p>
                     <p className="mt-2 text-sm text-cyan-100">Por {paymentLabel(data.paymentMethod)}{data.nombreCobrador ? ` · a nombre de ${data.nombreCobrador}` : ''}</p>
                   </div>
                   <div className="flex-1 min-h-0 rounded-2xl bg-slate-950/40 border border-white/15 overflow-hidden flex flex-col">

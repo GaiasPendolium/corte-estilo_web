@@ -64,3 +64,4 @@ Thumbs.db
 # Build
 dist/
 build/
+.vercel
