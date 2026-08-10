@@ -534,6 +534,37 @@ const Servicios = () => {
     });
     setProductoAdicionalBusqueda('');
     setProductoAdicionalSugerencias([]);
+
+    // Mostrar el QR del empleado en la Pantalla Cliente desde que se elige
+    // a quién atiende -- sin esperar a que se registre el servicio ni se
+    // elija medio de pago, para que el cliente ya pueda ir abriendo su app
+    // mientras lo atienden. Se usa el primer QR que el empleado tenga
+    // configurado (nequi > daviplata > otros) como mejor intento; cuando
+    // el cajero llegue a "Revisar y finalizar" con el medio de pago real
+    // ya elegido, ese paso corrige el QR mostrado (o lo oculta si paga en
+    // efectivo).
+    const estilistaSeleccionado = estilistas.find((e) => String(e.id) === String(estilistaId));
+    const medioSugerido = estilistaSeleccionado?.qr_nequi
+      ? 'nequi'
+      : estilistaSeleccionado?.qr_daviplata
+        ? 'daviplata'
+        : estilistaSeleccionado?.qr_otros
+          ? 'otros'
+          : null;
+    if (estilistaSeleccionado && medioSugerido) {
+      customerDisplayService.publishServicePreview({
+        servicioNombre: null,
+        estilistaNombre: estilistaSeleccionado.nombre,
+        clienteNombre: null,
+        total: 0,
+        medioPago: medioSugerido,
+      }, {
+        qrImageUrl: estilistaSeleccionado[`qr_${medioSugerido}`] || null,
+        datosTransferencia: estilistaSeleccionado.datos_transferencia || null,
+        nombreCobrador: null,
+      });
+      setPantallaClienteActiva({ tipo: 'preview', cliente: 'Cliente', total: 0 });
+    }
   };
 
   const prepararFinalizacion = (srv) => {
