@@ -221,23 +221,29 @@ const PantallaCliente = () => {
                   </div>
                 </div>
 
-                <div className="min-h-0 rounded-2xl bg-white text-slate-900 shadow-2xl p-4 md:p-6 flex flex-col items-center">
-                  <div className="shrink-0 flex items-center gap-2 rounded-full bg-amber-100 text-amber-800 px-4 py-1.5 text-sm font-bold animate-pulse">
+                <div className="relative min-h-0 rounded-2xl bg-white text-slate-900 shadow-2xl overflow-hidden">
+                  {data.qrImageUrl && (
+                    // object-cover en vez de object-contain: en pantallas
+                    // físicas panorámicas y cortas (el monitor del cliente
+                    // suele ser así), "contain" dejaba franjas en blanco
+                    // enormes a los lados porque la captura del QR es
+                    // vertical. "cover" llena todo el recuadro recortando
+                    // el sobrante (normalmente el encabezado/pie de la app
+                    // del banco) mientras el QR, centrado en la imagen
+                    // original, se mantiene completo y mucho más grande.
+                    <img
+                      src={data.qrImageUrl}
+                      alt={`QR ${paymentLabel(data.paymentMethod)}`}
+                      className="absolute inset-0 h-full w-full object-cover"
+                    />
+                  )}
+                  <div className="absolute top-3 left-1/2 -translate-x-1/2 shrink-0 flex items-center gap-2 rounded-full bg-amber-100 text-amber-800 px-3 py-1 text-xs md:text-sm font-bold shadow-lg animate-pulse">
                     <FiSmartphone /> Escanea para pagar
                   </div>
-                  <div className="mt-3 flex-1 min-h-0 w-full flex items-center justify-center">
-                    {data.qrImageUrl && (
-                      <img
-                        src={data.qrImageUrl}
-                        alt={`QR ${paymentLabel(data.paymentMethod)}`}
-                        className="h-full max-h-full w-auto max-w-full rounded-2xl object-contain ring-4 ring-slate-200"
-                      />
-                    )}
-                  </div>
                   {data.datosTransferencia && (
-                    <div className="shrink-0 mt-3 w-full rounded-xl bg-slate-100 p-3 text-center">
-                      <p className="text-xs uppercase tracking-wide text-slate-500 font-bold">O transfiere a</p>
-                      <p className="mt-1 whitespace-pre-line text-base md:text-lg font-bold text-slate-800">{data.datosTransferencia}</p>
+                    <div className="absolute bottom-0 left-0 right-0 bg-slate-950/80 backdrop-blur-sm p-3 text-center">
+                      <p className="text-xs uppercase tracking-wide text-slate-300 font-bold">O transfiere a</p>
+                      <p className="mt-1 whitespace-pre-line text-base md:text-lg font-bold text-white">{data.datosTransferencia}</p>
                     </div>
                   )}
                 </div>
