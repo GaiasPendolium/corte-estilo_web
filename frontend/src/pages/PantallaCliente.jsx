@@ -97,6 +97,39 @@ const PantallaCliente = () => {
   const tienePago = Boolean(data?.qrImageUrl || data?.datosTransferencia);
   const esPreview = data?.type === 'servicio_preview';
 
+  // Encabezado (título/subtítulo/factura) y las 3 tarjetas de resumen
+  // (cliente/atendido por/pago) se reutilizan en ambos layouts -- con QR
+  // (mitad izquierda) y sin QR (ancho completo) -- para no duplicar el JSX.
+  const renderEncabezadoResumen = () => (
+    <div className="shrink-0 flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+      <div>
+        <h2 className="text-2xl md:text-3xl font-extrabold">{data.title || 'Resumen de tu visita'}</h2>
+        <p className="text-cyan-100">{data.subtitle || ''}</p>
+      </div>
+      <div className="text-left md:text-right text-cyan-100 text-sm">
+        <p>Factura: #{data.id || '-'}</p>
+        <p>{formatDateTime(data.createdAt)}</p>
+      </div>
+    </div>
+  );
+
+  const renderTarjetasResumen = () => (
+    <div className="shrink-0 grid grid-cols-3 gap-2">
+      <div className="rounded-xl bg-slate-950/40 border border-white/20 px-3 py-2">
+        <div className="flex items-center gap-1.5 text-cyan-200 text-xs"><FiUser /> Cliente</div>
+        <p className="text-lg font-bold mt-0.5 truncate">{data.customerName || 'Cliente'}</p>
+      </div>
+      <div className="rounded-xl bg-slate-950/40 border border-white/20 px-3 py-2">
+        <div className="flex items-center gap-1.5 text-cyan-200 text-xs"><FiUser /> Atendido por</div>
+        <p className="text-lg font-bold mt-0.5 truncate">{data.employeeName || 'Equipo'}</p>
+      </div>
+      <div className="rounded-xl bg-slate-950/40 border border-white/20 px-3 py-2">
+        <div className="flex items-center gap-1.5 text-cyan-200 text-xs"><FiCreditCard /> Pago</div>
+        <p className="text-lg font-bold mt-0.5">{paymentLabel(data.paymentMethod)}</p>
+      </div>
+    </div>
+  );
+
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-[radial-gradient(circle_at_15%_20%,rgba(14,165,233,0.28),transparent_32%),radial-gradient(circle_at_85%_15%,rgba(16,185,129,0.22),transparent_36%),radial-gradient(circle_at_50%_100%,rgba(168,85,247,0.18),transparent_40%),linear-gradient(140deg,#020617_0%,#0f172a_50%,#111827_100%)] text-white p-4 md:p-6 flex flex-col gap-4">
       <div className="pointer-events-none absolute -right-16 -top-16 h-64 w-64 rounded-full bg-cyan-400/10 blur-3xl animate-pulse" />
@@ -152,38 +185,15 @@ const PantallaCliente = () => {
 
         {data && (
           <div className="flex-1 min-h-0 flex flex-col gap-3">
-            <div className="shrink-0 flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
-              <div>
-                <h2 className="text-2xl md:text-3xl font-extrabold">{data.title || 'Resumen de tu visita'}</h2>
-                <p className="text-cyan-100">{data.subtitle || ''}</p>
-              </div>
-              <div className="text-left md:text-right text-cyan-100 text-sm">
-                <p>Factura: #{data.id || '-'}</p>
-                <p>{formatDateTime(data.createdAt)}</p>
-              </div>
-            </div>
-
-            <div className="shrink-0 grid grid-cols-3 gap-2">
-              <div className="rounded-xl bg-slate-950/40 border border-white/20 px-3 py-2">
-                <div className="flex items-center gap-1.5 text-cyan-200 text-xs"><FiUser /> Cliente</div>
-                <p className="text-lg font-bold mt-0.5 truncate">{data.customerName || 'Cliente'}</p>
-              </div>
-              <div className="rounded-xl bg-slate-950/40 border border-white/20 px-3 py-2">
-                <div className="flex items-center gap-1.5 text-cyan-200 text-xs"><FiUser /> Atendido por</div>
-                <p className="text-lg font-bold mt-0.5 truncate">{data.employeeName || 'Equipo'}</p>
-              </div>
-              <div className="rounded-xl bg-slate-950/40 border border-white/20 px-3 py-2">
-                <div className="flex items-center gap-1.5 text-cyan-200 text-xs"><FiCreditCard /> Pago</div>
-                <p className="text-lg font-bold mt-0.5">{paymentLabel(data.paymentMethod)}</p>
-              </div>
-            </div>
-
             {tienePago ? (
-              // Cuando hay que pagar electrónico, el QR sigue siendo lo más
-              // grande en pantalla, pero ahora se ve QUÉ se está cobrando
-              // (detalle de servicios) además del total, en vez de ocultarlo.
-              <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)] gap-3">
+              // Con QR: la pantalla se divide en mitades -- toda la
+              // información a la izquierda, el QR ocupando el alto completo
+              // a la derecha, lo más grande posible (la pantalla física del
+              // cliente suele ser pequeña, así que cada centímetro cuenta).
+              <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="min-h-0 flex flex-col gap-3">
+                  {renderEncabezadoResumen()}
+                  {renderTarjetasResumen()}
                   <div className={`shrink-0 rounded-2xl border p-4 ${esPreview ? 'bg-amber-500/15 border-amber-300/40' : 'bg-gradient-to-br from-emerald-500/20 to-cyan-500/10 border-emerald-300/30'}`}>
                     <p className={`flex items-center gap-1.5 text-xs uppercase tracking-widest font-bold ${esPreview ? 'text-amber-200' : 'text-emerald-200'}`}>
                       {esPreview && <FiClock className="animate-pulse" />}
@@ -234,6 +244,8 @@ const PantallaCliente = () => {
               </div>
             ) : (
               <>
+                {renderEncabezadoResumen()}
+                {renderTarjetasResumen()}
                 <div className="flex-1 min-h-0 rounded-xl overflow-hidden border border-white/20 overflow-y-auto">
                   <table className="w-full text-base">
                     <thead className="bg-cyan-900/60 text-cyan-100 sticky top-0">
