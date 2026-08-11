@@ -223,18 +223,17 @@ const PantallaCliente = () => {
 
                 <div className="relative min-h-0 rounded-2xl bg-white text-slate-900 shadow-2xl overflow-hidden">
                   {data.qrImageUrl && (
-                    // object-cover en vez de object-contain: en pantallas
-                    // físicas panorámicas y cortas (el monitor del cliente
-                    // suele ser así), "contain" dejaba franjas en blanco
-                    // enormes a los lados porque la captura del QR es
-                    // vertical. "cover" llena todo el recuadro recortando
-                    // el sobrante (normalmente el encabezado/pie de la app
-                    // del banco) mientras el QR, centrado en la imagen
-                    // original, se mantiene completo y mucho más grande.
+                    // object-contain (nunca object-cover): la posicion del
+                    // QR dentro de la captura varia segun el banco/empleado
+                    // -- recortar (cover) puede cortar el propio codigo QR
+                    // si no queda perfectamente centrado en esa imagen
+                    // puntual, dejandolo ilegible. Con contain se ve
+                    // completo siempre, sin importar la imagen que suba
+                    // cada empleado; ocupa el maximo posible sin recortar.
                     <img
                       src={data.qrImageUrl}
                       alt={`QR ${paymentLabel(data.paymentMethod)}`}
-                      className="absolute inset-0 h-full w-full object-cover"
+                      className="absolute inset-0 h-full w-full object-contain"
                     />
                   )}
                   <div className="absolute top-3 left-1/2 -translate-x-1/2 shrink-0 flex items-center gap-2 rounded-full bg-amber-100 text-amber-800 px-3 py-1 text-xs md:text-sm font-bold shadow-lg animate-pulse">
