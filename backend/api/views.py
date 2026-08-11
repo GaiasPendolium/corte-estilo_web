@@ -285,32 +285,81 @@ def _monto_establecimiento_resuelto(srv):
     return Decimal(0)
 
 
-def _crear_deuda_entre_empleados_si_aplica(servicio_realizado):
+def _aplicar_abonos_vale_interno(
+    *,
+    estilista,
+    monto_decimal,
+    usuario,
+    notas,
+    origen_liquidacion_fecha=None,
+):
     """
-    Si un servicio se finaliza con `cobrado_por` distinto del `estilista` que
-    lo realizó (el cliente pagó una sola vez con el QR de un compañero, en
-    una visita con varios servicios de varios empleados), registra
-    automáticamente la deuda del que cobró hacia el que realizó el servicio,
-    por la parte que a este último le corresponde. Completamente aislado del
-    motor de liquidación con el negocio.
+    Aplica el descuento de Vale (deuda entre empleados) a las deudas
+    pendientes del empleado como deudor, en orden de antigüedad (FIFO) --
+    mismo patrón que `_aplicar_abonos_consumo_interno`, pero contra
+    `DeudaEntreEmpleados` en vez de `DeudaConsumoEmpleado`. Cada aplicación
+    crea un `AbonoDeudaEntreEmpleados` (así queda saldada la deuda con el
+    compañero) y decrementa el saldo consolidado `SaldoDeudaPuesto.saldo_vale`.
     """
-    cobrado_por_id = servicio_realizado.cobrado_por_id
-    if not cobrado_por_id or cobrado_por_id == servicio_realizado.estilista_id:
-        return
-
-    monto = _monto_estilista_resuelto(servicio_realizado)
-    if monto <= 0:
-        return
-
-    DeudaEntreEmpleados.objects.create(
-        deudor_id=cobrado_por_id,
-        acreedor_id=servicio_realizado.estilista_id,
-        servicio_realizado=servicio_realizado,
-        monto=monto,
-        monto_abonado=Decimal(0),
-        saldo_pendiente=monto,
-        estado='pendiente',
+    deudas_pendientes = list(
+        DeudaEntreEmpleados.objects.filter(
+            deudor=estilista,
+            estado='pendiente',
+        ).order_by('fecha_creacion', 'id')
     )
+
+    if not deudas_pendientes:
+        return [], Decimal(monto_decimal or 0)
+
+    restante = Decimal(monto_decimal or 0)
+    aplicaciones = []
+    for deuda in deudas_pendientes:
+        if restante <= 0:
+            break
+
+        saldo = Decimal(deuda.saldo_pendiente or 0)
+        aplicado = saldo if restante >= saldo else restante
+        if aplicado <= 0:
+            continue
+
+        create_data = {
+            'deuda': deuda,
+            'monto': aplicado,
+            'usuario': usuario,
+            'notas': notas,
+        }
+        if origen_liquidacion_fecha is not None:
+            create_data['origen_liquidacion_fecha'] = origen_liquidacion_fecha
+
+        AbonoDeudaEntreEmpleados.objects.create(**create_data)
+
+        deuda.monto_abonado = Decimal(deuda.monto_abonado or 0) + aplicado
+        deuda.saldo_pendiente = max(Decimal(deuda.monto or 0) - deuda.monto_abonado, Decimal(0))
+        deuda.estado = 'pagado' if deuda.saldo_pendiente <= 0 else 'pendiente'
+        deuda.save(update_fields=['monto_abonado', 'saldo_pendiente', 'estado'])
+
+        aplicaciones.append(
+            {
+                'deuda_id': deuda.id,
+                'acreedor_nombre': deuda.acreedor.nombre,
+                'monto_aplicado': float(aplicado),
+                'saldo_restante': float(deuda.saldo_pendiente),
+                'estado': deuda.estado,
+            }
+        )
+
+        restante -= aplicado
+
+    total_aplicado = Decimal(monto_decimal or 0) - restante
+    if total_aplicado > 0:
+        try:
+            saldo_obj, _ = SaldoDeudaPuesto.objects.get_or_create(estilista=estilista)
+            saldo_obj.saldo_vale = max(Decimal(saldo_obj.saldo_vale or 0) - total_aplicado, Decimal(0))
+            saldo_obj.save()
+        except Exception:
+            pass
+
+    return aplicaciones, restante
 
 
 def _descuento_puesto_dia(estilista, base_servicio_dia):
@@ -1062,6 +1111,7 @@ def _upsert_fact_liquidacion_dia(
     origen='liquidar_dia_v2',
     saltar_descuento_consumo=False,
     descuento_consumo_dia=0,
+    descuento_vale_dia=0,
     total_deducciones_dia=0,
     monto_transferir_empleado=0,
     monto_transferir_recibido=0,
@@ -1114,6 +1164,7 @@ def _upsert_fact_liquidacion_dia(
             fact.pendiente_pago_empleado = Decimal(pendiente_pago or 0)
             fact.cobro_consumo_dia = _cobro_consumo_dia_estilista(estilista.id, fecha)
             fact.saltar_descuento_consumo = bool(saltar_descuento_consumo)
+            fact.descuento_vale_dia = Decimal(descuento_vale_dia or 0)
             fact.estado_liquidacion = estado_liquidacion
             fact.forzar_reemplazo_dia = bool(forzar_reemplazo_dia)
             fact.usuario_liquida = usuario if getattr(usuario, 'is_authenticated', False) else None
@@ -1408,12 +1459,7 @@ class ServicioRealizadoViewSet(viewsets.ModelViewSet):
         return super().destroy(request, *args, **kwargs)
 
     def perform_create(self, serializer):
-        instance = serializer.save(usuario=self.request.user)
-        # Facturación directa (crea el servicio ya 'finalizado' en un solo
-        # paso, sin pasar por la acción finalizar): también debe generar la
-        # deuda entre empleados si se marcó "cobrado_por" otro compañero.
-        if instance.estado == 'finalizado':
-            _crear_deuda_entre_empleados_si_aplica(instance)
+        serializer.save(usuario=self.request.user)
 
     def perform_destroy(self, instance):
         """Al eliminar un servicio, revierte inventario pendiente de su adicional de producto."""
@@ -1534,7 +1580,6 @@ class ServicioRealizadoViewSet(viewsets.ModelViewSet):
             'adicional_otro_precio_unitario': request.data.get('adicional_otro_precio_unitario'),
             'tipo_reparto_establecimiento': request.data.get('tipo_reparto_establecimiento'),
             'valor_reparto_establecimiento': request.data.get('valor_reparto_establecimiento'),
-            'cobrado_por': request.data.get('cobrado_por'),
             'notas': request.data.get('notas', servicio_realizado.notas),
             'usuario': request.user.id,
             'fecha_fin': timezone.now(),
@@ -1543,8 +1588,6 @@ class ServicioRealizadoViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(servicio_realizado, data=payload, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
-
-        _crear_deuda_entre_empleados_si_aplica(servicio_realizado)
 
         return Response(serializer.data)
 
@@ -4189,6 +4232,16 @@ def _calcular_preview_liquidacion_v3(estilista, fecha, data):
     else:
         monto_a_aplicar_consumo = min(max(consumo_monto_solicitado, Decimal(0)), saldo_consumo_antes)
 
+    # Vale (deuda entre empleados): a diferencia de puesto/consumo no hay un
+    # monto parcial a elegir -- si no se salta, se intenta descontar TODO lo
+    # pendiente de una vez (mismo criterio que ya usa el motor para las
+    # demás deducciones: se aplican a valor pleno, el faltante se convierte
+    # en transferencia). `saldo_obj_consumo` ya sirvió para get_or_create
+    # el registro de SaldoDeudaPuesto; se reutiliza el mismo objeto.
+    skip_descuento_vale = _to_bool_flag(data.get('skip_descuento_vale'), default=False)
+    saldo_vale_antes = Decimal(saldo_obj_consumo.saldo_vale or 0)
+    monto_a_aplicar_vale = Decimal(0) if skip_descuento_vale else saldo_vale_antes
+
     deuda_anterior_puesto = Decimal(0)
     ultimo_estado = EstadoPagoEstilistaDia.objects.filter(estilista=estilista, fecha__lt=fecha).order_by('-fecha').first()
     if ultimo_estado:
@@ -4207,7 +4260,10 @@ def _calcular_preview_liquidacion_v3(estilista, fecha, data):
     abono_puesto_extra_aplicado = min(max(abono_puesto_extra, Decimal(0)), deuda_total_puesto)
 
     disponible = ganancia_efectivo + comision_producto_dia
-    total_deducciones_dia = descuento_puesto_aplicado_hoy + monto_a_aplicar_consumo + reparto_pendiente + abono_puesto_extra_aplicado
+    total_deducciones_dia = (
+        descuento_puesto_aplicado_hoy + monto_a_aplicar_consumo + monto_a_aplicar_vale
+        + reparto_pendiente + abono_puesto_extra_aplicado
+    )
     saldo_neto = disponible - total_deducciones_dia
 
     if saldo_neto < 0:
@@ -4264,6 +4320,10 @@ def _calcular_preview_liquidacion_v3(estilista, fecha, data):
         'saldo_consumo_antes': saldo_consumo_antes,
         'monto_a_aplicar_consumo': monto_a_aplicar_consumo,
         'saldo_consumo_estimado_cierre': saldo_consumo_estimado_cierre,
+        'skip_descuento_vale': skip_descuento_vale,
+        'saldo_vale_antes': saldo_vale_antes,
+        'monto_a_aplicar_vale': monto_a_aplicar_vale,
+        'saldo_vale_estimado_cierre': max(saldo_vale_antes - monto_a_aplicar_vale, Decimal(0)),
         'disponible': disponible,
         'total_deducciones_dia': total_deducciones_dia,
         'monto_transferir_empleado': monto_transferir_empleado,
@@ -4338,6 +4398,9 @@ def _liquidar_dia_v3_core(request):
     saldo_obj_consumo = prev['saldo_obj_consumo']
     saldo_consumo_antes = prev['saldo_consumo_antes']
     monto_a_aplicar_consumo = prev['monto_a_aplicar_consumo']
+    skip_descuento_vale = prev['skip_descuento_vale']
+    saldo_vale_antes = prev['saldo_vale_antes']
+    monto_a_aplicar_vale = prev['monto_a_aplicar_vale']
     monto_transferir_empleado = prev['monto_transferir_empleado']
     monto_transferir_recibido = prev['monto_transferir_recibido']
     monto_pagar_establecimiento = prev['monto_pagar_establecimiento']
@@ -4369,15 +4432,32 @@ def _liquidar_dia_v3_core(request):
         except Exception as e:
             return Response({'error': f'No se pudo aplicar el abono de consumo: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
 
+    # ---- aplicar el descuento real de Vale (motor FIFO análogo al de consumo) ----
+    aplicaciones_vale = []
+    sobrante_vale = Decimal(0)
+    if monto_a_aplicar_vale > 0:
+        try:
+            with transaction.atomic():
+                aplicaciones_vale, sobrante_vale = _aplicar_abonos_vale_interno(
+                    estilista=estilista,
+                    monto_decimal=monto_a_aplicar_vale,
+                    usuario=request.user,
+                    notas=notas or f'Liquidación (solo efectivo) {fecha}',
+                    origen_liquidacion_fecha=fecha,
+                )
+        except Exception as e:
+            return Response({'error': f'No se pudo aplicar el descuento de Vale: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
+
     saldo_obj_consumo.refresh_from_db()
     saldo_consumo_cierre = Decimal(saldo_obj_consumo.saldo_consumo or 0)
+    saldo_vale_cierre = Decimal(saldo_obj_consumo.saldo_vale or 0)
 
     pendiente_transferencia_empleado = max(monto_transferir_empleado - monto_transferir_recibido, Decimal(0))
     pendiente_pago_empleado_efectivo = max(monto_pagar_establecimiento - monto_pagar_entregado, Decimal(0))
 
     if pendiente_transferencia_empleado > 0 or pendiente_pago_empleado_efectivo > 0:
         estado_resultante = 'pendiente'
-    elif saldo_puesto_cierre > 0 or saldo_consumo_cierre > 0:
+    elif saldo_puesto_cierre > 0 or saldo_consumo_cierre > 0 or saldo_vale_cierre > 0:
         estado_resultante = 'debe'
     else:
         estado_resultante = 'cancelado'
@@ -4402,6 +4482,8 @@ def _liquidar_dia_v3_core(request):
     estado_diaria.pendiente_puesto = saldo_puesto_cierre
     estado_diaria.skip_descuento_puesto = skip_descuento_puesto
     estado_diaria.saltar_descuento_consumo = saltar_descuento_consumo
+    estado_diaria.skip_descuento_vale = skip_descuento_vale
+    estado_diaria.descuento_vale_dia = monto_a_aplicar_vale
     estado_diaria.ganancia_efectivo_dia = ganancia_efectivo
     estado_diaria.ganancia_electronica_dia = ganancia_electronica
     estado_diaria.ganancia_electronica_nequi = calc['ganancia_electronica_nequi']
@@ -4432,7 +4514,7 @@ def _liquidar_dia_v3_core(request):
 
     hubo_movimiento = (
         monto_transferir_recibido > 0 or monto_pagar_entregado > 0
-        or abono_puesto_extra > 0 or monto_a_aplicar_consumo > 0
+        or abono_puesto_extra > 0 or monto_a_aplicar_consumo > 0 or monto_a_aplicar_vale > 0
     )
     if hubo_movimiento:
         try:
@@ -4448,6 +4530,7 @@ def _liquidar_dia_v3_core(request):
                 medio_abono_puesto='efectivo',
                 pendiente_puesto=saldo_puesto_cierre,
                 descuento_consumo_dia=monto_a_aplicar_consumo,
+                descuento_vale_dia=monto_a_aplicar_vale,
                 monto_transferir_empleado=monto_transferir_empleado,
                 monto_pagar_establecimiento=monto_pagar_establecimiento,
                 motor_calculo='v3_efectivo',
@@ -4476,6 +4559,7 @@ def _liquidar_dia_v3_core(request):
         origen='engine_v3_efectivo',
         saltar_descuento_consumo=saltar_descuento_consumo,
         descuento_consumo_dia=monto_a_aplicar_consumo,
+        descuento_vale_dia=monto_a_aplicar_vale,
         total_deducciones_dia=total_deducciones_dia,
         monto_transferir_empleado=monto_transferir_empleado,
         monto_transferir_recibido=monto_transferir_recibido,
@@ -4538,6 +4622,12 @@ def _liquidar_dia_v3_core(request):
                 'saldo_antes': float(saldo_consumo_antes),
                 'saldo_despues': float(saldo_consumo_cierre),
             },
+            'vale': {
+                'aplicado_hoy': float(monto_a_aplicar_vale),
+                'diferido': bool(skip_descuento_vale),
+                'saldo_antes': float(saldo_vale_antes),
+                'saldo_despues': float(saldo_vale_cierre),
+            },
             'total': float(total_deducciones_dia),
         },
         'liquidacion_efectivo': {
@@ -4555,6 +4645,13 @@ def _liquidar_dia_v3_core(request):
             'sobrante': float(sobrante_consumo),
             'cierre': float(saldo_consumo_cierre),
             'aplicaciones': aplicaciones_consumo,
+        },
+        'deuda_vale': {
+            'anterior': float(saldo_vale_antes),
+            'abono_aplicado': float(monto_a_aplicar_vale),
+            'sobrante': float(sobrante_vale),
+            'cierre': float(saldo_vale_cierre),
+            'aplicaciones': aplicaciones_vale,
         },
         'estado': estado_resultante,
         'tabla_diaria_no_disponible': False,
@@ -5204,12 +5301,15 @@ def liquidacion_recibo_imprimible(request):
                 'saltar_descuento_puesto': bool(estado_dia.skip_descuento_puesto),
                 'descuento_consumo_dia': float(estado_dia.descuento_consumo_dia or 0),
                 'saltar_descuento_consumo': bool(estado_dia.saltar_descuento_consumo),
+                'descuento_vale_dia': float(estado_dia.descuento_vale_dia or 0),
+                'saltar_descuento_vale': bool(estado_dia.skip_descuento_vale),
                 'total_deducciones_dia': float(estado_dia.total_deducciones_dia or 0),
                 'monto_transferir_empleado': float(estado_dia.monto_transferir_empleado or 0),
                 'monto_pagar_establecimiento': float(estado_dia.monto_pagar_establecimiento or 0),
                 'deuda_anterior_puesto': float(getattr(estado_dia, 'saldo_puesto_pendiente', 0) or 0),
                 'saldo_puesto_pendiente': float(estado_dia.saldo_puesto_pendiente or 0),
                 'saldo_consumo_pendiente': float(SaldoDeudaPuesto.objects.filter(estilista=estilista).values_list('saldo_consumo', flat=True).first() or 0),
+                'saldo_vale_pendiente': float(SaldoDeudaPuesto.objects.filter(estilista=estilista).values_list('saldo_vale', flat=True).first() or 0),
                 'estado': estado_dia.estado,
             }
         else:
@@ -5229,6 +5329,8 @@ def liquidacion_recibo_imprimible(request):
                 'saltar_descuento_puesto': bool(prev['skip_descuento_puesto']),
                 'descuento_consumo_dia': float(prev['monto_a_aplicar_consumo']),
                 'saltar_descuento_consumo': bool(prev['saltar_descuento_consumo']),
+                'descuento_vale_dia': float(prev['monto_a_aplicar_vale']),
+                'saltar_descuento_vale': bool(prev['skip_descuento_vale']),
                 'total_deducciones_dia': float(prev['total_deducciones_dia']),
                 'monto_transferir_empleado': float(prev['monto_transferir_empleado']),
                 'monto_pagar_establecimiento': float(prev['monto_pagar_establecimiento']),
@@ -5236,6 +5338,8 @@ def liquidacion_recibo_imprimible(request):
                 'saldo_puesto_pendiente': float(prev['saldo_puesto_cierre']),
                 'saldo_consumo_pendiente': float(prev['saldo_consumo_antes']),
                 'saldo_consumo_pendiente_despues': float(prev['saldo_consumo_estimado_cierre']),
+                'saldo_vale_pendiente': float(prev['saldo_vale_antes']),
+                'saldo_vale_pendiente_despues': float(prev['saldo_vale_estimado_cierre']),
                 'puesto_modo': prev['puesto_modo'],
                 'puesto_porcentaje': float(prev['puesto_porcentaje']),
                 'estado': 'preview',
@@ -5340,6 +5444,30 @@ def eliminar_liquidacion_dia_v3(request, estilista_id, fecha):
                 saldo_obj_consumo.saldo_consumo = Decimal(saldo_obj_consumo.saldo_consumo or 0) + total_revertido_consumo
                 saldo_obj_consumo.save()
 
+            # ---- revertir abonos de Vale que esta liquidación aplicó ----
+            abonos_vale_a_revertir = AbonoDeudaEntreEmpleados.objects.select_related('deuda').filter(
+                deuda__deudor=estilista,
+                origen_liquidacion_fecha=fecha_dt,
+            )
+            total_revertido_vale = Decimal(0)
+            deudas_vale_tocadas = {}
+            for abono in abonos_vale_a_revertir:
+                deuda = deudas_vale_tocadas.get(abono.deuda_id) or abono.deuda
+                deuda.monto_abonado = max(Decimal(deuda.monto_abonado or 0) - Decimal(abono.monto or 0), Decimal(0))
+                deuda.saldo_pendiente = max(Decimal(deuda.monto or 0) - deuda.monto_abonado, Decimal(0))
+                deuda.estado = 'pagado' if deuda.saldo_pendiente <= 0 else 'pendiente'
+                deudas_vale_tocadas[abono.deuda_id] = deuda
+                total_revertido_vale += Decimal(abono.monto or 0)
+            for deuda in deudas_vale_tocadas.values():
+                deuda.save(update_fields=['monto_abonado', 'saldo_pendiente', 'estado'])
+            cantidad_abonos_vale_revertidos = abonos_vale_a_revertir.count()
+            abonos_vale_a_revertir.delete()
+
+            if total_revertido_vale > 0:
+                saldo_obj_vale, _ = SaldoDeudaPuesto.objects.get_or_create(estilista=estilista)
+                saldo_obj_vale.saldo_vale = Decimal(saldo_obj_vale.saldo_vale or 0) + total_revertido_vale
+                saldo_obj_vale.save()
+
             # ---- borrar el registro diario, su historial y el fact de reportes ----
             EstadoPagoEstilistaHistorial.objects.filter(estilista=estilista, fecha=fecha_dt).delete()
             FactLiquidacionEstilistaDia.objects.filter(estilista=estilista, fecha=fecha_dt).delete()
@@ -5359,6 +5487,8 @@ def eliminar_liquidacion_dia_v3(request, estilista_id, fecha):
         'fecha': fecha_dt.strftime('%Y-%m-%d'),
         'abonos_consumo_revertidos': cantidad_abonos_revertidos,
         'monto_consumo_revertido': float(total_revertido_consumo),
+        'abonos_vale_revertidos': cantidad_abonos_vale_revertidos,
+        'monto_vale_revertido': float(total_revertido_vale),
         'mensaje': 'Liquidación eliminada. El día queda disponible para volver a liquidarse.',
     })
 
@@ -8610,15 +8740,17 @@ class AbonoCreditoViewSet(viewsets.ModelViewSet):
 
 
 # ============================================================================
-# VIEWSETS: CUENTA ENTRE EMPLEADOS (servicios cobrados en conjunto)
+# VIEWSETS: VALE (deuda entre empleados por servicios cobrados en conjunto)
 # ============================================================================
 
 class DeudaEntreEmpleadosViewSet(viewsets.ReadOnlyModelViewSet):
     """
-    Deudas entre empleados generadas automáticamente al finalizar un servicio
-    con `cobrado_por` distinto del empleado que lo realizó. Solo lectura --
-    se crean automáticamente (ver _crear_deuda_entre_empleados_si_aplica) y
-    se saldan registrando un abono (AbonoDeudaEntreEmpleadosViewSet).
+    Vales: deuda de un empleado hacia un compañero cuando cobró
+    electrónicamente el total de una visita con varios servicios de varios
+    empleados. Se registran manualmente (ver `registrar_deuda_vale`) y se
+    descuentan automáticamente en la liquidación del deudor (ver
+    `_aplicar_abonos_vale_interno`), o se pueden saldar a mano registrando
+    un abono (AbonoDeudaEntreEmpleadosViewSet).
     """
 
     queryset = DeudaEntreEmpleados.objects.select_related(
@@ -8660,3 +8792,83 @@ class AbonoDeudaEntreEmpleadosViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(usuario=self.request.user)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def registrar_deuda_vale(request):
+    """
+    Registra manualmente un Vale: un empleado (deudor) cobró
+    electrónicamente el total de una visita con varios servicios de varios
+    empleados (cada uno facturado por separado, uno en medio electrónico y
+    los demás en efectivo aunque no haya entrado efectivo físico), y le
+    queda debiendo a un compañero (acreedor) la parte que le corresponde.
+    Se descuenta automáticamente en la próxima liquidación del deudor (con
+    opción de saltar el día, igual que el cobro de puesto).
+
+    POST /api/reportes/estilistas/registrar-deuda-vale/
+    Body: { deudor_id, acreedor_id, monto, fecha (opcional), notas (opcional) }
+    """
+    _requerir_permiso_ui(request.user, 'reportes', 'edit', 'entre_empleados', 'No tienes permiso para registrar un Vale.')
+
+    try:
+        deudor = Estilista.objects.get(id=int(request.data.get('deudor_id') or 0), activo=True)
+    except Exception:
+        return Response({'error': 'Empleado deudor no encontrado.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        acreedor = Estilista.objects.get(id=int(request.data.get('acreedor_id') or 0), activo=True)
+    except Exception:
+        return Response({'error': 'Empleado acreedor no encontrado.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if deudor.id == acreedor.id:
+        return Response({'error': 'El deudor y el acreedor no pueden ser el mismo empleado.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        monto = Decimal(str(request.data.get('monto') or 0))
+    except Exception:
+        return Response({'error': 'Monto inválido.'}, status=status.HTTP_400_BAD_REQUEST)
+    if monto <= 0:
+        return Response({'error': 'El monto debe ser mayor a cero.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    notas = (request.data.get('notas') or '').strip()[:255]
+
+    fecha_raw = (request.data.get('fecha') or '').strip()
+    fecha = timezone.localdate()
+    if fecha_raw:
+        try:
+            fecha = datetime.strptime(fecha_raw, '%Y-%m-%d').date()
+        except Exception:
+            return Response({'error': 'Fecha inválida. Usa YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        with transaction.atomic():
+            deuda = DeudaEntreEmpleados.objects.create(
+                deudor=deudor,
+                acreedor=acreedor,
+                servicio_realizado=None,
+                monto=monto,
+                monto_abonado=Decimal(0),
+                saldo_pendiente=monto,
+                estado='pendiente',
+                fecha=fecha,
+                notas=notas,
+            )
+            saldo_obj, _ = SaldoDeudaPuesto.objects.get_or_create(estilista=deudor)
+            saldo_obj.saldo_vale = max(Decimal(saldo_obj.saldo_vale or 0) + monto, Decimal(0))
+            saldo_obj.save()
+    except Exception as e:
+        logger.exception('Error registrando Vale')
+        return Response({'error': f'No se pudo registrar el Vale: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    return Response(
+        {
+            'ok': True,
+            'deuda_id': deuda.id,
+            'deudor_nombre': deudor.nombre,
+            'acreedor_nombre': acreedor.nombre,
+            'monto': float(monto),
+            'fecha': fecha.strftime('%Y-%m-%d'),
+        },
+        status=status.HTTP_201_CREATED,
+    )

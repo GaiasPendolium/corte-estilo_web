@@ -690,6 +690,11 @@ class EstadoPagoEstilistaDia(models.Model):
         verbose_name='Omitir descuento de consumo',
         help_text='Análogo a skip_descuento_puesto pero para la deuda de consumo de productos del empleado.'
     )
+    skip_descuento_vale = models.BooleanField(
+        default=False,
+        verbose_name='Omitir descuento de Vale',
+        help_text='Análogo a skip_descuento_puesto pero para el Vale (deuda entre empleados). Si es True, ese día no se descuenta y el Vale queda pendiente para otro día.'
+    )
 
     # RÉGIMEN "SOLO EFECTIVO" (desde la fecha de corte LIQUIDACION_CASH_ONLY_DESDE):
     # el negocio ya no recibe Nequi/Daviplata en su cuenta -- ese dinero lo recibe
@@ -720,9 +725,13 @@ class EstadoPagoEstilistaDia(models.Model):
         max_digits=12, decimal_places=2, default=0,
         verbose_name='Deuda de consumo aplicada/cobrada ese día'
     )
+    descuento_vale_dia = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0,
+        verbose_name='Vale (deuda entre empleados) aplicado/cobrado ese día'
+    )
     total_deducciones_dia = models.DecimalField(
         max_digits=12, decimal_places=2, default=0,
-        verbose_name='Total deducciones del día (puesto + consumo + reparto electrónico pendiente)'
+        verbose_name='Total deducciones del día (puesto + consumo + vale + reparto electrónico pendiente)'
     )
     monto_transferir_empleado = models.DecimalField(
         max_digits=12, decimal_places=2, default=0,
@@ -822,6 +831,7 @@ class EstadoPagoEstilistaHistorial(models.Model):
 
     # Régimen "solo efectivo" -- ver EstadoPagoEstilistaDia para el detalle de estos campos.
     descuento_consumo_dia = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Descuento consumo del día')
+    descuento_vale_dia = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Vale (deuda entre empleados) aplicado del día')
     monto_transferir_empleado = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Monto a transferir por el empleado')
     monto_pagar_establecimiento = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='Monto a pagar por el establecimiento')
     motor_calculo = models.CharField(max_length=20, default='v2_mixed', verbose_name='Motor de cálculo usado')
@@ -887,6 +897,7 @@ class FactLiquidacionEstilistaDia(models.Model):
 
     cobro_consumo_dia = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     saltar_descuento_consumo = models.BooleanField(default=False)
+    descuento_vale_dia = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     estado_liquidacion = models.CharField(max_length=20, choices=ESTADOS, default='pendiente')
     forzar_reemplazo_dia = models.BooleanField(default=False)
 
@@ -966,6 +977,13 @@ class SaldoDeudaPuesto(models.Model):
         default=0,
         verbose_name='Saldo acumulado consumo empleado (facturas)',
     )
+    saldo_vale = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        verbose_name='Saldo acumulado de Vale (debe a compañeros)',
+        help_text='Suma de los Vales pendientes donde este empleado es el deudor (cobró de más).',
+    )
     actualizado_en = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -973,7 +991,7 @@ class SaldoDeudaPuesto(models.Model):
         verbose_name_plural = 'Saldos deuda de puesto'
 
     def __str__(self):
-        return f"{self.estilista.nombre}: puesto=${self.saldo} consumo=${self.saldo_consumo}"
+        return f"{self.estilista.nombre}: puesto=${self.saldo} consumo=${self.saldo_consumo} vale=${self.saldo_vale}"
 
 
 class PersonaCredito(models.Model):
@@ -1300,13 +1318,19 @@ class CreditoHistorial(models.Model):
 
 class DeudaEntreEmpleados(models.Model):
     """
-    Deuda entre empleados: cuando un cliente recibe servicios de varios
-    empleados en una sola visita pero paga una sola vez (electrónico) con el
-    QR de uno solo de ellos, ese empleado le queda debiendo a sus
-    compañeros la parte que a cada uno le corresponde. Completamente
-    independiente del motor de liquidación con el negocio (ver
-    calcular_liquidacion_dia_estilista) -- se salda directamente entre
-    empleados, en efectivo, fuera de caja.
+    "Vale": cuando un cliente recibe servicios de varios empleados en una
+    sola visita pero paga una sola vez -- electrónico, con el QR de uno
+    solo de ellos, y a cada uno se le factura por separado su propio
+    servicio (uno electrónico, los demás en efectivo aunque no haya
+    entrado efectivo físico) -- el que cobró de más le queda debiendo a
+    sus compañeros la parte que a cada uno le corresponde. Se registra
+    manualmente aquí (no automático) y se descuenta en la liquidación del
+    deudor como una deducción más (ver _aplicar_abonos_vale_interno),
+    igual que la deuda de puesto o de consumo -- el establecimiento
+    recupera esa plata del deudor y le paga a cada compañero lo suyo
+    normalmente en su propia liquidación (su servicio ya quedó marcado en
+    efectivo). `servicio_realizado` es opcional porque un Vale puede
+    originarse de varios servicios de una misma visita, no de uno solo.
     """
 
     ESTADOS = [
@@ -1318,7 +1342,7 @@ class DeudaEntreEmpleados(models.Model):
         Estilista,
         on_delete=models.CASCADE,
         related_name='deudas_entre_empleados_debe',
-        verbose_name='Empleado que cobró (debe)',
+        verbose_name='Empleado que cobró de más (debe)',
     )
     acreedor = models.ForeignKey(
         Estilista,
@@ -1331,17 +1355,21 @@ class DeudaEntreEmpleados(models.Model):
         on_delete=models.CASCADE,
         related_name='deudas_entre_empleados',
         verbose_name='Servicio de origen',
+        null=True,
+        blank=True,
     )
     monto = models.DecimalField(max_digits=10, decimal_places=2, verbose_name='Monto')
     monto_abonado = models.DecimalField(max_digits=10, decimal_places=2, default=0, verbose_name='Monto abonado')
     saldo_pendiente = models.DecimalField(max_digits=10, decimal_places=2, verbose_name='Saldo pendiente')
     estado = models.CharField(max_length=20, choices=ESTADOS, default='pendiente', verbose_name='Estado')
+    fecha = models.DateField(null=True, blank=True, verbose_name='Fecha del Vale (registro manual)')
+    notas = models.CharField(max_length=255, blank=True, null=True, verbose_name='Notas')
     fecha_creacion = models.DateTimeField(auto_now_add=True, verbose_name='Fecha de creación')
 
     class Meta:
         db_table = 'deudas_entre_empleados'
-        verbose_name = 'Deuda entre empleados'
-        verbose_name_plural = 'Deudas entre empleados'
+        verbose_name = 'Vale entre empleados'
+        verbose_name_plural = 'Vales entre empleados'
         ordering = ['-fecha_creacion']
         indexes = [
             models.Index(fields=['deudor', 'estado']),
@@ -1372,6 +1400,12 @@ class AbonoDeudaEntreEmpleados(models.Model):
         verbose_name='Usuario que registró el abono',
     )
     notas = models.CharField(max_length=255, blank=True, null=True, verbose_name='Notas')
+    origen_liquidacion_fecha = models.DateField(
+        null=True,
+        blank=True,
+        verbose_name='Fecha de la liquidación que generó este abono',
+        help_text='Fecha operativa de la liquidación (solo efectivo) que aplicó este abono automáticamente al descontar el Vale, para poder revertirlo si se elimina esa liquidación.',
+    )
 
     class Meta:
         db_table = 'abonos_deuda_entre_empleados'

@@ -1866,5 +1866,5 @@ class DeudaEntreEmpleadosSerializer(serializers.ModelSerializer):
             'id', 'deudor', 'deudor_nombre', 'acreedor', 'acreedor_nombre',
             'servicio_realizado', 'servicio_nombre', 'numero_factura',
             'monto', 'monto_abonado', 'saldo_pendiente', 'estado',
-            'fecha_creacion', 'abonos',
+            'fecha', 'notas', 'fecha_creacion', 'abonos',
         ]

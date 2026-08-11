@@ -500,6 +500,7 @@ export const reportesService = {
     forzar_reemplazo_dia = false,
     skip_descuento_puesto = false,
     saltar_descuento_consumo = false,
+    skip_descuento_vale = false,
     consumo_monto = 0,
     deuda_ids = [],
     medio_cobro_consumo = 'efectivo',
@@ -522,6 +523,7 @@ export const reportesService = {
       forzar_reemplazo_dia,
       skip_descuento_puesto,
       saltar_descuento_consumo,
+      skip_descuento_vale,
       consumo_monto,
       deuda_ids,
       medio_cobro_consumo,
@@ -540,6 +542,7 @@ export const reportesService = {
     aplica_comision_ventas,
     skip_descuento_puesto,
     saltar_descuento_consumo,
+    skip_descuento_vale,
     puesto_modo,
     puesto_porcentaje,
     consumo_monto,
@@ -549,6 +552,7 @@ export const reportesService = {
     if (aplica_comision_ventas !== undefined) params.aplica_comision_ventas = aplica_comision_ventas;
     if (skip_descuento_puesto !== undefined) params.skip_descuento_puesto = skip_descuento_puesto;
     if (saltar_descuento_consumo !== undefined) params.saltar_descuento_consumo = saltar_descuento_consumo;
+    if (skip_descuento_vale !== undefined) params.skip_descuento_vale = skip_descuento_vale;
     if (puesto_modo !== undefined) params.puesto_modo = puesto_modo;
     if (puesto_porcentaje !== undefined) params.puesto_porcentaje = puesto_porcentaje;
     if (consumo_monto !== undefined) params.consumo_monto = consumo_monto;
@@ -701,6 +705,19 @@ export const deudasEntreEmpleadosService = {
 
   abonar: async ({ deuda, monto, notas }) => {
     const response = await api.post('/abonos-deuda-entre-empleados/', { deuda, monto, notas });
+    return response.data;
+  },
+
+  // Vale: registro manual de la deuda entre empleados (ya no se genera
+  // automático desde la factura -- ver Servicios.jsx).
+  registrarVale: async ({ deudor_id, acreedor_id, monto, fecha, notas }) => {
+    const response = await api.post('/reportes/estilistas/registrar-deuda-vale/', {
+      deudor_id,
+      acreedor_id,
+      monto,
+      ...(fecha ? { fecha } : {}),
+      ...(notas ? { notas } : {}),
+    });
     return response.data;
   },
 };

@@ -14,7 +14,7 @@ from .views import (
     liquidar_dia_v2, liquidar_operacion_integral, cargar_deuda_puesto_dia, eliminar_estado_pago_historial, mover_fecha_estado_pago_dia, qz_certificate, qz_sign,
     reporte_ajuste_diario_unificado, cancelar_deuda_puesto_dias, cancelar_facturas_deuda_empleado,
     liquidar_pago_empleado_dias, abonar_deuda_puesto_dias, liquidacion_recibo_imprimible, eliminar_liquidacion_dia_v3,
-    confirmar_transferencia_pendiente_dia,
+    confirmar_transferencia_pendiente_dia, registrar_deuda_vale,
     CreditoViewSet, AbonoCreditoViewSet, PersonaCreditoViewSet,
     DeudaEntreEmpleadosViewSet, AbonoDeudaEntreEmpleadosViewSet,
 )
@@ -67,6 +67,7 @@ urlpatterns = [
     path('reportes/estilistas/liquidar-pago-empleado-dias/', liquidar_pago_empleado_dias, name='reportes-estilista-liquidar-pago-empleado-dias'),
     path('reportes/estilistas/confirmar-transferencia-dia/', confirmar_transferencia_pendiente_dia, name='reportes-estilista-confirmar-transferencia-dia'),
     path('reportes/estilistas/abonar-deuda-puesto-dias/', abonar_deuda_puesto_dias, name='reportes-estilista-abonar-deuda-puesto-dias'),
+    path('reportes/estilistas/registrar-deuda-vale/', registrar_deuda_vale, name='reportes-estilista-registrar-deuda-vale'),
     path('reportes/consumo-empleado/cancelar-facturas/', cancelar_facturas_deuda_empleado, name='reporte-consumo-empleado-cancelar-facturas'),
     path('reportes/consumo-empleado/deudas/', reporte_consumo_empleado, name='reporte-consumo-empleado-deudas'),
     path('reportes/consumo-empleado/abonar/', abonar_consumo_empleado, name='reporte-consumo-empleado-abonar'),

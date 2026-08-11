@@ -203,7 +203,6 @@ const Servicios = () => {
     servicio: '',
     precio_cobrado: '',
     medio_pago: 'efectivo',
-    cobrado_por: '',
     valor_recibido: '',
     tipo_reparto_establecimiento: '',
     valor_reparto_establecimiento: '30',
@@ -521,7 +520,6 @@ const Servicios = () => {
       servicio: '',
       precio_cobrado: '',
       medio_pago: 'efectivo',
-      cobrado_por: '',
       valor_recibido: '',
       tipo_reparto_establecimiento: '',
       valor_reparto_establecimiento: '30',
@@ -606,7 +604,6 @@ const Servicios = () => {
       servicio: srv.servicio ? String(srv.servicio) : '',
       precio_cobrado: srv.precio_cobrado || '',
       medio_pago: srv.medio_pago || 'efectivo',
-      cobrado_por: srv.cobrado_por ? String(srv.cobrado_por) : '',
       valor_recibido: '',
       tipo_reparto_establecimiento: srv.tipo_reparto_establecimiento || '',
       valor_reparto_establecimiento: String(srv.valor_reparto_establecimiento ?? '30'),
@@ -834,17 +831,14 @@ const Servicios = () => {
       || servicioPrincipalSeleccionado?.nombre
       || 'Servicio';
 
-    // Si el pago es electrónico, ya se sabe qué empleado cobra (cobrado_por
-    // si se marcó "servicio cobrado en conjunto", si no el mismo que
-    // atiende) -- se puede mostrar su QR desde ya, aunque el monto todavía
-    // sea el "por confirmar" de la vista previa.
-    const estilistaCobradorPreview = finalizacion.medio_pago !== 'efectivo' && finalizacion.cobrado_por
-      ? estilistas.find((e) => String(e.id) === String(finalizacion.cobrado_por))
-      : estilistaAsignado;
+    // El QR a mostrar es siempre el del mismo empleado que atiende -- cada
+    // quien factura su propio servicio por separado (uno en medio
+    // electrónico, los demás en efectivo aunque no haya entrado efectivo
+    // físico; el Vale entre compañeros se registra aparte, ver módulo Vale).
     const qrPorMedioPreview = {
-      nequi: estilistaCobradorPreview?.qr_nequi,
-      daviplata: estilistaCobradorPreview?.qr_daviplata,
-      otros: estilistaCobradorPreview?.qr_otros,
+      nequi: estilistaAsignado?.qr_nequi,
+      daviplata: estilistaAsignado?.qr_daviplata,
+      otros: estilistaAsignado?.qr_otros,
     };
 
     customerDisplayService.publishServicePreview({
@@ -855,8 +849,8 @@ const Servicios = () => {
       medioPago: finalizacion.medio_pago,
     }, {
       qrImageUrl: qrPorMedioPreview[finalizacion.medio_pago] || null,
-      datosTransferencia: estilistaCobradorPreview?.datos_transferencia || null,
-      nombreCobrador: finalizacion.cobrado_por ? estilistaCobradorPreview?.nombre : null,
+      datosTransferencia: estilistaAsignado?.datos_transferencia || null,
+      nombreCobrador: null,
     });
     setPantallaClienteActiva({ tipo: 'preview', cliente: servicioEnProcesoSeleccionado?.cliente_nombre || 'Cliente', total: totalFinalizacion });
 
@@ -913,9 +907,6 @@ const Servicios = () => {
       const payloadFinalizacion = {
         precio_cobrado: toPesoInt(finalizacion.precio_cobrado),
         medio_pago: finalizacion.medio_pago,
-        cobrado_por: finalizacion.medio_pago !== 'efectivo' && finalizacion.cobrado_por
-          ? Number(finalizacion.cobrado_por)
-          : null,
         tipo_reparto_establecimiento: tipoRepartoPrincipal || null,
         valor_reparto_establecimiento: valorRepartoPrincipal,
         tiene_adicionales: finalizacion.tiene_adicionales,
@@ -943,21 +934,17 @@ const Servicios = () => {
       const estilistaFinalizado = estilistas.find((e) => e.id === Number(res?.estilista));
       const usaCobroFijoEspacio = (estilistaFinalizado?.tipo_cobro_espacio || '') === 'costo_fijo_neto';
 
-      // Si el pago es electrónico, el QR a mostrar en la pantalla cliente es
-      // el del empleado que efectivamente cobra (cobrado_por si se marcó
-      // "servicio cobrado en conjunto", si no el mismo que atendió).
-      const estilistaCobrador = res?.cobrado_por
-        ? estilistas.find((e) => e.id === Number(res.cobrado_por))
-        : estilistaFinalizado;
+      // El QR a mostrar en la pantalla cliente es el del mismo empleado que
+      // atendió y facturó este servicio.
       const qrPorMedio = {
-        nequi: estilistaCobrador?.qr_nequi,
-        daviplata: estilistaCobrador?.qr_daviplata,
-        otros: estilistaCobrador?.qr_otros,
+        nequi: estilistaFinalizado?.qr_nequi,
+        daviplata: estilistaFinalizado?.qr_daviplata,
+        otros: estilistaFinalizado?.qr_otros,
       };
       customerDisplayService.publishServiceSale(res, {
         qrImageUrl: qrPorMedio[finalizacion.medio_pago] || null,
-        datosTransferencia: estilistaCobrador?.datos_transferencia || null,
-        nombreCobrador: res?.cobrado_por ? estilistaCobrador?.nombre : null,
+        datosTransferencia: estilistaFinalizado?.datos_transferencia || null,
+        nombreCobrador: null,
       });
       setPantallaClienteActiva({ tipo: 'recibo', cliente: res?.cliente_nombre || 'Cliente', total: res?.precio_cobrado || 0 });
 
@@ -987,7 +974,6 @@ const Servicios = () => {
         servicio: '',
         precio_cobrado: '',
         medio_pago: 'efectivo',
-        cobrado_por: '',
         valor_recibido: '',
         tipo_reparto_establecimiento: '',
         valor_reparto_establecimiento: '30',
@@ -1671,25 +1657,6 @@ const Servicios = () => {
               <option key={m.value} value={m.value}>{m.label}</option>
             ))}
           </select>
-
-          {finalizacion.medio_pago !== 'efectivo' && (
-            <div className="md:col-span-2">
-              <label className="block text-xs text-slate-600 mb-1">¿Lo cobró otro empleado? (servicio cobrado en conjunto)</label>
-              <select
-                className="input-field"
-                value={finalizacion.cobrado_por}
-                onChange={(e) => setFinalizacion((p) => ({ ...p, cobrado_por: e.target.value }))}
-              >
-                <option value="">No, lo cobró {estilistas.find((e) => String(e.id) === String(finalizacion.estilista))?.nombre || 'el mismo empleado'}</option>
-                {estilistas
-                  .filter((e) => String(e.id) !== String(finalizacion.estilista))
-                  .map((e) => (
-                    <option key={e.id} value={e.id}>Lo cobró {e.nombre} (con su QR)</option>
-                  ))}
-              </select>
-              <p className="mt-1 text-xs text-slate-500">Si el cliente pagó una sola vez con el QR de un compañero por varios servicios de esta visita, elígelo aquí. Se registra automáticamente lo que ese compañero le debe a este empleado.</p>
-            </div>
-          )}
 
           {finalizacion.medio_pago === 'efectivo' && (
             <div className="flex gap-2">

@@ -16,7 +16,7 @@ const MODULOS = [
   { key: 'cartera', label: '3. Cartera Empleado' },
   { key: 'ajuste', label: '4. Ajuste Diario' },
   { key: 'agotarse', label: '5. Productos por Agotarse' },
-  { key: 'entre_empleados', label: '6. Cuenta entre Empleados' },
+  { key: 'entre_empleados', label: '6. Vale' },
 ];
 
 const MODULO_META = {
@@ -46,7 +46,7 @@ const MODULO_META = {
     border: 'border-rose-300/60',
   },
   entre_empleados: {
-    subtitle: 'Servicios cobrados en conjunto: quién le debe a quién',
+    subtitle: 'Vale: cuando alguien cobra de más de un servicio conjunto, quién le debe a quién',
     accent: 'from-fuchsia-500/20 to-purple-500/10',
     border: 'border-fuchsia-300/60',
   },
@@ -165,6 +165,7 @@ const Reportes = () => {
   const [savingEstadoByEstilista, setSavingEstadoByEstilista] = useState({});
   const [skipDescuentoPuestoPorEstilista, setSkipDescuentoPuestoPorEstilista] = useState({});
   const [saltarDescuentoConsumoPorEstilista, setSaltarDescuentoConsumoPorEstilista] = useState({});
+  const [skipDescuentoValePorEstilista, setSkipDescuentoValePorEstilista] = useState({});
   const [reciboLiquidacion, setReciboLiquidacion] = useState(null);
   const [reciboLiquidacionError, setReciboLiquidacionError] = useState(null);
   const [loadingReciboLiquidacion, setLoadingReciboLiquidacion] = useState(false);
@@ -179,6 +180,7 @@ const Reportes = () => {
   const [deudaEntreEmpleadosExpandidaId, setDeudaEntreEmpleadosExpandidaId] = useState(null);
   const [savingAbonoEntreEmpleadosById, setSavingAbonoEntreEmpleadosById] = useState({});
   const [soloPendientesEntreEmpleados, setSoloPendientesEntreEmpleados] = useState(true);
+  const [formularioNuevoVale, setFormularioNuevoVale] = useState({ deudor_id: '', acreedor_id: '', monto: '', fecha: '', notas: '', loading: false });
   const [deudaPuestoModal, setDeudaPuestoModal] = useState({ open: false, estilista_id: null, fecha: '', monto: '', notas: '', loading: false });
   const [numericPadTarget, setNumericPadTarget] = useState(null);
   const [desgloseLiquidacion, setDesgloseLiquidacion] = useState(null);
@@ -862,6 +864,43 @@ const Reportes = () => {
     }
   };
 
+  const guardarNuevoVale = async () => {
+    const deudor_id = Number(formularioNuevoVale.deudor_id || 0);
+    const acreedor_id = Number(formularioNuevoVale.acreedor_id || 0);
+    const monto = Number(formularioNuevoVale.monto || 0);
+
+    if (!deudor_id || !acreedor_id) {
+      toast.warning('Selecciona el empleado que cobró de más y el compañero al que le debe.');
+      return;
+    }
+    if (deudor_id === acreedor_id) {
+      toast.warning('El deudor y el acreedor deben ser empleados distintos.');
+      return;
+    }
+    if (!monto || monto <= 0) {
+      toast.warning('Ingresa un monto válido para el Vale.');
+      return;
+    }
+
+    setFormularioNuevoVale((prev) => ({ ...prev, loading: true }));
+    try {
+      await deudasEntreEmpleadosService.registrarVale({
+        deudor_id,
+        acreedor_id,
+        monto,
+        fecha: formularioNuevoVale.fecha || undefined,
+        notas: formularioNuevoVale.notas || undefined,
+      });
+      toast.success('Vale registrado. Se descontará automáticamente en la próxima liquidación del deudor.');
+      setFormularioNuevoVale({ deudor_id: '', acreedor_id: '', monto: '', fecha: '', notas: '', loading: false });
+      await cargarDeudasEntreEmpleados();
+    } catch (error) {
+      const msg = error?.response?.data?.error || error?.message || 'No se pudo registrar el Vale.';
+      toast.error(String(msg));
+      setFormularioNuevoVale((prev) => ({ ...prev, loading: false }));
+    }
+  };
+
   const cargarAjusteDiarioUnificado = useCallback(async () => {
     if (!hasSubmenuPermission(user, 'reportes', 'ajuste', 'view')) {
       setAjusteDiarioRows([]);
@@ -1086,6 +1125,7 @@ const Reportes = () => {
 
   const skipPuestoActivo = Boolean(skipDescuentoPuestoPorEstilista[estilistaActivoLiquidacion] || false);
   const saltarConsumoActivo = Boolean(saltarDescuentoConsumoPorEstilista[estilistaActivoLiquidacion] || false);
+  const skipValeActivo = Boolean(skipDescuentoValePorEstilista[estilistaActivoLiquidacion] || false);
   const aplicaComisionActivo = Boolean(aplicaComisionVentasPorEstilista[estilistaActivoLiquidacion] ?? true);
   const puestoModoActivo = modoCobroPuestoPorEstilista[estilistaActivoLiquidacion] || 'fijo';
   const puestoPorcentajeActivo = porcentajePuestoPorEstilista[estilistaActivoLiquidacion] || '';
@@ -1105,6 +1145,7 @@ const Reportes = () => {
       aplica_comision_ventas: aplicaComisionActivo,
       skip_descuento_puesto: skipPuestoActivo,
       saltar_descuento_consumo: saltarConsumoActivo,
+      skip_descuento_vale: skipValeActivo,
       puesto_modo: puestoModoActivo,
     };
     if (puestoModoActivo === 'porcentaje' && Number(puestoPorcentajeActivo) > 0) {
@@ -1115,7 +1156,7 @@ const Reportes = () => {
     cargarReciboLiquidacion(estilistaActivoLiquidacion, fechaFin, overrides);
   }, [
     moduloActivo, vistaSimpleLiquidacion, estilistaActivoLiquidacion, fechaFin, cargarReciboLiquidacion,
-    aplicaComisionActivo, skipPuestoActivo, saltarConsumoActivo, puestoModoActivo, puestoPorcentajeActivo,
+    aplicaComisionActivo, skipPuestoActivo, saltarConsumoActivo, skipValeActivo, puestoModoActivo, puestoPorcentajeActivo,
     abonoPuestoActivo, abonoConsumoActivo,
   ]);
 
@@ -1679,6 +1720,7 @@ const Reportes = () => {
 
     const skip_descuento_puesto = Boolean(skipDescuentoPuestoPorEstilista[estilistaId] || false);
     const saltar_descuento_consumo = Boolean(saltarDescuentoConsumoPorEstilista[estilistaId] || false);
+    const skip_descuento_vale = Boolean(skipDescuentoValePorEstilista[estilistaId] || false);
     const aplica_comision_ventas = Boolean(aplicaComisionVentasPorEstilista[estilistaId] ?? true);
     const puesto_modo = modoCobroPuestoPorEstilista[estilistaId] || 'fijo';
     const puesto_porcentaje = Number(porcentajePuestoPorEstilista[estilistaId] || 0);
@@ -1703,6 +1745,7 @@ const Reportes = () => {
         fecha,
         skip_descuento_puesto,
         saltar_descuento_consumo,
+        skip_descuento_vale,
         aplica_comision_ventas,
         puesto_modo,
         puesto_porcentaje,
@@ -2779,6 +2822,8 @@ const Reportes = () => {
               const aplicaComisionV3 = Boolean(aplicaComisionVentasPorEstilista[estId] ?? true);
               const guardandoV3 = Boolean(savingEstadoByEstilista[estId]);
               const saldoConsumoV3 = Number(resultadoV3.saldo_consumo_pendiente ?? resumenPorEstilistaLiquidacion[estId]?.saldo_pendiente ?? 0);
+              const saldoValeV3 = Number(resultadoV3.saldo_vale_pendiente || 0);
+              const skipValeV3 = Boolean(skipDescuentoValePorEstilista[estId] || false);
               const puestoModoV3 = modoCobroPuestoPorEstilista[estId] || 'fijo';
               const deudaAnteriorPuestoV3 = Number(resultadoV3.deuda_anterior_puesto || 0);
 
@@ -2917,6 +2962,25 @@ const Reportes = () => {
                             </div>
                           )}
 
+                          {saldoValeV3 > 0 && (
+                            <div className="rounded-2xl bg-fuchsia-50 p-3 ring-1 ring-fuchsia-200 space-y-2">
+                              <label className="flex items-center justify-between gap-3 cursor-pointer">
+                                <div>
+                                  <p className="text-sm font-semibold text-fuchsia-900">Cobrar Vale hoy</p>
+                                  <p className="text-xs text-fuchsia-700">Debe por cobrar de más un servicio conjunto: {formatMoney(saldoValeV3)}</p>
+                                </div>
+                                <input
+                                  type="checkbox"
+                                  className="h-5 w-5"
+                                  checked={!skipValeV3}
+                                  disabled={!reciboLiquidacion.es_preview}
+                                  onChange={(e) => setSkipDescuentoValePorEstilista((prev) => ({ ...prev, [estId]: !e.target.checked }))}
+                                />
+                              </label>
+                              <p className="text-[11px] text-fuchsia-700">Se descuenta completo si está marcado. Si se deja pendiente, se acumula para otro día (ver módulo Vale).</p>
+                            </div>
+                          )}
+
                           <label className="flex items-center justify-between gap-3 rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-200 cursor-pointer">
                             <p className="text-sm font-semibold text-slate-800">Sumar comisión de productos a la ganancia de hoy</p>
                             <input
@@ -2974,7 +3038,7 @@ const Reportes = () => {
                         <div className="mt-3 pt-3 border-t border-slate-200/70 text-xs text-slate-600 space-y-0.5">
                           <p className="font-semibold text-slate-500 uppercase tracking-wide text-[10px]">¿Por qué este valor?</p>
                           <p>Disponible (efectivo + comisión productos): {formatMoney(Number(resultadoV3.ganancia_efectivo_dia || 0) + Number(resultadoV3.comision_producto_dia || 0))}</p>
-                          <p>Menos deducciones de hoy (puesto + consumo + % establecimiento): {formatMoney(resultadoV3.total_deducciones_dia)}</p>
+                          <p>Menos deducciones de hoy (puesto + consumo + Vale + % establecimiento): {formatMoney(resultadoV3.total_deducciones_dia)}</p>
                         </div>
                       </section>
 
@@ -4811,11 +4875,13 @@ const Reportes = () => {
       <div className="card">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="card-header mb-1">Cuenta entre Empleados</h2>
+            <h2 className="card-header mb-1">Vale</h2>
             <p className="text-sm text-slate-600">
-              Cuando un cliente paga una sola vez (electrónico) por servicios de varios empleados en la misma visita,
-              aquí queda registrado quién cobró y cuánto le debe transferir a cada compañero. Se salda directamente
-              entre ellos, en efectivo, fuera de la caja del negocio.
+              Cuando un cliente paga una sola vez (electrónico) por servicios de varios empleados en la misma visita
+              (cada uno factura su propio servicio por separado), quien cobró el pago electrónico le queda debiendo
+              a cada compañero su parte. Registra el Vale aquí manualmente -- se descuenta automáticamente en la
+              próxima liquidación del deudor (con opción de dejarlo pendiente para otro día), y el establecimiento
+              le paga normalmente a cada compañero lo que le corresponde.
             </p>
           </div>
           <label className="flex items-center gap-2 text-sm text-slate-600">
@@ -4831,6 +4897,85 @@ const Reportes = () => {
           <p className="mt-2 text-xs text-slate-500">
             Mostrando histórico completo (incluye saldadas). Haz clic en una fila para ver el detalle de transferencias registradas, por si hay dudas.
           </p>
+        )}
+
+        {hasSubmenuPermission(user, 'reportes', 'entre_empleados', 'edit') && (
+          <div className="mt-4 rounded-3xl bg-slate-50 p-5 ring-1 ring-slate-200">
+            <h3 className="text-base font-black text-slate-900">Registrar Vale</h3>
+            <p className="text-xs text-slate-500 mt-1">
+              Un servicio conjunto ya se facturó por separado (uno electrónico, los demás en efectivo) -- registra aquí cuánto le debe el que cobró de más a cada compañero.
+            </p>
+            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Cobró de más (debe)</label>
+                <select
+                  className="input-field"
+                  value={formularioNuevoVale.deudor_id}
+                  onChange={(e) => setFormularioNuevoVale((prev) => ({ ...prev, deudor_id: e.target.value }))}
+                >
+                  <option value="">Selecciona empleado</option>
+                  {(biData?.estilistas || []).map((est) => (
+                    <option key={est.estilista_id} value={est.estilista_id}>{est.estilista_nombre}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Se le debe a</label>
+                <select
+                  className="input-field"
+                  value={formularioNuevoVale.acreedor_id}
+                  onChange={(e) => setFormularioNuevoVale((prev) => ({ ...prev, acreedor_id: e.target.value }))}
+                >
+                  <option value="">Selecciona empleado</option>
+                  {(biData?.estilistas || []).map((est) => (
+                    <option key={est.estilista_id} value={est.estilista_id}>{est.estilista_nombre}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Monto</label>
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  className="input-field"
+                  value={formularioNuevoVale.monto}
+                  onChange={(e) => setFormularioNuevoVale((prev) => ({ ...prev, monto: e.target.value }))}
+                  placeholder="0"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Fecha (opcional)</label>
+                <input
+                  type="date"
+                  className="input-field"
+                  value={formularioNuevoVale.fecha}
+                  onChange={(e) => setFormularioNuevoVale((prev) => ({ ...prev, fecha: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Notas (opcional)</label>
+                <input
+                  type="text"
+                  className="input-field"
+                  value={formularioNuevoVale.notas}
+                  onChange={(e) => setFormularioNuevoVale((prev) => ({ ...prev, notas: e.target.value }))}
+                  placeholder="Ej: corte + manicura, cliente Laura"
+                  maxLength={250}
+                />
+              </div>
+            </div>
+            <div className="mt-4">
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={guardarNuevoVale}
+                disabled={formularioNuevoVale.loading}
+              >
+                {formularioNuevoVale.loading ? 'Guardando...' : 'Registrar Vale'}
+              </button>
+            </div>
+          </div>
         )}
 
         <div className="mt-4 overflow-x-auto">

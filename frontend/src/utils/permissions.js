@@ -57,7 +57,7 @@ export const MENU_PERMISSION_DEFINITIONS = [
       { key: 'cartera', label: 'Cartera empleado', actions: ['view', 'edit', 'delete'] },
       { key: 'ajuste', label: 'Ajuste diario', actions: ['view', 'edit'] },
       { key: 'agotarse', label: 'Productos por agotarse', actions: ['view'] },
-      { key: 'entre_empleados', label: 'Cuenta entre empleados', actions: ['view', 'edit'] },
+      { key: 'entre_empleados', label: 'Vale', actions: ['view', 'edit'] },
     ],
   },
   {
